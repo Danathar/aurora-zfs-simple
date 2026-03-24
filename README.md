@@ -1,8 +1,8 @@
 # aurora-zfs-example
 
-https://github.com/ublue-os/aurora/issues/1765
+# I will not maintain this, this is purely an example implementation!
 
-Example implementation for adding ZFS into aurora via ublue-os/akmods
+[Discussion](https://github.com/ublue-os/aurora/issues/1765)
 
-Issues: github.com/ublue-os/akmods
+[Issues](https://github.com/ublue-os/akmods)
 

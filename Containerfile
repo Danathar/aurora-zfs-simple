@@ -3,7 +3,7 @@ ARG FEDORA_VERSION=43
 FROM scratch AS ctx
 COPY build_files /
 
-# we need this for v4l2loopback and friends
+# we need this for additional common kmods like v4l2loopback and xone
 # you can omit this and get the kernel-rpms from the akmods-zfs image instead
 FROM ghcr.io/ublue-os/akmods:coreos-stable-"${FEDORA_VERSION}" AS akmods
 
