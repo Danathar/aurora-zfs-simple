@@ -19,6 +19,7 @@ set -euo pipefail
 AURORA_IMAGE="${AURORA_IMAGE:-ghcr.io/ublue-os/aurora:latest}"
 AKMODS_STREAM="${AKMODS_STREAM:-coreos-stable}"
 
+# Fail early with a clear message when a required CLI is missing.
 require_command() {
   local cmd="$1"
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -27,6 +28,7 @@ require_command() {
   fi
 }
 
+# Pull and mount the akmods image, then enumerate kernel-core RPM versions.
 kernel_releases_from_akmods_image() {
   podman unshare sh -c '
     image="$1"
@@ -39,6 +41,7 @@ kernel_releases_from_akmods_image() {
   ' sh "$1"
 }
 
+# Return success when at least one matching kmod-zfs RPM exists for a kernel release.
 matching_zfs_rpm_exists() {
   local image="$1"
   local kernel_release="$2"
@@ -60,6 +63,7 @@ require_command sed
 require_command sort
 require_command grep
 
+# Discover Fedora from the Aurora userspace because downstream tags are Fedora-scoped.
 printf 'Checking Aurora example inputs\n'
 printf '  Aurora image:   %s\n' "$AURORA_IMAGE"
 printf '  Akmods stream:  %s\n' "$AKMODS_STREAM"
@@ -83,6 +87,7 @@ skopeo inspect "docker://${ZFS_IMAGE}" >/dev/null
 printf '  OK\n\n'
 
 printf 'Step 3: read kernel releases published in the akmods image...\n'
+# mapfile keeps each kernel release as one array element for exact matching later.
 mapfile -t KERNEL_RELEASES < <(kernel_releases_from_akmods_image "$AKMODS_IMAGE")
 
 if [[ "${#KERNEL_RELEASES[@]}" -eq 0 ]]; then
@@ -95,6 +100,7 @@ printf '    %s\n' "${KERNEL_RELEASES[@]}"
 printf '\n'
 
 printf 'Step 4: verify that every akmods kernel release has a matching ZFS kmod RPM...\n'
+# A single miss means inputs are out of sync, so stop immediately.
 for kernel_release in "${KERNEL_RELEASES[@]}"; do
   if matching_zfs_rpm_exists "$ZFS_IMAGE" "$kernel_release"; then
     printf '  OK: found kmod-zfs for %s\n' "$kernel_release"
