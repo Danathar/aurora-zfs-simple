@@ -3,10 +3,9 @@
 # Script: scripts/check-aurora-zfs-example-inputs.sh
 # What: Checks whether the simple Aurora ZFS example currently has a coherent
 #       set of upstream inputs.
-# Doing: Detects the Fedora version in the chosen Aurora image, verifies that
+# Doing: Detects the Fedora version from Aurora image labels, verifies that
 #        the matching `ublue-os/akmods` and `ublue-os/akmods-zfs` images exist,
-#        then compares the kernel RPMs in `akmods` against the `kmod-zfs` RPMs
-#        published in `akmods-zfs`.
+#        then compares kernel-specific tags published in both repos.
 # Why: This example is intentionally simple and does not contain the larger
 #      input-resolution and gating pipeline used by more automated repos. The
 #      operator needs a repeatable pre-build check before moving to a new Fedora
@@ -27,49 +26,66 @@ require_command() {
   fi
 }
 
-kernel_releases_from_akmods_image() {
-  podman unshare sh -c '
-    image="$1"
-    podman pull -q "$image" >/dev/null
-    mnt="$(podman image mount "$image")"
-    trap '"'"'podman image unmount "$image" >/dev/null'"'"' EXIT
-    find "$mnt/kernel-rpms" -maxdepth 1 -type f -name "kernel-core-*.rpm" -printf "%f\n" \
-      | sed -e "s/^kernel-core-//" -e "s/\\.rpm$//" \
-      | sort -u
-  ' sh "$1"
+extract_label_value() {
+  local key="$1"
+  local content="$2"
+
+  sed -n "s/^[[:space:]]*\"${key}\":[[:space:]]*\"\([^\"]*\)\".*/\1/p" <<<"$content" | head -n 1
 }
 
-matching_zfs_rpm_exists() {
+fedora_version_from_aurora_image() {
   local image="$1"
-  local kernel_release="$2"
+  local config
+  local ostree_linux
+  local fedora
 
-  podman unshare sh -c '
-    image="$1"
-    kernel_release="$2"
-    podman pull -q "$image" >/dev/null
-    mnt="$(podman image mount "$image")"
-    trap '"'"'podman image unmount "$image" >/dev/null'"'"' EXIT
-    find "$mnt/rpms/kmods/zfs" -maxdepth 1 -type f -name "kmod-zfs-${kernel_release}*.rpm" -print -quit \
-      | grep -q .
-  ' sh "$image" "$kernel_release"
+  config="$(skopeo inspect --config "docker://${image}")"
+  ostree_linux="$(extract_label_value "ostree.linux" "$config")"
+
+  if [[ -n "$ostree_linux" ]]; then
+    fedora="$(sed -n 's/.*\.fc\([0-9]\+\)\..*/\1/p' <<<"$ostree_linux" | head -n 1)"
+  fi
+
+  if [[ -z "$fedora" ]]; then
+    printf 'ERROR: unable to derive Fedora version from ostree.linux label on %s\n' "$image" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$fedora"
 }
 
-require_command podman
+kernel_releases_from_image_tags() {
+  local image="$1"
+  local fedora_version="$2"
+  local repo
+  local base_tag
+
+  repo="${image%:*}"
+  base_tag="${image##*:}"
+
+  skopeo list-tags "docker://${repo}" \
+    | grep -oE "${base_tag}-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc${fedora_version}\.(x86_64|aarch64)" \
+    | sed -E "s/^${base_tag}-//" \
+    | sort -u
+}
+
 require_command skopeo
 require_command sed
 require_command sort
 require_command grep
+require_command head
+require_command tr
 
 printf 'Checking Aurora example inputs\n'
 printf '  Aurora image:   %s\n' "$AURORA_IMAGE"
 printf '  Akmods stream:  %s\n' "$AKMODS_STREAM"
 printf '\n'
 
-FEDORA_VERSION="$(podman run --rm "$AURORA_IMAGE" rpm -E %fedora | tr -d '\r\n')"
+FEDORA_VERSION="$(fedora_version_from_aurora_image "$AURORA_IMAGE" | tr -d '\r\n')"
 AKMODS_IMAGE="ghcr.io/ublue-os/akmods:${AKMODS_STREAM}-${FEDORA_VERSION}"
 ZFS_IMAGE="ghcr.io/ublue-os/akmods-zfs:${AKMODS_STREAM}-${FEDORA_VERSION}"
 
-printf 'Detected Fedora version in Aurora userspace: %s\n' "$FEDORA_VERSION"
+printf 'Detected Fedora version in Aurora labels:    %s\n' "$FEDORA_VERSION"
 printf 'Expected akmods image:                     %s\n' "$AKMODS_IMAGE"
 printf 'Expected ZFS image:                        %s\n' "$ZFS_IMAGE"
 printf '\n'
@@ -82,11 +98,11 @@ printf 'Step 2: verify the ZFS akmods image exists...\n'
 skopeo inspect "docker://${ZFS_IMAGE}" >/dev/null
 printf '  OK\n\n'
 
-printf 'Step 3: read kernel releases published in the akmods image...\n'
-mapfile -t KERNEL_RELEASES < <(kernel_releases_from_akmods_image "$AKMODS_IMAGE")
+printf 'Step 3: read kernel releases published as akmods tags...\n'
+mapfile -t KERNEL_RELEASES < <(kernel_releases_from_image_tags "$AKMODS_IMAGE" "$FEDORA_VERSION")
 
 if [[ "${#KERNEL_RELEASES[@]}" -eq 0 ]]; then
-  printf 'ERROR: no kernel-core RPMs were found in %s\n' "$AKMODS_IMAGE" >&2
+  printf 'ERROR: no kernel-specific tags were found in %s\n' "$AKMODS_IMAGE" >&2
   exit 1
 fi
 
@@ -94,12 +110,19 @@ printf '  Found kernel releases:\n'
 printf '    %s\n' "${KERNEL_RELEASES[@]}"
 printf '\n'
 
-printf 'Step 4: verify that every akmods kernel release has a matching ZFS kmod RPM...\n'
+printf 'Step 4: verify that every akmods kernel release has a matching ZFS kernel tag...\n'
+mapfile -t ZFS_KERNEL_RELEASES < <(kernel_releases_from_image_tags "$ZFS_IMAGE" "$FEDORA_VERSION")
+
+if [[ "${#ZFS_KERNEL_RELEASES[@]}" -eq 0 ]]; then
+  printf 'ERROR: no kernel-specific tags were found in %s\n' "$ZFS_IMAGE" >&2
+  exit 1
+fi
+
 for kernel_release in "${KERNEL_RELEASES[@]}"; do
-  if matching_zfs_rpm_exists "$ZFS_IMAGE" "$kernel_release"; then
-    printf '  OK: found kmod-zfs for %s\n' "$kernel_release"
+  if printf '%s\n' "${ZFS_KERNEL_RELEASES[@]}" | grep -Fxq "$kernel_release"; then
+    printf '  OK: found matching ZFS tag for %s\n' "$kernel_release"
   else
-    printf 'ERROR: missing kmod-zfs RPM for %s\n' "$kernel_release" >&2
+    printf 'ERROR: missing matching ZFS tag for %s\n' "$kernel_release" >&2
     printf 'STOP: do not move the Aurora example to Fedora %s yet.\n' "$FEDORA_VERSION" >&2
     exit 1
   fi
