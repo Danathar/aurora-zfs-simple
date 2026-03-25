@@ -4,6 +4,10 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - 'scripts/check-aurora-zfs-example-inputs.sh'
   schedule:
     - cron: '05 10 * * *'  # 10:05am UTC everyday
   push:
@@ -11,6 +15,8 @@ on:
       - main
     paths-ignore:
       - '**/README.md'
+      - 'docs/**'
+      - 'scripts/check-aurora-zfs-example-inputs.sh'
   workflow_dispatch:
 
 env:

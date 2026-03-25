@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
+      - 'scripts/check-aurora-zfs-example-inputs.sh'
 
 jobs:
   build:
