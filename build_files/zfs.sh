@@ -30,10 +30,14 @@ dnf5 -y install /tmp/rpms/{common,kmods}/*xone*.rpm
 dnf5 -y install /tmp/rpms/{kmods,common}/*v4l2loopback*.rpm
 
 mkdir -p /etc/pki/akmods/certs
-curl "https://github.com/ublue-os/akmods/raw/refs/heads/main/certs/public_key.der" --retry 3 -Lo /etc/pki/akmods/certs/akmods-ublue.der
+curl -f "https://github.com/ublue-os/akmods/raw/refs/heads/main/certs/public_key.der" --retry 3 -Lo /etc/pki/akmods/certs/akmods-ublue.der
 ### aurora 02-install-common-kernel-akmods.sh ###
 
-KERNEL=$(basename $(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1))
+KERNEL=$(basename "$(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1)")
+if [[ -z "${KERNEL}" ]]; then
+    echo "ERROR: No kernel directory found in /usr/lib/modules" >&2
+    exit 1
+fi
 
 # Here we actually install zfs
 ZFS_RPMS=(

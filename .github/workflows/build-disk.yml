@@ -79,7 +79,7 @@ jobs:
 
       - name: Build disk images
         id: build
-        uses: osbuild/bootc-image-builder-action@main
+        uses: osbuild/bootc-image-builder-action@44baf00be4c671bba5f432f64b6550d84d3fcaff # main
         with:
           builder-image: ${{ env.BIB_IMAGE }}
           config-file: ${{ matrix.disk-type == 'anaconda-iso' && './disk_config/iso.toml' || './disk_config/disk.toml' }}
@@ -94,7 +94,7 @@ jobs:
         with:
           path: ${{ steps.build.outputs.output-directory }}
           if-no-files-found: error
-          retention-days: 0
+          retention-days: 7
           compression-level: 0
           overwrite: true
       
@@ -112,4 +112,4 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y rclone
-          rclone copy $SOURCE_DIR S3:${{ secrets.S3_BUCKET_NAME }}
+          rclone copy "$SOURCE_DIR" "S3:${{ secrets.S3_BUCKET_NAME }}"
