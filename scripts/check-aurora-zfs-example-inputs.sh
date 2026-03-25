@@ -16,7 +16,7 @@
 #
 set -euo pipefail
 
-AURORA_IMAGE="${AURORA_IMAGE:-ghcr.io/ublue-os/aurora:stable}"
+AURORA_IMAGE="${AURORA_IMAGE:-ghcr.io/ublue-os/aurora:latest}"
 AKMODS_STREAM="${AKMODS_STREAM:-coreos-stable}"
 
 require_command() {
