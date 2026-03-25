@@ -5,9 +5,9 @@ COPY build_files /
 
 # we need this for additional common kmods like v4l2loopback and xone
 # you can omit this and get the kernel-rpms from the akmods-zfs image instead
-FROM ghcr.io/ublue-os/akmods:coreos-stable-"${FEDORA_VERSION}" AS akmods
+FROM ghcr.io/ublue-os/akmods:coreos-stable-${FEDORA_VERSION} AS akmods
 
-FROM ghcr.io/ublue-os/akmods-zfs:coreos-stable-"${FEDORA_VERSION}" AS akmods-zfs
+FROM ghcr.io/ublue-os/akmods-zfs:coreos-stable-${FEDORA_VERSION} AS akmods-zfs
 
 # change the tag to whatever you need here
 # using :latest for demonstration for now because it doesn't have ZFS/coreos-stable kernel
