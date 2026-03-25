@@ -5,7 +5,8 @@
 #       set of upstream inputs.
 # Doing: Detects the Fedora version from Aurora image labels, verifies that
 #        the matching `ublue-os/akmods` and `ublue-os/akmods-zfs` images exist,
-#        then compares kernel-specific tags published in both repos.
+#        then validates the current stream kernel release against published
+#        `akmods-zfs` kernel-specific tags.
 # Why: This example is intentionally simple and does not contain the larger
 #      input-resolution and gating pipeline used by more automated repos. The
 #      operator needs a repeatable pre-build check before moving to a new Fedora
@@ -55,25 +56,24 @@ fedora_version_from_aurora_image() {
   printf '%s\n' "$fedora"
 }
 
-kernel_releases_from_image_tags() {
+kernel_release_from_image_label() {
   local image="$1"
-  local fedora_version="$2"
-  local arch="$3"
-  local repo
-  local base_tag
+  local config
+  local ostree_linux
 
-  repo="${image%:*}"
-  base_tag="${image##*:}"
+  config="$(skopeo inspect --config "docker://${image}")"
+  ostree_linux="$(extract_label_value "ostree.linux" "$config")"
 
-  skopeo list-tags "docker://${repo}" \
-    | grep -oE "${base_tag}-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc${fedora_version}\.${arch}" \
-    | sed -E "s/^${base_tag}-//" \
-    | sort -u
+  if [[ -z "$ostree_linux" ]]; then
+    printf 'ERROR: ostree.linux label missing on %s\n' "$image" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$ostree_linux"
 }
 
 require_command skopeo
 require_command sed
-require_command sort
 require_command grep
 require_command head
 require_command tr
@@ -117,35 +117,29 @@ printf 'Step 2: verify the ZFS akmods image exists...\n'
 skopeo inspect "docker://${ZFS_IMAGE}" >/dev/null
 printf '  OK\n\n'
 
-printf 'Step 3: read kernel releases published as akmods tags...\n'
-mapfile -t KERNEL_RELEASES < <(kernel_releases_from_image_tags "$AKMODS_IMAGE" "$FEDORA_VERSION" "$TARGET_ARCH")
+printf 'Step 3: read current kernel release from akmods image labels...\n'
+AKMODS_KERNEL_RELEASE="$(kernel_release_from_image_label "$AKMODS_IMAGE" | tr -d '\r\n')"
 
-if [[ "${#KERNEL_RELEASES[@]}" -eq 0 ]]; then
-  printf 'ERROR: no kernel-specific tags were found in %s\n' "$AKMODS_IMAGE" >&2
+if ! grep -Eq "\.fc${FEDORA_VERSION}\.${TARGET_ARCH}$" <<<"$AKMODS_KERNEL_RELEASE"; then
+  printf 'ERROR: akmods kernel release does not match Fedora %s and arch %s: %s\n' "$FEDORA_VERSION" "$TARGET_ARCH" "$AKMODS_KERNEL_RELEASE" >&2
   exit 1
 fi
 
-printf '  Found kernel releases:\n'
-printf '    %s\n' "${KERNEL_RELEASES[@]}"
+printf '  Found kernel release: %s\n' "$AKMODS_KERNEL_RELEASE"
 printf '\n'
 
-printf 'Step 4: verify that every akmods kernel release has a matching ZFS kernel tag...\n'
-mapfile -t ZFS_KERNEL_RELEASES < <(kernel_releases_from_image_tags "$ZFS_IMAGE" "$FEDORA_VERSION" "$TARGET_ARCH")
+printf 'Step 4: verify that ZFS publishes a matching kernel-specific tag...\n'
+ZFS_REPO="${ZFS_IMAGE%:*}"
+ZFS_BASE_TAG="${ZFS_IMAGE##*:}"
+EXPECTED_ZFS_KERNEL_TAG="${ZFS_BASE_TAG}-${AKMODS_KERNEL_RELEASE}"
 
-if [[ "${#ZFS_KERNEL_RELEASES[@]}" -eq 0 ]]; then
-  printf 'ERROR: no kernel-specific tags were found in %s\n' "$ZFS_IMAGE" >&2
+if skopeo list-tags "docker://${ZFS_REPO}" | grep -q "\"${EXPECTED_ZFS_KERNEL_TAG}\""; then
+  printf '  OK: found matching ZFS tag %s\n' "$EXPECTED_ZFS_KERNEL_TAG"
+else
+  printf 'ERROR: missing matching ZFS tag %s\n' "$EXPECTED_ZFS_KERNEL_TAG" >&2
+  printf 'STOP: do not move the Aurora example to Fedora %s yet.\n' "$FEDORA_VERSION" >&2
   exit 1
 fi
-
-for kernel_release in "${KERNEL_RELEASES[@]}"; do
-  if printf '%s\n' "${ZFS_KERNEL_RELEASES[@]}" | grep -Fxq "$kernel_release"; then
-    printf '  OK: found matching ZFS tag for %s\n' "$kernel_release"
-  else
-    printf 'ERROR: missing matching ZFS tag for %s\n' "$kernel_release" >&2
-    printf 'STOP: do not move the Aurora example to Fedora %s yet.\n' "$FEDORA_VERSION" >&2
-    exit 1
-  fi
-done
 printf '\n'
 
 printf 'PASS\n'
