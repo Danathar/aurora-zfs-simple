@@ -26,14 +26,14 @@ dnf5 -y install \
 dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel-modules kernel-modules-core kernel-modules-extra
 
 # if you care about this kinda stuff
-dnf -y install /tmp/rpms/{common,kmods}/*xone*.rpm
-dnf -y install /tmp/rpms/{kmods,common}/*v4l2loopback*.rpm
+dnf5 -y install /tmp/rpms/{common,kmods}/*xone*.rpm
+dnf5 -y install /tmp/rpms/{kmods,common}/*v4l2loopback*.rpm
 
 mkdir -p /etc/pki/akmods/certs
 curl "https://github.com/ublue-os/akmods/raw/refs/heads/main/certs/public_key.der" --retry 3 -Lo /etc/pki/akmods/certs/akmods-ublue.der
 ### aurora 02-install-common-kernel-akmods.sh ###
 
-KERNEL=$(basename $(find /usr/lib/modules -maxdepth 1 -type d | tail -n 1))
+KERNEL=$(basename $(find /usr/lib/modules -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1))
 
 # Here we actually install zfs
 ZFS_RPMS=(
@@ -47,7 +47,7 @@ ZFS_RPMS=(
     pv
 )
 
-dnf -y install "${ZFS_RPMS[@]}"
+dnf5 -y install "${ZFS_RPMS[@]}"
 
 # Depmod and autoload
 depmod -a -v "${KERNEL}"
