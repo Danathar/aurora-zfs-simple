@@ -17,6 +17,7 @@ set -euo pipefail
 
 AURORA_IMAGE="${AURORA_IMAGE:-ghcr.io/ublue-os/aurora:latest}"
 AKMODS_STREAM="${AKMODS_STREAM:-coreos-stable}"
+TARGET_ARCH="${TARGET_ARCH:-$(uname -m)}"
 
 require_command() {
   local cmd="$1"
@@ -57,6 +58,7 @@ fedora_version_from_aurora_image() {
 kernel_releases_from_image_tags() {
   local image="$1"
   local fedora_version="$2"
+  local arch="$3"
   local repo
   local base_tag
 
@@ -64,7 +66,7 @@ kernel_releases_from_image_tags() {
   base_tag="${image##*:}"
 
   skopeo list-tags "docker://${repo}" \
-    | grep -oE "${base_tag}-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc${fedora_version}\.(x86_64|aarch64)" \
+    | grep -oE "${base_tag}-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc${fedora_version}\.${arch}" \
     | sed -E "s/^${base_tag}-//" \
     | sort -u
 }
@@ -75,10 +77,27 @@ require_command sort
 require_command grep
 require_command head
 require_command tr
+require_command uname
+
+case "$TARGET_ARCH" in
+  x86_64|aarch64)
+    ;;
+  amd64)
+    TARGET_ARCH="x86_64"
+    ;;
+  arm64)
+    TARGET_ARCH="aarch64"
+    ;;
+  *)
+    printf 'ERROR: unsupported TARGET_ARCH: %s (supported: x86_64, aarch64)\n' "$TARGET_ARCH" >&2
+    exit 1
+    ;;
+esac
 
 printf 'Checking Aurora example inputs\n'
 printf '  Aurora image:   %s\n' "$AURORA_IMAGE"
 printf '  Akmods stream:  %s\n' "$AKMODS_STREAM"
+printf '  Target arch:    %s\n' "$TARGET_ARCH"
 printf '\n'
 
 FEDORA_VERSION="$(fedora_version_from_aurora_image "$AURORA_IMAGE" | tr -d '\r\n')"
@@ -99,7 +118,7 @@ skopeo inspect "docker://${ZFS_IMAGE}" >/dev/null
 printf '  OK\n\n'
 
 printf 'Step 3: read kernel releases published as akmods tags...\n'
-mapfile -t KERNEL_RELEASES < <(kernel_releases_from_image_tags "$AKMODS_IMAGE" "$FEDORA_VERSION")
+mapfile -t KERNEL_RELEASES < <(kernel_releases_from_image_tags "$AKMODS_IMAGE" "$FEDORA_VERSION" "$TARGET_ARCH")
 
 if [[ "${#KERNEL_RELEASES[@]}" -eq 0 ]]; then
   printf 'ERROR: no kernel-specific tags were found in %s\n' "$AKMODS_IMAGE" >&2
@@ -111,7 +130,7 @@ printf '    %s\n' "${KERNEL_RELEASES[@]}"
 printf '\n'
 
 printf 'Step 4: verify that every akmods kernel release has a matching ZFS kernel tag...\n'
-mapfile -t ZFS_KERNEL_RELEASES < <(kernel_releases_from_image_tags "$ZFS_IMAGE" "$FEDORA_VERSION")
+mapfile -t ZFS_KERNEL_RELEASES < <(kernel_releases_from_image_tags "$ZFS_IMAGE" "$FEDORA_VERSION" "$TARGET_ARCH")
 
 if [[ "${#ZFS_KERNEL_RELEASES[@]}" -eq 0 ]]; then
   printf 'ERROR: no kernel-specific tags were found in %s\n' "$ZFS_IMAGE" >&2
