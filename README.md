@@ -23,6 +23,12 @@ This repository builds a signed Aurora image with:
 The documentation in this repository tries to stay readable for someone who is
 learning these topics while reading.
 
+Every shell script in this repository includes detailed inline comments that
+explain what each command does, why it is there, and how the shell syntax works.
+If you are new to shell scripting, container builds, or kernel module packaging,
+reading the scripts from top to bottom is a good way to learn — they are written
+to teach, not just to run.
+
 ## Why This Repo Exists
 
 The goal here is not to automate every edge case.

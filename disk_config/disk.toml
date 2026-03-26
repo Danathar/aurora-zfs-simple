@@ -1,3 +1,46 @@
+# =============================================================================
+# File: disk_config/disk.toml
+# What: Configuration for building a raw disk image (not an ISO) using
+#       bootc-image-builder.  This produces a ready-to-boot disk image file
+#       (e.g. .raw, .qcow2) that can be written to a physical disk or used
+#       directly in a virtual machine.
+#
+# Unlike the ISO configs (iso-kde.toml, iso-gnome.toml), this does not go
+# through the Anaconda installer at all.  Instead, bootc-image-builder
+# creates the partitions and filesystem directly, then deploys the container
+# image content onto it.
+#
+# Format: TOML (Tom's Obvious Minimal Language) — a simple config file format.
+#         In TOML:
+#           [[section]]        = an array of tables (the double brackets mean
+#                                you can have multiple entries of this type)
+#           key = "value"      = a key-value pair
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Filesystem customization
+# This tells bootc-image-builder how to set up the disk's filesystem layout.
+#
+# [[customizations.filesystem]]
+#   The double brackets [[ ]] mean this is an element of an array.  You could
+#   add more [[customizations.filesystem]] entries to create additional
+#   partitions (e.g. a separate /home or /var partition), but for this simple
+#   example we only define the root filesystem.
+#
+# mountpoint = "/"
+#   The mount point — "/" is the root of the filesystem tree.  Everything
+#   lives under this single partition.
+#
+# minsize = "20 GiB"
+#   The minimum size of this partition.  The disk image will be at least
+#   20 GiB.  "GiB" means gibibytes (1 GiB = 1024^3 bytes), as opposed to
+#   "GB" which means gigabytes (1 GB = 1000^3 bytes).
+#
+#   20 GiB is a reasonable minimum for an Aurora image with ZFS — the base
+#   OS, kernel, ZFS tools, and a basic set of packages fit comfortably,
+#   with room for updates.  If you plan to store data on this same
+#   partition, increase this value.
+# -----------------------------------------------------------------------------
 [[customizations.filesystem]]
 mountpoint = "/"
 minsize = "20 GiB"

@@ -1,3 +1,39 @@
+# =============================================================================
+# File: disk_config/iso-kde.toml
+# What: Configuration for building a KDE (Plasma) installer ISO using
+#       bootc-image-builder (or osbuild).  This produces a live/installable
+#       ISO image that, once installed, switches the system to the container
+#       image specified below.
+#
+# Format: TOML (Tom's Obvious Minimal Language) — a simple config file format.
+#         In TOML:
+#           [section]          = a table (like a dictionary/object)
+#           key = "value"      = a key-value pair
+#           """..."""           = a multi-line string (triple quotes)
+#           [ "a", "b" ]       = an array (list) of values
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Kickstart section
+# "Kickstart" is Fedora/RHEL's system for automating OS installations.
+# A kickstart file contains instructions that the Anaconda installer follows
+# instead of asking the user questions interactively.
+#
+# The "%post ... %end" block runs shell commands after the OS is installed
+# onto the disk but before the first reboot.  This is where we tell the
+# freshly installed system to switch over to our custom container image.
+#
+# "bootc switch" is the key command here:
+#   --mutate-in-place   = modify the current installation in place rather
+#                         than creating a new deployment side-by-side.
+#   --transport registry = fetch the image from a container registry (like
+#                          ghcr.io) using the standard OCI protocol.
+#   ghcr.io/ublue-os/image-template:latest = the container image to switch
+#                          to.  Replace this with your own image reference.
+#
+# In short: install a basic Fedora system, then immediately replace it with
+# the content from our custom container image.
+# -----------------------------------------------------------------------------
 [customizations.installer.kickstart]
 contents = """
 %post
@@ -5,6 +41,32 @@ bootc switch --mutate-in-place --transport registry ghcr.io/ublue-os/image-templ
 %end
 """
 
+# -----------------------------------------------------------------------------
+# Anaconda installer modules
+# Anaconda (Fedora's graphical installer) is made up of separate "modules",
+# each responsible for one part of the installation process.  You can enable
+# or disable them to control what the installer shows to the user.
+#
+# For a KDE ISO, we enable most modules so the user gets a full installation
+# experience with screens for storage, networking, users, timezone, etc.
+#
+# Each module name follows the D-Bus naming convention
+# (org.fedoraproject.Anaconda.Modules.<Name>).  The modules are:
+#
+# ENABLED:
+#   Storage   — disk partitioning and filesystem setup
+#   Runtime   — core installer runtime (always needed)
+#   Network   — network configuration (hostname, IP, Wi-Fi, etc.)
+#   Security  — SELinux policy and security settings
+#   Services  — which systemd services to enable/disable
+#   Users     — create user accounts and set the root password
+#   Timezone  — timezone and NTP (clock sync) settings
+#
+# DISABLED:
+#   Subscription — Red Hat subscription management; not used on Fedora
+#                  (it is specific to RHEL systems that need a paid
+#                  subscription to access repos)
+# -----------------------------------------------------------------------------
 [customizations.installer.modules]
 enable = [
   "org.fedoraproject.Anaconda.Modules.Storage",

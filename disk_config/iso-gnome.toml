@@ -1,3 +1,33 @@
+# =============================================================================
+# File: disk_config/iso-gnome.toml
+# What: Configuration for building a GNOME installer ISO using
+#       bootc-image-builder (or osbuild).  This produces a live/installable
+#       ISO image that, once installed, switches the system to the container
+#       image specified below.
+#
+# This file is the GNOME counterpart to iso-kde.toml.  The key difference
+# is that this config disables most Anaconda modules, resulting in a much
+# more minimal (streamlined) installer experience.  GNOME's Anaconda UI
+# handles many settings automatically, so fewer interactive screens are
+# needed.
+#
+# Format: TOML (Tom's Obvious Minimal Language) — a simple config file format.
+#         In TOML:
+#           [section]          = a table (like a dictionary/object)
+#           key = "value"      = a key-value pair
+#           """..."""           = a multi-line string (triple quotes)
+#           [ "a", "b" ]       = an array (list) of values
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Kickstart section
+# This works identically to the KDE version — see iso-kde.toml for a full
+# explanation of kickstart and the "bootc switch" command.
+#
+# After the base Fedora system is installed, the %post script switches it
+# to the custom container image from the registry.
+# Replace the image reference below with your own.
+# -----------------------------------------------------------------------------
 [customizations.installer.kickstart]
 contents = """
 %post
@@ -5,6 +35,30 @@ bootc switch --mutate-in-place --transport registry ghcr.io/ublue-os/image-templ
 %end
 """
 
+# -----------------------------------------------------------------------------
+# Anaconda installer modules
+# Unlike the KDE config (which enables most modules), the GNOME config takes
+# a minimal approach: only the two essential modules are enabled, and
+# everything else is disabled.
+#
+# ENABLED:
+#   Storage   — disk partitioning and filesystem setup (the user still needs
+#               to choose where to install)
+#   Runtime   — core installer runtime (always needed for Anaconda to work)
+#
+# DISABLED (the installer will skip these screens entirely):
+#   Network      — network configuration (will use defaults / DHCP)
+#   Security     — SELinux settings (will use the image defaults)
+#   Services     — systemd service configuration (handled by the image)
+#   Users        — user account creation (deferred to first-boot setup)
+#   Subscription — Red Hat subscription (not applicable to Fedora)
+#   Timezone     — timezone settings (deferred to first-boot or auto-detected)
+#
+# Why so minimal?  For a GNOME image, the first-boot experience (gnome-initial-
+# setup) typically handles user creation, timezone, and other settings.
+# Disabling these modules in the installer avoids asking the user the same
+# questions twice.
+# -----------------------------------------------------------------------------
 [customizations.installer.modules]
 enable = [
   "org.fedoraproject.Anaconda.Modules.Storage",
