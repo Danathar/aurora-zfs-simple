@@ -79,7 +79,7 @@ jobs:
 
       - name: Build disk images
         id: build
-        uses: osbuild/bootc-image-builder-action@44baf00be4c671bba5f432f64b6550d84d3fcaff # main
+        uses: osbuild/bootc-image-builder-action@9f7497fb056e36cf0c19fc5bde0d9b03c1b13fee # main
         with:
           builder-image: ${{ env.BIB_IMAGE }}
           config-file: ${{ matrix.disk-type == 'anaconda-iso' && './disk_config/iso.toml' || './disk_config/disk.toml' }}
