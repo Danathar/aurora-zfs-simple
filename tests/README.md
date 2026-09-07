@@ -28,6 +28,7 @@ when present and skipped when not.
 | `test-auto-qa-tuning.sh`    | every workflow job is bounded by a timeout, and declared to the auto-QA manifest at the number the YAML actually says |
 | `test-e2e-preflight.sh`     | `tests/e2e/run-e2e.sh`'s option parsing, free-space preflight and `--clean`, with `podman` and `df` stubbed |
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
+| `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
 Containerfile (a fixture file) and `skopeo inspect`, which a stub earlier on
@@ -202,6 +203,41 @@ real regression signal. Both directions are asserted.
 What still needs a real image is what the checks inspect — whether ZFS userspace
 is actually present, whether there is exactly one module tree. These tests cover
 how the script reacts to those answers, not the answers themselves.
+
+## The harness
+
+Everything above asserts something about the repository. `test-harness.sh`
+asserts something about the two files that decide what "the suite passed"
+means, because they fail in the same quiet direction as a workflow that stops
+running.
+
+`lib/assert.sh` keeps one counter of assertions and one of failures. `_fail` is
+the only place the failure counter moves and `finish` is the only place it is
+read, so disarming either leaves every test file in this directory printing its
+`ok` lines and exiting 0 while asserting nothing. And no test can reach those
+lines by passing: a failing branch of `assert_eq` only runs when a test is
+already broken. So they are reached deliberately — a throwaway script sources
+`assert.sh`, provokes one assertion each way, and its output and exit status are
+what gets checked. That covers the failure text as well as the counters, since a
+`FAIL` line that does not say what it expected is a failure nobody can act on.
+
+`run-tests.sh` gets the same treatment one level up, by copying it into a
+sandbox directory of fake `test-*.sh` files that pass or fail on command. It
+resolves its test directory from `BASH_SOURCE`, so the copy globs the sandbox
+rather than this directory. Each fake writes a marker when it runs, which is
+what makes "was not reported as failed" and "never ran" distinguishable: the
+runner has to collect a failing file into its summary *and* keep running the
+files behind it, and a selected name has to be the only thing that runs. The
+error paths matter for the same reason as the `paths-ignore` assertions above —
+a typo'd test name, or a checkout without `jq`, must not resolve to a run of
+nothing that exits 0.
+
+This is the one file here that does not source `lib/assert.sh`. A test of the
+assertion helpers cannot report its own verdict through them: an `assert.sh`
+that has stopped counting failures would swallow this file's failures too, and
+the run that proves the breakage would be the run that hides it. It carries its
+own small `expect_*` helpers instead, prints in the same format, and reports a
+`check(s)`/`failure(s)` tally of its own.
 
 ## The coverage gate
 
