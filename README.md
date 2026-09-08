@@ -43,26 +43,60 @@ published container image.
 
 [Discussion](https://github.com/ublue-os/aurora/issues/1765)
 
+## Trusting The Signing Key
+
+Every image this repository publishes is signed with the key whose public half
+is committed here as `cosign.pub`, and the nightly compliance workflow
+re-verifies the published `:latest` against it. None of that is checked on your
+machine unless the host's container signature policy knows about the key, so
+configure it before switching. This is a one-time setup per host.
+
+Install the public key:
+
+```bash
+sudo install -Dm0644 cosign.pub /etc/pki/containers/aurora-zfs-simple.pub
+```
+
+Then add an entry for the image to the `docker` transport map in
+`/etc/containers/policy.json`. The Aurora base image already ships that file
+with entries for the Universal Blue keys, so add to the existing map rather
+than replacing the file:
+
+```json
+"ghcr.io/danathar/aurora-zfs-simple": [
+  {
+    "type": "sigstoreSigned",
+    "keyPath": "/etc/pki/containers/aurora-zfs-simple.pub",
+    "signedIdentity": { "type": "matchRepository" }
+  }
+]
+```
+
+For a fork, use your own repository's path and your own `cosign.pub`.
+
 ## Switching To This Image
 
 After the GitHub Actions workflow publishes your fork's image, switch an
 existing Aurora install to it:
 
 ```bash
-sudo bootc switch ghcr.io/<owner>/<repo>:latest
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/<owner>/<repo>:latest
 ```
 
 For this repository, that would be:
 
 ```bash
-sudo bootc switch ghcr.io/danathar/aurora-zfs-simple:latest
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/danathar/aurora-zfs-simple:latest
 ```
 
-If your host's container signature policy is configured to trust your fork's
-signing key, prefer enforcing it during the switch:
+`--enforce-container-sigpolicy` is what makes the signature checked, and bootc
+records it: every later `bootc upgrade` on that host enforces it too. Dropping
+the flag switches to whatever `:latest` currently resolves to without checking
+the signature at all, on that rebase and on every upgrade after it. Only do
+that deliberately, and only if you have not configured the policy above:
 
 ```bash
-sudo bootc switch --enforce-container-sigpolicy ghcr.io/<owner>/<repo>:latest
+sudo bootc switch ghcr.io/<owner>/<repo>:latest
 ```
 
 Reboot after switching.
@@ -257,17 +291,19 @@ integration before it is published.
 ## Rebase An Existing Aurora Install
 
 After your image is published to GHCR, rebase an existing Aurora install to the
-custom image. Replace the owner and repository with your fork.
-
-```bash
-sudo bootc switch ghcr.io/<owner>/<repo>:latest
-```
-
-If the target host has a container signature policy configured for your fork's
-signing key, prefer:
+custom image. Configure the signature policy first — see
+[Trusting The Signing Key](#trusting-the-signing-key) — then switch, replacing
+the owner and repository with your fork.
 
 ```bash
 sudo bootc switch --enforce-container-sigpolicy ghcr.io/<owner>/<repo>:latest
+```
+
+Without `--enforce-container-sigpolicy` the image's signature is not checked,
+on this rebase or on any later `bootc upgrade`:
+
+```bash
+sudo bootc switch ghcr.io/<owner>/<repo>:latest
 ```
 
 Reboot after the switch, then validate ZFS as you normally would.
@@ -287,6 +323,13 @@ Your ZFS pools should import normally.
 ```bash
 cosign verify --key cosign.pub ghcr.io/danathar/aurora-zfs-simple:latest
 ```
+
+This is a one-shot manual check, and it proves only what `:latest` pointed at
+while the command was running. It does not make anything on the host verify a
+later pull. What does that is
+[Trusting The Signing Key](#trusting-the-signing-key) plus switching with
+`--enforce-container-sigpolicy`, which applies the check to the rebase and to
+every `bootc upgrade` after it.
 
 ## About this project
 
