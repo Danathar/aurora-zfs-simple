@@ -143,17 +143,21 @@ assert_contains "and stops on the first failure" \
 # false. check_zfs_modules must also precede check_zfs_userspace and
 # check_initramfs for a different reason -- it is what sets KERNEL's module
 # tree up via depmod, and both later stages read paths under that kernel.
+# check_module_signatures depends on that same depmod: it asks modinfo for each
+# module's signer, so it has to run after the module tree is registered and
+# before anything downstream treats the image as publishable.
 #
 # Each stage is replaced by a recorder, so this reads main's call sequence
 # without needing the RPM database, module tree or initramfs any of them wants.
 
 STAGE_RECORDERS='
-check_kernel_tree()   { printf "ran %s\n" check_kernel_tree; }
-check_zfs_packages()  { printf "ran %s\n" check_zfs_packages; }
-check_zfs_modules()   { printf "ran %s\n" check_zfs_modules; }
-check_zfs_userspace() { printf "ran %s\n" check_zfs_userspace; }
-check_initramfs()     { printf "ran %s\n" check_initramfs; }
-check_rpm_payloads()  { printf "ran %s\n" check_rpm_payloads; }
+check_kernel_tree()       { printf "ran %s\n" check_kernel_tree; }
+check_zfs_packages()      { printf "ran %s\n" check_zfs_packages; }
+check_zfs_modules()       { printf "ran %s\n" check_zfs_modules; }
+check_module_signatures() { printf "ran %s\n" check_module_signatures; }
+check_zfs_userspace()     { printf "ran %s\n" check_zfs_userspace; }
+check_initramfs()         { printf "ran %s\n" check_initramfs; }
+check_rpm_payloads()      { printf "ran %s\n" check_rpm_payloads; }
 '
 
 new_case main-runs-every-stage-in-order
@@ -161,10 +165,11 @@ run_snippet "${STAGE_RECORDERS}"'
 main
 '
 assert_eq "main succeeds when every stage does" 0 "${STATUS}"
-assert_eq "main runs all six stages, in order, and reports success last" \
+assert_eq "main runs all seven stages, in order, and reports success last" \
     "ran check_kernel_tree
 ran check_zfs_packages
 ran check_zfs_modules
+ran check_module_signatures
 ran check_zfs_userspace
 ran check_initramfs
 ran check_rpm_payloads
@@ -534,5 +539,67 @@ run_helper require_ldd_resolved "${case_dir}/absent"
 assert_eq "a binary that is not there fails before ldd runs" 1 "${STATUS}"
 assert_contains "reported as a missing file, not as a link error" \
     "${OUTPUT}" "required file not found: ${case_dir}/absent"
+
+# ---------------------------------------------------------------------------
+# require_module_signed: the certificate-to-module binding
+# ---------------------------------------------------------------------------
+#
+# The image installs /etc/pki/akmods/certs/akmods-ublue.der for a user to
+# enroll into MOK, and kmod-zfs comes from a different upstream image than the
+# RPM that certificate is extracted from. So "the module is signed by the key
+# whose certificate we shipped" is a claim, and this helper is what turns it
+# into a checked one. Both failure directions matter: an unsigned module (which
+# a Secure Boot host cannot load at all) and a module signed by some other key
+# (which means the enrolled certificate authorizes something else).
+
+new_case module-signed-by-the-shipped-key
+stub_command modinfo
+canned modinfo <<'EOF'
+Universal Blue akmods
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+assert_eq "a module signed by the shipped certificate passes" 0 "${STATUS}"
+
+new_case module-signer-padded
+# modinfo pads its field output when it is not asked for a single field, and a
+# trailing newline is always there. Neither is a mismatch.
+stub_command modinfo
+canned modinfo <<'EOF'
+   Universal Blue akmods
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+assert_eq "surrounding whitespace is not a mismatch" 0 "${STATUS}"
+
+new_case module-unsigned
+# `modinfo -F signer` prints nothing for a module with no signature.
+stub_command modinfo
+canned modinfo </dev/null
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+assert_eq "an unsigned module fails" 1 "${STATUS}"
+assert_contains "the failure says the module is unsigned" \
+    "${OUTPUT}" "zfs carries no module signature"
+assert_contains "and names the certificate the image ships" \
+    "${OUTPUT}" "Universal Blue akmods"
+
+new_case module-signed-by-another-key
+stub_command modinfo
+canned modinfo <<'EOF'
+Some Other Vendor Key
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 spl "Universal Blue akmods"
+assert_eq "a module signed by a different key fails" 1 "${STATUS}"
+assert_contains "the failure names both signers" \
+    "${OUTPUT}" "spl is signed by 'Some Other Vendor Key', not by the certificate this image installs ('Universal Blue akmods')"
+
+new_case module-signer-unreadable
+# modinfo failing outright is the same outcome as an unsigned module: nothing
+# was proven, so the gate fails rather than passing on doubt.
+stub_command modinfo
+exits modinfo 1
+canned modinfo </dev/null
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+assert_eq "a modinfo that cannot answer fails" 1 "${STATUS}"
+assert_contains "reported as no signature rather than passing" \
+    "${OUTPUT}" "zfs carries no module signature"
 
 finish

@@ -12,11 +12,14 @@
 # every query identically cannot show any of that, so this file backs rpm with a
 # small text database instead and lets the real queries run against it.
 #
-# The remaining four stages are not reachable from here. check_zfs_modules,
+# The remaining five stages are not reachable from here. check_zfs_modules,
 # check_zfs_userspace and check_initramfs read absolute paths under /usr/lib and
 # require zfs/zpool/zdb/zed on PATH, so on any host that is not the finished
 # image they fail before reaching the logic worth checking; check_rpm_payloads
-# is one call to verify_rpm_payload, already covered.
+# is one call to verify_rpm_payload, already covered, and
+# check_module_signatures reads /etc/pki/akmods/certs/akmods-ublue.der, which
+# only the built image has -- its comparison lives in require_module_signed,
+# covered in tests/test-post-check.sh.
 
 set -uo pipefail
 

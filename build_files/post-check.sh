@@ -17,9 +17,10 @@
 # 1. check_kernel_tree
 # 2. check_zfs_packages
 # 3. check_zfs_modules
-# 4. check_zfs_userspace
-# 5. check_initramfs
-# 6. check_rpm_payloads
+# 4. check_module_signatures
+# 5. check_zfs_userspace
+# 6. check_initramfs
+# 7. check_rpm_payloads
 
 set -euo pipefail
 
@@ -93,6 +94,34 @@ require_ldd_resolved() {
     if grep -q 'not found' <<<"${ldd_output}"; then
         printf '%s\n' "${ldd_output}" >&2
         fail "unresolved shared library dependency for ${binary}"
+    fi
+}
+
+require_module_signed() {
+    # Verify a module carries a signature naming the certificate this image
+    # installs for MOK enrollment.
+    #
+    # The kernel records the signer's X.509 commonName in the module's
+    # signature, which is what `modinfo -F signer` prints; an unsigned module
+    # prints nothing at all. Comparing that against the commonName of
+    # /etc/pki/akmods/certs/akmods-ublue.der is what ties the trust anchor the
+    # image ships to the modules it is supposed to authorize.
+    local kernel=$1 module=$2 expected=$3
+    local signer
+
+    # A modinfo that cannot answer is treated as an empty signer rather than
+    # letting `set -e` end the script here: the two cases mean the same thing
+    # for this gate -- nothing was proven -- and failing through the branch
+    # below says so, instead of dying without a message.
+    signer=$(modinfo -k "${kernel}" -F signer "${module}" 2>/dev/null |
+        sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | head -1) || signer=""
+
+    if [[ -z "${signer}" ]]; then
+        fail "${module} carries no module signature; a Secure Boot host that enrolled '${expected}' cannot load it"
+    fi
+
+    if [[ "${signer}" != "${expected}" ]]; then
+        fail "${module} is signed by '${signer}', not by the certificate this image installs ('${expected}')"
     fi
 }
 
@@ -260,6 +289,46 @@ check_zfs_modules() {
     done
 }
 
+check_module_signatures() {
+    # The certificate installed at /etc/pki/akmods/certs/akmods-ublue.der comes
+    # out of the ublue-os-akmods-addons RPM in the `akmods` image, while
+    # kmod-zfs comes from the separate `akmods-zfs` image (Containerfile stages
+    # `akmods` and `akmods-zfs`, mounted side by side into the same RUN). Those
+    # are two upstream images on two mutable tags, so the certificate matching
+    # the modules is a property to check, not one the build gets for free -- a
+    # pin applied to one FROM line and not the other, or an upstream key
+    # rotation landing in one image first, would ship a trust anchor that does
+    # not correspond to the modules it is meant to authorize.
+    #
+    # A user enrolls that certificate into MOK, and the failure it prevents is
+    # only visible after the rebase: on a Secure Boot host zfs.ko does not
+    # load, and pools do not import. This gate runs before the image is signed
+    # and published, which is where the mismatch should stop.
+    log "checking ZFS kernel module signatures"
+
+    local cert="/etc/pki/akmods/certs/akmods-ublue.der"
+    require_file "${cert}"
+
+    # -nameopt multiline prints one RDN per line as `commonName = value`,
+    # which is stable to parse; the default single-line form is not.
+    local subject signer_cn
+    subject=$(openssl x509 -inform der -in "${cert}" -noout -subject -nameopt multiline 2>&1) ||
+        fail "could not read the subject of ${cert}: ${subject}"
+
+    signer_cn=$(printf '%s\n' "${subject}" |
+        sed -n 's/^[[:space:]]*commonName[[:space:]]*=[[:space:]]*//p' | head -1)
+    if [[ -z "${signer_cn}" ]]; then
+        printf '%s\n' "${subject}" >&2
+        fail "no commonName in the subject of ${cert}"
+    fi
+    log "akmods signing certificate: ${signer_cn}"
+
+    local module
+    for module in spl zfs; do
+        require_module_signed "${KERNEL}" "${module}" "${signer_cn}"
+    done
+}
+
 check_zfs_userspace() {
     log "checking ZFS userspace and integration files"
 
@@ -307,6 +376,7 @@ main() {
 
     check_zfs_packages
     check_zfs_modules
+    check_module_signatures
     check_zfs_userspace
 
     check_initramfs
