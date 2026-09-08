@@ -17,7 +17,7 @@
         "/^tests/e2e/run-e2e\\.sh$/"
       ],
       "matchStrings": [
-        "CHUNKAH_IMAGE:\\s+\"?quay\\.io/coreos/chunkah:(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"?"
+        "CHUNKAH_IMAGE:(?:\\s+\"?|-)quay\\.io/coreos/chunkah:(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"?"
       ],
       "depNameTemplate": "quay.io/coreos/chunkah",
       "datasourceTemplate": "docker",
