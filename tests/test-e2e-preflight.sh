@@ -179,9 +179,18 @@ assert_eq "and runs no podman" "" "${PODMAN_CALLS}"
 
 new_case no_podman
 mkdir -p "${case_dir}/minbin"
-# Only what the script reaches before the podman check: bash to run it, date to
-# stamp the tag. A PATH built from the real one would find a runner's podman.
+# Only what the script reaches before the podman check: bash to run it, dirname
+# to resolve E2E_DIR, date to stamp the tag. A PATH built from the real one
+# would find a runner's podman.
+#
+# Keep this list in step with run-e2e.sh's preamble. A missing entry does not
+# announce itself the same way on every bash: through 5.2, `dirname` absent
+# left `cd "$(dirname ...)"` doing nothing and the script walked on to the
+# podman check, so this case passed while proving nothing about it; 5.3 rejects
+# `cd ""` as a null directory and `set -e` takes the script out before the
+# check it exists to exercise. The assertion below refuses both readings.
 ln -s "$(command -v bash)" "${case_dir}/minbin/bash"
+ln -s "$(command -v dirname)" "${case_dir}/minbin/dirname"
 ln -s "$(command -v date)" "${case_dir}/minbin/date"
 STDOUT="$(
     env -i PATH="${case_dir}/minbin" HOME="${case_dir}/home" \
@@ -190,6 +199,11 @@ STDOUT="$(
 STATUS=$?
 assert_eq "a missing podman exits 1" 1 "${STATUS}"
 assert_contains "and says what is missing" "${STDOUT}" "run-e2e: podman is required"
+# The exit status above is 1 whether podman was reported missing or the script
+# died on a binary this sandbox forgot to provide. Name the second reading so a
+# future preamble command fails here, saying which one, on every bash.
+assert_not_contains "and reached the check with every binary it needs" \
+    "${STDOUT}" "command not found"
 # ARCHIVE and LOAD_TMPDIR are seeded empty for exactly this path: the EXIT trap
 # is installed before either has a real value, and `set -u` would otherwise turn
 # a reported prerequisite failure into an error inside cleanup.
