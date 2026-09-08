@@ -30,6 +30,7 @@ when present and skipped when not.
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
 | `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
+| `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op and the ref the push lands on |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
@@ -126,6 +127,43 @@ of `jobs` or `untracked`, and, when tracked, at the number the workflow really
 declares. `untracked` is the `UNCOVERED` idiom from `test-coverage.sh`: not
 watching a job is a legitimate answer, but it has to be an answer, with the
 reason next to it.
+
+## The status branch
+
+`test-write-badges.sh` stops where `ci/write-badges.sh` does, at the artifacts
+directory. `test-status-badges.sh` picks the pipeline up there and covers the
+rest of it: the `Publish badges to status branch` step of
+`.github/workflows/status-badges.yml`, the shell that turns those two JSON files
+into a commit on the `status` branch that shields.io reads.
+
+The step is extracted from the parsed YAML and run for real. Nothing is stubbed:
+the remote is a local bare repository, reached by rewriting the
+`https://x-access-token:…@github.com/…` URL the step builds with
+`url.<file://…>.insteadOf` in a per-case `GIT_CONFIG_GLOBAL`. So the orphan
+branch, the shallow fetch, the staged diff and the ref the push lands on are all
+observed on the far side rather than read out of the script. Overriding
+`GIT_CONFIG_GLOBAL` also drops the ambient git identity, which leaves the step's
+own `git config user.name/user.email` lines load-bearing — the committer the
+branch ends up with is checked, not assumed.
+
+What it pins down is conditional, and none of it is visible in the text: the
+first run in a repository with no `status` branch has to take the `--orphan`
+path and every run after it the fetch path; only files written this run are
+copied over, so a run that could read one input but not the other leaves the
+other badge's last known-good content alone (the same no-overwrite rule
+`test-write-badges.sh` asserts inside the script, here resting on a `[ -f … ]`
+guard); an unchanged badge produces no commit at all, which on a daily schedule
+is the common case rather than an edge one; and the push is `HEAD:status`, one
+word away from putting bot commits on the branch that produces images. The
+copy loop naming the two files, rather than copying the directory, is asserted
+too — `status` is served publicly from raw.githubusercontent.com, and the job
+that writes it also runs `skopeo`.
+
+The step's `if:` guard is read against `ci/write-badges.sh`. It waits for
+`steps.badges.outputs.akmods_updated` or `last_good_updated` to be `'true'`, and
+nothing else in the repository ties those two files together: rename an output
+in the script and the gate is false on every run, badges frozen, every job
+green.
 
 ## The AI fix workflow
 
