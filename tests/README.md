@@ -31,6 +31,7 @@ when present and skipped when not.
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
 | `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
+| `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
