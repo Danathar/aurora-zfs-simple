@@ -29,6 +29,7 @@ when present and skipped when not.
 | `test-e2e-preflight.sh`     | `tests/e2e/run-e2e.sh`'s option parsing, free-space preflight and `--clean`, with `podman` and `df` stubbed |
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
+| `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -153,6 +154,35 @@ mistaken for an empty one, both actions must be pinned to a commit SHA, and
 `needs.preflight.outputs.run == 'yes'` is compared rather than searched for —
 broaden it and every check in the first half stops mattering while all of them
 still pass.
+
+## The nightly compliance workflow
+
+`test-nightly-compliance.sh` covers the `published_image` job of
+`.github/workflows/nightly-compliance.yml`, the only thing here that looks at the
+*published* image after the run that pushed it. Its four `run:` bodies live
+inside YAML strings, so this suite never globbed them and `shellcheck` never saw
+them; `test-ci-workflows.sh` reads the file, but only for the `suite` job's
+shellcheck ordering.
+
+Two decisions in that job are silent when they are wrong. The first draws the
+line between "nothing was ever published here" — exempt, exit 0, every later
+step skipped — and "the image stopped being readable", which is the headline
+incident the job exists to catch. The whole line is one `grep -qiE` over
+skopeo's stderr, and widening it restores the behaviour the file's header
+describes as the bug it was written to fix: a `manifest unknown` (`:latest`
+deleted or repointed) or an `unauthorized` reported as a quiet green run. The
+second accumulates a status across two date tags, where an absent tag is a
+warning and a disagreeing tag is a failure; if a later matching tag reset the
+accumulator, a repointed `latest.YYYYMMDD` would be printed to stdout and the
+job would still pass.
+
+So each body is extracted from the parsed YAML and run as a real subprocess with
+`skopeo` and `cosign` stubbed, asserting what the next step and the job status
+consume: the `GITHUB_OUTPUT` keys, the exit code, the `::error::` and
+`::warning::` annotations, and the step summary. The `if:` guards are asserted
+next to them, because the exemption only means anything while the steps after it
+are gated on `present` — ungated, the exempt path runs `cosign verify` against
+an empty digest and fails the run it was meant to spare.
 
 ## End-to-end
 
