@@ -30,6 +30,7 @@ when present and skipped when not.
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
 | `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
+| `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -183,6 +184,40 @@ consume: the `GITHUB_OUTPUT` keys, the exit code, the `::error::` and
 next to them, because the exemption only means anything while the steps after it
 are gated on `present` — ungated, the exempt path runs `cosign verify` against
 an empty digest and fails the run it was meant to spare.
+
+## The labeler
+
+`test-labeler.sh` covers the pair that applies `area/*` labels:
+`.github/labeler.yml` and `.github/workflows/labeler.yml`. Two
+directory-scanning checks already touched the workflow — `test-auto-qa-tuning.sh`
+for its timeout and manifest entry, `test-ci-workflows.sh`'s expression pass
+because it reads every file in `.github/workflows/` — but nothing read either
+file for what it says, and nothing read the config at all.
+
+The workflow is the one job here that holds a write token on an event a stranger
+triggers. `pull_request_target` runs the *base* branch's copy with
+`pull-requests: write`, which is safe for exactly as long as the head branch's
+contents never arrive: an `actions/checkout` of the head ref, or a `run:` body
+executing something the pull request supplied, hands an outside contributor that
+token. Both absences are asserted, along with the permission set as a whole, the
+trigger and its event types, the SHA pin, and `sync-labels: false` — the action
+would otherwise remove a label a human applied by hand.
+
+The config carries a different boundary. `ci`, `testing`, `quality`, `security`,
+`hive/*` and `agent/*` mean *approved to auto-merge* to the external system this
+repository is connected to (docs/SECURITY-AI.md, "Labels carry authority"), and
+`ci` and `testing` are exactly what a path-based labeler would attach to a change
+under `.github/workflows/` or `tests/`. The `area/*` namespace is what keeps that
+from happening, and it was enforced by a comment. Here it is a check, twice: every
+label must be in `area/`, and none may appear in the authority list the doc
+publishes — read out of the doc rather than copied, so the two cannot drift.
+
+The globs are asserted by evaluating them against paths that exist in this tree,
+not by reading them back. `tests/*` in place of `tests/**` parses, reviews
+cleanly, and silently stops labeling everything below the first level; only a
+path-to-labels table catches it. The matcher that evaluation needs is itself run
+against a fixture config with known answers first — an under-matching matcher
+would turn the whole table into a vacuous pass.
 
 ## End-to-end
 
