@@ -32,6 +32,7 @@ when present and skipped when not.
 | `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
 | `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op and the ref the push lands on |
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
+| `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
@@ -209,6 +210,52 @@ What it pins down:
 - the three steps take their digest and tag list from the same push and metadata
   outputs, run under exactly the push step's `if:` guard, and sit in the order
   push → propagate → verify → sign.
+
+## The rechunk and the runner's disks
+
+`test-build-rechunk.sh` covers the three `run:` bodies that come before the
+publish band in the same job: `Update Podman`, `Move container storage to the
+large runner disk` and `Rechunk Image with Chunkah`. They are extracted from the
+parsed YAML the same way, and executed with recording `podman`, `sudo`,
+`apt-get` and `df` stubs and a redirected `HOME`. The `sudo` stub records and
+returns rather than exec-ing, so running the suite writes nothing under `/etc`
+or `/mnt`. `IMAGE_NAME` is not hand-written either: `Prepare environment` is run
+first and its `GITHUB_ENV` output supplies the lower-cased name the later steps
+address the image by.
+
+Two of the three fail quietly rather than loudly, which is what makes them worth
+executing:
+
+- `Update Podman` pins `crun`, `buildah`, `podman` and `skopeo` to the
+  `resolute` pocket because Ubuntu 24.04's podman drops Chunkah's layer
+  annotations on push. Lose the `/resolute` suffixes and apt installs the
+  runner's own podman again — the build still succeeds, just without the
+  annotations. The step is also written to retire itself once the hosted image
+  ships podman 5, so both sides of `-ge 5` are covered, including the 5.0.0
+  boundary, and the skip path is asserted to make no apt or `sudo` calls at all.
+- `Move container storage` is checked against a *populated* store, because that
+  is what the hosted image ships. The `rm -rf` before the `ln -s` is the whole
+  step: without it the link is created inside the existing directory, podman
+  goes on using `/`, and the step still exits 0 — the failure arrives much later
+  as an out-of-disk part-way through the rechunk.
+
+For the rechunk itself the assertions are about the sequence and the argv, since
+that is where its two recorded fixes live. `podman inspect --format
+'{{json .Config}}'` is deliberate: the full inspect grows with the base image's
+layer count, and at 256 layers it crossed `MAX_ARG_STRLEN` and exec failed with
+`E2BIG`, so the stub honours the format string and the exported
+`CHUNKAH_CONFIG_STR` is checked to carry no per-layer content. The
+buffer-to-archive, `podman image prune -af`, `TMPDIR=/mnt/tmp podman load`
+ordering is what keeps two unpacked copies of the image off one disk, so the
+calls are asserted in order rather than as a set — and a failing chunkah run is
+asserted to reach neither the prune nor the load, because the prune deletes the
+source image the job would otherwise still have. A failing `podman inspect` is
+covered for the same reason: it is what the separate `export
+CHUNKAH_CONFIG_STR` line buys, since folding it into the assignment would return
+`export`'s status and rechunk with an empty config. The closing
+`for tag in ${TAGS}` is unquoted on purpose — the metadata step sets
+`sep-tags: " "` — so the tag loop is driven with a three-tag list and the
+resulting `podman tag` calls are counted.
 
 ## The AI fix workflow
 
@@ -485,12 +532,14 @@ prefix in the script itself.
 `test-post-check.sh` covers it by stubbing that helper and asserting the
 argument. Verifying the wrong package, or none, would otherwise still exit 0.
 
-Three `run:` bodies of `build.yml`'s `build_push` job are still executed by
-nothing: `Update Podman`, `Move container storage to the large runner disk` and
-`Rechunk Image with Chunkah`. They drive `podman`, `apt-get` and `sudo` against
-a hosted runner's disk layout, so covering them means stubbing that toolchain
-rather than a single command — worth doing, and separate from the publish band
-above.
+Every `run:` body of `build.yml`'s `build_push` job is now executed by a test —
+the build band by `test-build-rechunk.sh`, the publish band by
+`test-build-publish.sh`. What is left in that job is its `uses:` steps
+(`checkout`, `remove-unwanted-software`, `docker/metadata-action`,
+`buildah-build`, `login-action`, `push-to-registry`, `cosign-installer`), which
+are pinned third-party actions with no shell of this repository's own. Nothing here runs them, and the tag list
+`metadata-action` produces is only observable through the `run:` bodies on
+either side of it, which is where the tests supply it themselves.
 
 The other `build_files/*.sh` scripts still run their work at the top level, so
 `source` executes the whole file. Their happy path is exercised by the `Build
