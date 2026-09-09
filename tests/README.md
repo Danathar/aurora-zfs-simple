@@ -24,7 +24,7 @@ when present and skipped when not.
 | `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed            |
 | `test-coverage.sh`          | every shipped `*.sh` is declared covered by a named test or UNCOVERED with a reason        |
 | `test-docs-paths.sh`        | every repo path README.md and AGENTS.md name actually exists                               |
-| `test-ci-workflows.sh`      | CI still runs this suite with its dependencies, neither workflow's path filter leaves a gap, and workflow run/shell values contain no Actions expressions |
+| `test-ci-workflows.sh`      | CI still runs this suite with its dependencies, neither workflow's path filter leaves a gap, workflow run/shell values contain no Actions expressions, and every action any workflow uses is pinned to immutable code |
 | `test-auto-qa-tuning.sh`    | every workflow job is bounded by a timeout, and declared to the auto-QA manifest at the number the YAML actually says |
 | `test-e2e-preflight.sh`     | `tests/e2e/run-e2e.sh`'s option parsing, free-space preflight and `--clean`, with `podman` and `df` stubbed |
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
@@ -97,6 +97,28 @@ whether an empty script can execute successfully.
 This is an invariant over those executable fields, not a general Actions
 schema validator or a security audit of third-party action inputs, reusable
 workflows, composite actions, or how a script later uses its environment.
+
+The pinning check is the other directory-wide pass, in `lib/workflow_pins.py`
+with regressions in `test_workflow_pins.py`, and it exists because the same rule
+was previously asserted one file at a time. `test-ai-fix.sh` walks every `uses:`
+in `ai-fix.yml` because that job holds `contents: write`, and `test-labeler.sh`
+checks `labeler.yml`'s single action because that one holds
+`pull-requests: write` on an event any outside contributor can trigger. Both
+still do, and both assert more than pinning about those files — but between them
+they left `build.yml` unchecked, and `build_push` holds `packages: write`, runs
+six third-party actions, and hands `secrets.SIGNING_SECRET` to `cosign sign`. A
+`uses:` on a tag there is a third party deciding what gets signed under the key
+`cosign.pub` tells consumers to verify against.
+
+Applying the rule to the directory covers `status-badges.yml` (`contents: write`,
+pushes the status branch), `nightly-compliance.yml`, `coverage-gate.yml` and
+`auto-qa.yml` as well, and covers a workflow added later that nobody remembers
+to write a test for. Step-level `uses:` and a job-level reusable-workflow
+`uses:` are both checked: `owner/repo[/path]@ref` must carry a full
+40-character lowercase commit SHA, `docker://` must carry an `@sha256:` digest,
+and `./local/action` needs no ref because it moves with the commit under review.
+A scan that extracted no `uses:` at all fails rather than reporting a clean
+result, the way `test-ai-fix.sh` already refuses its own empty extraction.
 
 What runs that test matters as much as what it asserts, and this is the part a
 first draft got wrong. A `pull_request` run executes the *head* branch's copy of

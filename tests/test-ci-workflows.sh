@@ -3,7 +3,7 @@
 # Asserts that CI still runs the shell suite, and that nothing it gates has
 # quietly stopped being gated.
 #
-# Every host-side guarantee this repo makes rests on four facts about
+# Every host-side guarantee this repo makes rests on five facts about
 # .github/workflows/, and until this file none of them was checked by anything:
 #
 #   1. build.yml's `Shell tests` job runs ./tests/run-tests.sh
@@ -13,6 +13,8 @@
 #      makes test-shell-syntax.sh's shellcheck pass enforced rather than
 #      skipped (that test skips it when the tool is absent, by design)
 #   4. build_push has `needs: tests`, so a red suite blocks the image build
+#   5. every action any workflow uses names immutable code, so nothing running
+#      beside `packages: write` and the signing key can change after review
 #
 # Delete the tests job, drop `needs: tests`, drop the shellcheck install, or add
 # a path to paths-ignore without adding it to coverage-gate.yml, and the suite
@@ -531,6 +533,44 @@ if expression_check=$("${WORKFLOW_PYTHON}" -B \
     _pass "${expression_check}"
 else
     _fail "workflow run/shell values contain no Actions expressions" "${expression_check}"
+fi
+
+# --- 7. every action every workflow uses is pinned to immutable code --------
+#
+# A `uses:` value is the one input to a job that can change after review without
+# a commit here: `owner/repo@v1` runs whatever that tag points at when the run
+# starts.
+#
+# Two tests already assert this, and both are scoped to one file.
+# test-ai-fix.sh walks ai-fix.yml because that job holds `contents: write`, and
+# test-labeler.sh checks labeler.yml's single action because that one holds
+# `pull-requests: write` on an event any outside contributor can trigger. Both
+# are worth keeping -- they assert more than pinning about those files -- but
+# between them they leave build.yml unchecked, and build.yml's `build_push` job
+# holds `packages: write`, runs six third-party actions, and hands
+# `secrets.SIGNING_SECRET` to `cosign sign`. The grant the two existing checks
+# were written for is strictly smaller than the one nothing checked.
+#
+# So the rule is applied to the directory rather than to a file, which also
+# covers status-badges.yml (`contents: write`, pushes the status branch),
+# nightly-compliance.yml, coverage-gate.yml and auto-qa.yml, and covers a
+# workflow added later without anyone remembering to add a test for it.
+#
+# This section is why coverage-gate.yml triggers on '.github/workflows/**':
+# section 3 asserts that trigger, and it is what makes a pull request unable to
+# unpin an action in the same workflow that would have caught it.
+
+if "${WORKFLOW_PYTHON}" -B "${TEST_DIR}/test_workflow_pins.py"; then
+    _pass "the action pinning checker passes its regression cases"
+else
+    _fail "the action pinning checker passes its regression cases"
+fi
+
+if pin_check=$("${WORKFLOW_PYTHON}" -B \
+    "${TEST_DIR}/lib/workflow_pins.py" "${REPO_ROOT}/.github/workflows" 2>&1); then
+    _pass "${pin_check}"
+else
+    _fail "every workflow uses: is pinned to immutable code" "${pin_check}"
 fi
 
 finish
