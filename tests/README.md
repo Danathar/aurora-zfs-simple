@@ -31,6 +31,7 @@ when present and skipped when not.
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
 | `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
 | `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op and the ref the push lands on |
+| `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
@@ -165,6 +166,49 @@ The step's `if:` guard is read against `ci/write-badges.sh`. It waits for
 nothing else in the repository ties those two files together: rename an output
 in the script and the gate is false on every run, badges frozen, every job
 green.
+
+## The published tag set
+
+`test-build-publish.sh` covers the last four `run:` bodies of `build.yml`'s
+`build_push` job — the ones that decide what the registry ends up holding and
+what is signed. Until it existed nothing executed them: they are shell inside
+YAML strings, so `run-tests.sh` does not find them, `test-shell-syntax.sh` does
+not `bash -n` them and `shellcheck` never sees them, while
+`test-ci-workflows.sh` reads the same file only for its jobs, triggers and path
+filters.
+
+The band exists because of a real incident. Sequential `podman push`es of one
+local image can emit different manifest bytes — the first uploads, later ones
+reuse cached blob info — so `latest` and the date tags ended up on different
+digests and `latest` fell outside what was signed. The job now pushes exactly
+one tag and copies that manifest onto the rest with `skopeo copy
+--preserve-digests`, then verifies every tag resolves to the pushed digest
+before `cosign` runs.
+
+Each step is extracted from the parsed YAML and run as a real subprocess against
+a file-backed fake registry: a directory of tag files holding digests, written
+by a recording `skopeo copy` stub and read back by `skopeo inspect`. So the
+assertions are about the state the registry is left in, not about the text of
+the script — the tags that exist, the digest each one resolves to, and the argv
+that got them there. The `Prepare environment` step is run first and its
+`GITHUB_ENV` output feeds the rest, because `github.repository_owner` is
+`Danathar` and every reference in the job depends on that one case fold.
+
+What it pins down:
+
+- the copy source is the pushed `@digest`, never `:latest`, and
+  `--preserve-digests` is on every copy — either change re-creates the split
+  with all the tags still present and nothing looking wrong;
+- the already-pushed default tag is skipped by the propagate loop and checked by
+  the verify loop;
+- a mismatched tag, an unreadable tag and an empty `steps.push.outputs.digest`
+  each fail the job, and fail it *before* `cosign` signs anything;
+- `cosign` signs `@${DIGEST}`, non-interactively, with the key read from the
+  environment — signing a tag would leave the digest that consumers (and
+  `nightly-compliance.yml`) verify unsigned while the job stayed green;
+- the three steps take their digest and tag list from the same push and metadata
+  outputs, run under exactly the push step's `if:` guard, and sit in the order
+  push → propagate → verify → sign.
 
 ## The AI fix workflow
 
@@ -440,6 +484,13 @@ prefix in the script itself.
 `verify_rpm_payload`, and which package it names is the whole of it, so
 `test-post-check.sh` covers it by stubbing that helper and asserting the
 argument. Verifying the wrong package, or none, would otherwise still exit 0.
+
+Three `run:` bodies of `build.yml`'s `build_push` job are still executed by
+nothing: `Update Podman`, `Move container storage to the large runner disk` and
+`Rechunk Image with Chunkah`. They drive `podman`, `apt-get` and `sudo` against
+a hosted runner's disk layout, so covering them means stubbing that toolchain
+rather than a single command — worth doing, and separate from the publish band
+above.
 
 The other `build_files/*.sh` scripts still run their work at the top level, so
 `source` executes the whole file. Their happy path is exercised by the `Build
