@@ -66,8 +66,13 @@ dnf5 -y install /tmp/rpms/{kmods,common}/*v4l2loopback*.rpm
 # The previous curl of ublue-os/akmods@refs/heads/main was the one unpinned
 # external input in this build, and nothing tied what it returned to the kmods
 # the certificate is supposed to validate (#115). The addons RPM is built in
-# the same akmods CI run that compiled and signed those kmods, so the
-# certificate and the modules move together by construction.
+# the same akmods CI run that compiled and signed the kmods installed above, so
+# for those the certificate and the modules move together by construction.
+#
+# That does not extend to ZFS. kmod-zfs comes from the separate `akmods-zfs`
+# image, on its own mutable tag, so the certificate matching those modules is
+# a property to check rather than one this mount provides. post-check.sh's
+# check_module_signatures is what checks it, before the image is signed.
 addons_rpm=$(find /tmp/rpms -name 'ublue-os-akmods-addons-*.rpm' -print -quit)
 if [[ -z "${addons_rpm}" ]]; then
     echo "ERROR: no ublue-os-akmods-addons RPM under /tmp/rpms; cannot install the akmods Secure Boot certificate." >&2
