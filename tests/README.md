@@ -26,6 +26,7 @@ when present and skipped when not.
 | `test-docs-paths.sh`        | every repo path README.md and AGENTS.md name actually exists                               |
 | `test-ci-workflows.sh`      | CI still runs this suite with its dependencies, neither workflow's path filter leaves a gap, workflow run/shell values contain no Actions expressions, and every action any workflow uses is pinned to immutable code |
 | `test-auto-qa-tuning.sh`    | every workflow job is bounded by a timeout, and declared to the auto-QA manifest at the number the YAML actually says |
+| `test-auto-qa-run.sh`       | `.github/workflows/auto-qa.yml`: the `Compare declared timeouts with observed durations` step, extracted and executed against a `gh` stub backed by JSON fixtures — the two samples, the killed-at-the-cap margin, the at-risk and loose verdicts, and which of them fails the workflow |
 | `test-e2e-preflight.sh`     | `tests/e2e/run-e2e.sh`'s option parsing, free-space preflight and `--clean`, with `podman` and `df` stubbed |
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
@@ -370,6 +371,48 @@ cleanly, and silently stops labeling everything below the first level; only a
 path-to-labels table catches it. The matcher that evaluation needs is itself run
 against a fixture config with known answers first — an under-matching matcher
 would turn the whole table into a vacuous pass.
+
+## The auto-QA report
+
+`test-auto-qa-tuning.sh` and `test-auto-qa-run.sh` split the auto-QA workflow
+between them along a line worth stating: the first checks the *manifest*
+(`.github/auto-qa-tuning.json`) against the workflow files, and reads
+`auto-qa.yml` only as text, to confirm it still points at that manifest. The
+second executes the workflow's one `run:` body. Until it existed, the shell that
+turns those numbers into a verdict was run by nothing — it is shell inside a
+YAML string, so `run-tests.sh` does not find it, `test-shell-syntax.sh` does not
+`bash -n` it, and `shellcheck` never sees it.
+
+The step is extracted with PyYAML and run as a real subprocess, with the
+manifest written per case and `gh` replaced by a stub that answers from JSON
+fixtures and records its argv. The stub honours `--jq` by piping the fixture
+through the real jq, so the filters in the workflow are exercised rather than
+bypassed; the arithmetic, the `awk` ratio comparisons and the summary table are
+the workflow's own.
+
+The property that most needs a test is the one the workflow's header records as
+having already gone wrong once. Duration is sampled from *successful* runs,
+because a run that failed for an unrelated reason says nothing about how long
+the work takes — but a job killed at `timeout-minutes` is a *failure*, so
+sampling successes alone left this workflow blindest at the moment it mattered:
+once every current run dies at the cap, the only samples left are older and
+faster, and it reported "ok" while the build was broken on a schedule. The
+second query exists for that case, and a case here removes every successful run
+so that only it can produce the verdict.
+
+`cap_s=$((timeout_s * 98 / 100))` is what makes "killed at the cap" decidable at
+all, since the API exposes no timed-out conclusion: a job killed at 10m reports
+a hair under 600s and an ordinary test failure returns long before it. Cases sit
+on both sides of that margin, and on both sides of the at-risk ratio, including
+exactly at it. A slow *success* at the same duration is checked too — without
+the `conclusion == "failure"` filter, every job approaching its cap would be
+reported as one that had already been killed.
+
+The remaining cases cover what the report is for: only **at risk** exits
+non-zero, "loose" is written and never fails, a job with no sampled runs renders
+as an absence rather than as a very fast job, the at-risk arm produces one row
+rather than two, and the manifest is left exactly as it was found — this
+workflow proposes a number, it does not edit a timeout.
 
 ## End-to-end
 
