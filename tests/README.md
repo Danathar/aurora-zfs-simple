@@ -30,7 +30,7 @@ when present and skipped when not.
 | `test-e2e-preflight.sh`     | `tests/e2e/run-e2e.sh`'s option parsing, free-space preflight and `--clean`, with `podman` and `df` stubbed |
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
-| `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
+| `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — auth-file use, the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
 | `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op and the ref the push lands on |
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
 | `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
@@ -382,6 +382,13 @@ consume: the `GITHUB_OUTPUT` keys, the exit code, the `::error::` and
 next to them, because the exemption only means anything while the steps after it
 are gated on `present` — ungated, the exempt path runs `cosign verify` against
 an empty digest and fails the run it was meant to spare.
+
+The skopeo stubs also record every argument. Both inspect steps must name the
+`~/.docker/config.json` written by `docker/login-action`, must never receive the
+registry token or `--creds` on their command line, and must fail before calling
+skopeo if that file is absent. The last guard prevents a missing login artifact
+from silently turning a successful check of a public package into an anonymous
+one.
 
 ## The labeler
 
