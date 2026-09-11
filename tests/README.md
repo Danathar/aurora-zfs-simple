@@ -35,7 +35,7 @@ when present and skipped when not.
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
 | `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
-| `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement |
+| `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement, and the split of work between `renovate.json` and `.github/dependabot.yml` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
@@ -104,6 +104,23 @@ over: they are absolute URLs, and they are in YAML. One of them carries an
 `#anchor` into AGENTS.md, resolved here under the same slug rules — hence
 `lib/markdown.sh`, which both tests now share rather than keeping two copies of
 GitHub's slug rules that could drift apart.
+
+`test-renovate.sh` covers a division of labour that is written down in only one
+of the two places it binds. `renovate.json` disables its `github-actions`
+manager with a comment saying Dependabot owns those updates; the other half of
+that sentence is an ecosystem entry in `.github/dependabot.yml`, and neither
+file mentions the other. Both halves failing is silent in opposite directions —
+two bots on `github-actions` opens every update twice, and neither leaves the
+full-SHA `uses:` pins that `lib/workflow_pins.py` requires with nothing to move
+them, which does not fail anything because a stale pin is still a valid one. So
+the cases assert ownership rather than presence: each Dependabot ecosystem is
+mapped to the Renovate manager it would collide with, an unmapped ecosystem is
+a failure rather than an assumed-harmless addition, and the `Containerfile`'s
+hand-managed ARGs are checked against both bots at once. The Chunkah
+`packageRules` entry is joined to the custom manager's `depNameTemplate`,
+because a rename there would detach the rule while leaving it valid JSON, and
+the README paragraph promising the pin stays a tag is held against the same
+name.
 
 `test-ci-workflows.sh` closes the same kind of gap one level up. Everything in
 the "In CI" section below was, until it existed, prose that nothing checked: the
