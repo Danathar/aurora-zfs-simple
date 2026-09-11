@@ -32,7 +32,7 @@
 #     word away.
 #
 # The step is extracted from the YAML with PyYAML and run against a real local
-# bare repository, reached by rewriting the `https://x-access-token:...` URL the
+# bare repository, reached by rewriting the `https://github.com/...` URL the
 # step builds with `url.<file://...>.insteadOf` in a per-case
 # `GIT_CONFIG_GLOBAL`. Nothing is stubbed: it is git that runs, so the orphan
 # branch, the shallow fetch, the staged diff and the ref the push lands on are
@@ -244,13 +244,16 @@ new_case() {
     git init -q --bare "${CASE_REMOTE}"
     mkdir -p "${CASE_WORKSPACE}/artifacts"
 
-    # The step builds its remote URL by interpolating GH_TOKEN and REPO into a
-    # github.com https URL. Rewriting exactly that URL to the local bare repo
-    # leaves the step's own string construction under test: a change to the URL
-    # it builds stops matching, and the fetch/push fail loudly.
+    # The step builds its remote URL by interpolating REPO into a github.com
+    # https URL, with no credential in it -- the token reaches git through a
+    # credential helper that reads GH_TOKEN from the environment. Rewriting
+    # exactly that URL to the local bare repo leaves the step's own string
+    # construction under test: a change to the URL it builds stops matching,
+    # and the fetch/push fail loudly. A URL that regained an embedded
+    # credential would no longer match either, which is what B7 asserts.
     cat >"${CASE_DIR}/gitconfig" <<EOF
 [url "file://${CASE_REMOTE}"]
-    insteadOf = https://x-access-token:${TEST_TOKEN}@github.com/${TEST_REPO}.git
+    insteadOf = https://github.com/${TEST_REPO}.git
 EOF
 }
 
@@ -403,5 +406,50 @@ else
         "stdout: ${PUB_STDOUT}" \
         "stderr: ${PUB_STDERR}"
 fi
+
+# --- B7. the write token never reaches a command line -----------------------
+#
+# /proc/<pid>/cmdline is mode 0444, so a credential spliced into the remote URL
+# is readable by every uid on the runner for as long as any git process holds
+# it, it is copied verbatim into .git/config, and it lands in any ps capture
+# taken while debugging a hung fetch. #150 took the same exposure out of
+# skopeo's argv in ci/write-badges.sh and nightly-compliance.yml; this job's
+# token is the write-scoped one, so it is the one that matters most.
+#
+# Executed rather than read: the step runs behind a PATH shim that records
+# every git argv and then exec's the real git, so this observes the process the
+# runner would actually create. The credential helper the step installs carries
+# the literal text ${GH_TOKEN} on git's command line and expands it from the
+# environment only inside the helper's own shell, so the value cannot appear
+# here however the fetch or push is routed.
+
+new_case
+GIT_ARGV_LOG="${CASE_DIR}/git-argv.log"
+SHIM_DIR="${CASE_DIR}/bin"
+mkdir -p "${SHIM_DIR}"
+REAL_GIT="$(command -v git)"
+cat >"${SHIM_DIR}/git" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${GIT_ARGV_LOG}"
+exec "${REAL_GIT}" "\$@"
+EOF
+chmod +x "${SHIM_DIR}/git"
+: >"${GIT_ARGV_LOG}"
+printf '%s\n' "${AKMODS_BADGE}" >"${CASE_WORKSPACE}/artifacts/akmods-badge.json"
+
+SAVED_PATH="${PATH}"
+PATH="${SHIM_DIR}:${PATH}"
+publish
+PATH="${SAVED_PATH}"
+
+assert_eq "the step still publishes with every git argv recorded" \
+    "0" "${PUB_STATUS}"
+assert_not_contains "no git command line carries the write token" \
+    "$(cat "${GIT_ARGV_LOG}")" "${TEST_TOKEN}"
+
+# The shim has to have seen the commands, or the assertion above passes over an
+# empty log. The remote is added, fetched from and pushed to by name.
+assert_contains "the argv log recorded the git invocations it is asserting on" \
+    "$(cat "${GIT_ARGV_LOG}")" "remote add origin"
 
 finish

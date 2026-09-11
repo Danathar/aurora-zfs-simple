@@ -80,7 +80,19 @@ jobs:
           work_dir="$(mktemp -d)"
           cd "$work_dir"
           git init -q
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          # The remote URL carries no credential: /proc/<pid>/cmdline is mode
+          # 0444, so a token spliced into the URL is readable by every uid on
+          # the runner for as long as any git process holds it, it is copied
+          # verbatim into .git/config, and it lands in any ps capture taken
+          # while debugging a hung fetch. The helper below is passed to git as
+          # the literal text `${GH_TOKEN}` and expands it from the environment
+          # only inside the helper's own shell, where /proc/<pid>/environ is
+          # 0600. Same reasoning as ci/write-badges.sh's --authfile and
+          # build.yml's `cosign sign --key env://`.
+          git remote add origin "https://github.com/${REPO}.git"
+          git config --local credential.helper ''
+          git config --local --add credential.helper \
+            '!f() { printf "username=x-access-token\npassword=%s\n" "${GH_TOKEN}"; }; f'
           if git fetch --depth 1 origin status 2>/dev/null; then
             git checkout -q FETCH_HEAD -b status
           else
