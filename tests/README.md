@@ -226,7 +226,7 @@ into a commit on the `status` branch that shields.io reads.
 
 The step is extracted from the parsed YAML and run for real. Nothing is stubbed:
 the remote is a local bare repository, reached by rewriting the
-`https://x-access-token:…@github.com/…` URL the step builds with
+`https://github.com/…` URL the step builds with
 `url.<file://…>.insteadOf` in a per-case `GIT_CONFIG_GLOBAL`. So the orphan
 branch, the shallow fetch, the staged diff and the ref the push lands on are all
 observed on the far side rather than read out of the script. Overriding
