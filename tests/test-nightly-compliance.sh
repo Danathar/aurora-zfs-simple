@@ -184,6 +184,9 @@ extract() {
 }
 
 TEST_IMAGE="ghcr.io/danathar/aurora-zfs-simple"
+# Keep credential sentinels in the extracted scripts ambient environment. The
+# parsed-YAML assertions below separately prove the workflow does not inject
+# them; these values prove the run bodies never copy ambient secrets into argv.
 TEST_ACTOR="a-runner"
 TEST_TOKEN="not-a-real-token"
 DIGEST_A="sha256:1111111111111111111111111111111111111111111111111111111111111111"
@@ -215,20 +218,30 @@ assert_eq "the prepare step lower-cases the image reference for GHCR" \
 
 RESOLVE="${TMP_ROOT}/resolve.sh"
 extract "${RESOLVE}" "Resolve the published :latest" 'present='
+assert_eq "the resolve step does not receive github.token directly" "" \
+    "$(wf '.jobs.published_image.steps[] | select(.name == "Resolve the published :latest") | .env.REGISTRY_TOKEN // ""')"
+assert_eq "the resolve step does not retain the unused registry actor" "" \
+    "$(wf '.jobs.published_image.steps[] | select(.name == "Resolve the published :latest") | .env.REGISTRY_ACTOR // ""')"
 
 # resolve <skopeo stdout JSON, or ""> <skopeo stderr when it fails>
+#         [whether ~/.docker/config.json exists]
 #
 # Runs the extracted script in its own directory — it writes err.txt into the
 # working directory — with a stub `skopeo` that either prints the canned inspect
 # payload and succeeds, or prints the canned message on stderr and fails. Both
 # are real skopeo behaviours; which one it is, is the decision under test.
 #
-# Sets R_STATUS, R_STDOUT, R_OUTPUT and R_CALLS.
+# Sets R_STATUS, R_STDOUT, R_OUTPUT, R_CALLS and R_AUTH_FILE.
 resolve() {
-    local ok_json=$1 err_text=$2 dir
+    local ok_json=$1 err_text=$2 auth_present=${3:-yes} dir
 
     dir="$(mktemp -d "${TMP_ROOT}/resolve.XXXXXX")"
-    mkdir -p "${dir}/bin"
+    mkdir -p "${dir}/bin" "${dir}/home/.docker"
+    R_AUTH_FILE="${dir}/home/.docker/config.json"
+    if [[ "${auth_present}" == "yes" ]]; then
+        printf '{"auths":{"ghcr.io":{"auth":"fixture"}}}\n' >"${R_AUTH_FILE}"
+        chmod 600 "${R_AUTH_FILE}"
+    fi
     printf '%s' "${ok_json}" >"${dir}/skopeo.out"
     printf '%s\n' "${err_text}" >"${dir}/skopeo.err"
     : >"${dir}/calls"
@@ -246,6 +259,7 @@ resolve() {
     R_STDOUT="$(
         cd "${dir}" &&
             PATH="${dir}/bin:${PATH}" \
+                HOME="${dir}/home" \
                 IMAGE_REF="${TEST_IMAGE}" \
                 REGISTRY_ACTOR="${TEST_ACTOR}" \
                 REGISTRY_TOKEN="${TEST_TOKEN}" \
@@ -277,10 +291,24 @@ assert_eq "a readable :latest publishes the digest it resolved" \
     "${DIGEST_A}" "$(out_value digest)"
 assert_eq "the date tag is derived from the image's creation time in UTC" \
     "20260102" "$(out_value date_tag)"
-assert_contains "the inspect is authenticated with the registry credentials" \
-    "${R_CALLS}" "--creds ${TEST_ACTOR}:${TEST_TOKEN}"
+assert_contains "the inspect names the docker login auth file" \
+    "${R_CALLS}" "--authfile ${R_AUTH_FILE}"
+assert_not_contains "the registry token never reaches the inspect argv" \
+    "${R_CALLS}" "${TEST_TOKEN}"
+assert_not_contains "the inspect does not accept inline credentials" \
+    "${R_CALLS}" "--creds"
 assert_contains "the inspect targets :latest of the job's image reference" \
     "${R_CALLS}" "docker://${TEST_IMAGE}:latest"
+
+# A public package can still be inspected anonymously. Refuse that silent
+# downgrade when the login step did not leave the credential file promised by
+# the workflow.
+resolve "$(printf '{"Digest":"%s","Created":"2026-01-01T23:30:00-05:00"}' "${DIGEST_A}")" "" no
+assert_eq "a missing docker auth file fails before an anonymous inspect" \
+    "1" "${R_STATUS}"
+assert_contains "a missing docker auth file is annotated as an error" \
+    "${R_STDOUT}" "::error::${R_AUTH_FILE} is missing"
+assert_eq "skopeo is not called without the promised auth file" "" "${R_CALLS}"
 
 # --- never published: the one narrow exemption ------------------------------
 
@@ -393,20 +421,30 @@ assert_not_contains "a failed verification does not claim the signature verifies
 
 TAGS="${TMP_ROOT}/tags.sh"
 extract "${TAGS}" "Verify the date tags still share that digest" 'EXPECTED'
+assert_eq "the date-tag step does not receive github.token directly" "" \
+    "$(wf '.jobs.published_image.steps[] | select(.name == "Verify the date tags still share that digest") | .env.REGISTRY_TOKEN // ""')"
+assert_eq "the date-tag step does not retain the unused registry actor" "" \
+    "$(wf '.jobs.published_image.steps[] | select(.name == "Verify the date tags still share that digest") | .env.REGISTRY_ACTOR // ""')"
 
 DATE_TAG="20260102"
 
 # tags <digest for latest.20260102> <digest for 20260102>
+#      [whether ~/.docker/config.json exists]
 #
 # An empty argument means the tag is not published, which the stub reports the
 # way skopeo does: non-zero, with the message on stderr that the step discards.
 #
-# Sets T_STATUS, T_STDOUT and T_CALLS.
+# Sets T_STATUS, T_STDOUT, T_CALLS and T_AUTH_FILE.
 tags() {
-    local dated=$1 plain=$2 dir
+    local dated=$1 plain=$2 auth_present=${3:-yes} dir
 
     dir="$(mktemp -d "${TMP_ROOT}/tags.XXXXXX")"
-    mkdir -p "${dir}/bin" "${dir}/digests"
+    mkdir -p "${dir}/bin" "${dir}/digests" "${dir}/home/.docker"
+    T_AUTH_FILE="${dir}/home/.docker/config.json"
+    if [[ "${auth_present}" == "yes" ]]; then
+        printf '{"auths":{"ghcr.io":{"auth":"fixture"}}}\n' >"${T_AUTH_FILE}"
+        chmod 600 "${T_AUTH_FILE}"
+    fi
     : >"${dir}/calls"
     [[ -n "${dated}" ]] && printf '%s\n' "${dated}" >"${dir}/digests/latest.${DATE_TAG}"
     [[ -n "${plain}" ]] && printf '%s\n' "${plain}" >"${dir}/digests/${DATE_TAG}"
@@ -424,6 +462,7 @@ tags() {
 
     T_STDOUT="$(
         PATH="${dir}/bin:${PATH}" \
+            HOME="${dir}/home" \
             IMAGE_REF="${TEST_IMAGE}" \
             REGISTRY_ACTOR="${TEST_ACTOR}" \
             REGISTRY_TOKEN="${TEST_TOKEN}" \
@@ -443,10 +482,21 @@ assert_contains "the dated latest tag is checked" \
     "${T_CALLS}" "docker://${TEST_IMAGE}:latest.${DATE_TAG}"
 assert_contains "the bare date tag is checked" \
     "${T_CALLS}" "docker://${TEST_IMAGE}:${DATE_TAG}"
-assert_contains "the tag check is authenticated" \
-    "${T_CALLS}" "--creds ${TEST_ACTOR}:${TEST_TOKEN}"
+assert_contains "the tag checks name the docker login auth file" \
+    "${T_CALLS}" "--authfile ${T_AUTH_FILE}"
+assert_not_contains "the registry token never reaches the tag-check argv" \
+    "${T_CALLS}" "${TEST_TOKEN}"
+assert_not_contains "the tag checks do not accept inline credentials" \
+    "${T_CALLS}" "--creds"
 assert_not_contains "agreeing tags produce no error annotation" \
     "${T_STDOUT}" "::error::"
+
+tags "${DIGEST_A}" "${DIGEST_A}" no
+assert_eq "date-tag checks fail when docker auth is missing" \
+    "1" "${T_STATUS}"
+assert_contains "a missing auth file in the date-tag step is an error" \
+    "${T_STDOUT}" "::error::${T_AUTH_FILE} is missing"
+assert_eq "date tags are not inspected anonymously" "" "${T_CALLS}"
 
 # --- an absent tag is reported, not failed ----------------------------------
 #

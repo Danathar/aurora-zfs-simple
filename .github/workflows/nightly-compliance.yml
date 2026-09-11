@@ -95,9 +95,11 @@ jobs:
         with:
           cosign-release: 'v2.6.1'
 
-      # cosign reads ~/.docker/config.json; skopeo is given --creds explicitly
-      # below. Logging in keeps this working whether or not the package is
-      # public.
+      # docker/login-action writes ~/.docker/config.json. Both cosign and
+      # skopeo read the credential from that file, keeping the token out of
+      # skopeo process arguments. Naming the file also avoids an unrelated,
+      # first-found containers auth file silently making the inspect anonymous.
+      # Logging in keeps this working whether or not the package is public.
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -122,12 +124,11 @@ jobs:
       # green run.
       - name: Resolve the published :latest
         id: latest
-        env:
-          REGISTRY_ACTOR: ${{ github.actor }}
-          REGISTRY_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if ! raw=$(skopeo inspect --creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}" \
+          AUTH_FILE="${HOME}/.docker/config.json"
+          [ -r "${AUTH_FILE}" ] || { echo "::error::${AUTH_FILE} is missing; the Log in to GitHub Container Registry step writes it" >&2; exit 1; }
+          if ! raw=$(skopeo inspect --authfile "${AUTH_FILE}" \
                        "docker://${IMAGE_REF}:latest" 2>err.txt); then
             cat err.txt
             if grep -qiE 'name unknown|repository name not known|name_unknown' err.txt; then
@@ -173,16 +174,16 @@ jobs:
       - name: Verify the date tags still share that digest
         if: steps.latest.outputs.present == 'true'
         env:
-          REGISTRY_ACTOR: ${{ github.actor }}
-          REGISTRY_TOKEN: ${{ github.token }}
           EXPECTED: ${{ steps.latest.outputs.digest }}
           DATE_TAG: ${{ steps.latest.outputs.date_tag }}
         run: |
           set -euo pipefail
+          AUTH_FILE="${HOME}/.docker/config.json"
+          [ -r "${AUTH_FILE}" ] || { echo "::error::${AUTH_FILE} is missing; the Log in to GitHub Container Registry step writes it" >&2; exit 1; }
           status=0
           for tag in "latest.${DATE_TAG}" "${DATE_TAG}"; do
             if ! actual=$(skopeo inspect --format '{{.Digest}}' \
-                            --creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}" \
+                            --authfile "${AUTH_FILE}" \
                             "docker://${IMAGE_REF}:${tag}" 2>/dev/null); then
               echo "::warning::${tag} is not published; skipping"
               continue
