@@ -36,6 +36,7 @@ when present and skipped when not.
 | `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement |
+| `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -59,6 +60,36 @@ some time while the file was `renovate.json` at the repo root. It checks the
 "Repository Layout" block line by line, then the inline code spans, anchoring
 the filter on `git ls-files` so that GitHub `org/repo` references are skipped
 while anything rooted in a real top-level entry is enforced.
+
+`test-issue-templates.sh` extends that to the one set of instructions a human
+reads before anything in this repo runs: `.github/ISSUE_TEMPLATE/**`. Those
+three files fail in a way nothing else here does. GitHub validates them
+server-side, and a malformed form is dropped from the chooser silently — no
+error, no red check, just a template that stops being offered. So the first half
+of the file is shape: the element types, unique ids, labels, dropdowns with
+distinct options, and `validations.required` as a real boolean rather than the
+string `"true"`. That last one is why the file goes through PyYAML instead of
+`grep`; both spellings look identical in the text and only one of them works.
+
+The second half is agreement with the tree, which is the half that rots
+quietly. `build-failure.yml` embeds a runnable diagnosis, and every piece of it
+is a claim about something else here: the `sed` that reads `FEDORA_VERSION` out
+of the `Containerfile` is *executed* against the real file rather than matched
+as a string, because the failure mode is not that the text changed — it is that
+the text is unchanged and now extracts nothing. The two
+`ghcr.io/ublue-os/akmods*` references it builds are held against the
+`Containerfile`'s `FROM` lines with that version substituted, the `ostree.linux`
+label it inspects against the label `ci/write-badges.sh` reads, and the log
+`grep` against AGENTS.md's copy of the same recipe. AGENTS.md is what an agent
+is told to trust mid-incident, so the two copies disagreeing means the form
+collects evidence for a question nobody is asking — including the release
+AGENTS.md hard-codes, which this checks against the `Containerfile`'s `ARG`.
+
+The chooser's `contact_links` are out of `test-docs-paths.sh`'s reach twice
+over: they are absolute URLs, and they are in YAML. One of them carries an
+`#anchor` into AGENTS.md, resolved here under the same slug rules — hence
+`lib/markdown.sh`, which both tests now share rather than keeping two copies of
+GitHub's slug rules that could drift apart.
 
 `test-ci-workflows.sh` closes the same kind of gap one level up. Everything in
 the "In CI" section below was, until it existed, prose that nothing checked: the
@@ -605,6 +636,12 @@ the build band by `test-build-rechunk.sh`, the publish band by
 are pinned third-party actions with no shell of this repository's own. Nothing here runs them, and the tag list
 `metadata-action` produces is only observable through the `run:` bodies on
 either side of it, which is where the tests supply it themselves.
+
+What is left unchecked under `.github/` after `test-issue-templates.sh` is the
+prose that has no machine-readable contract: `.github/prompts/**`,
+`pull_request_template.md` and `copilot-instructions.md`. Their relative links
+are resolved by `test-docs-paths.sh`'s third pass, and nothing else about them is
+assertable — they are read by a human or an agent, not parsed.
 
 The other `build_files/*.sh` scripts still run their work at the top level, so
 `source` executes the whole file. Their happy path is exercised by the `Build

@@ -45,6 +45,8 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 
 # shellcheck source=tests/lib/assert.sh
 source "${TEST_DIR}/lib/assert.sh"
+# shellcheck source=tests/lib/markdown.sh
+source "${TEST_DIR}/lib/markdown.sh"
 
 # A path may be a file or a directory; the layout block lists both.
 assert_path_exists() {
@@ -158,32 +160,9 @@ done
 
 # --- 3. Markdown link targets in every tracked *.md -------------------------
 
-# Everything outside fenced code blocks. A link in a fenced example is a sample,
-# not a claim about this repo, and the same fence rule has to apply when the
-# headings are collected or an example's `# comment` would register as one.
-outside_fences() {
-    awk '/^[ \t]*(```|~~~)/ { fenced = !fenced; next } !fenced' "$1"
-}
-
-# GitHub's heading slug: lower-cased, backticks and punctuation dropped, each
-# remaining space turned into a hyphen. Dropping punctuation does not join the
-# words around it, which is why "kernel / ZFS" slugs to "kernel--zfs" — the
-# doubled hyphen is correct and a link that omits it is broken.
-slugify() {
-    local text=${1,,}
-    text=${text//\`/}
-    text=$(printf '%s' "${text}" | LC_ALL=C sed -E 's/[^a-z0-9 _-]//g')
-    printf '%s' "${text// /-}"
-}
-
-# The slugs a Markdown file offers, one per line.
-heading_slugs() {
-    local heading
-    while IFS= read -r heading; do
-        printf '%s\n' "$(slugify "${heading}")"
-    done < <(outside_fences "$1" |
-        sed -nE 's/^#{1,6}[[:space:]]+(.*[^[:space:]])[[:space:]]*$/\1/p')
-}
+# outside_fences, slugify and heading_slugs come from lib/markdown.sh: the issue
+# chooser links into these same documents by absolute URL, and
+# test-issue-templates.sh has to resolve those anchors under the same rules.
 
 docs=()
 while IFS= read -r doc; do
