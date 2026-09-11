@@ -37,17 +37,30 @@ SKOPEO_CALLS=""
 new_case() {
     local name=$1
     case_dir="${WORK_ROOT}/${name}"
-    mkdir -p "${case_dir}/out" "${case_dir}/bin" "${case_dir}/responses"
+    mkdir -p "${case_dir}/out" "${case_dir}/bin" "${case_dir}/responses" \
+        "${case_dir}/authfile"
 
     cat >"${case_dir}/bin/skopeo" <<'STUB'
 #!/usr/bin/env bash
 # Stub skopeo: replays a canned inspect payload per image reference.
+#
+# It also records what an --authfile argument pointed at *while the inspect was
+# running*: the path, its mode, and its contents. Checking any of that after
+# the script has exited is impossible by design -- the file is meant to be gone
+# by then -- so the observation has to happen from inside the call.
 printf '%s\n' "$*" >>"${STUB_CALLS}"
 ref=""
+prev=""
 for arg in "$@"; do
     case "${arg}" in
     docker://*) ref="${arg#docker://}" ;;
     esac
+    if [[ "${prev}" == "--authfile" ]]; then
+        printf '%s\n' "${arg}" >>"${STUB_AUTH_DIR}/path"
+        stat -c '%a' "${arg}" >>"${STUB_AUTH_DIR}/mode"
+        cat "${arg}" >>"${STUB_AUTH_DIR}/body"
+    fi
+    prev="${arg}"
 done
 response="${STUB_RESPONSES}/$(printf '%s' "${ref}" | tr '/:' '__').json"
 if [[ -f "${response}" ]]; then
@@ -93,6 +106,7 @@ run_badges() {
             HOME="${HOME}" \
             STUB_RESPONSES="${case_dir}/responses" \
             STUB_CALLS="${case_dir}/skopeo-calls.log" \
+            STUB_AUTH_DIR="${case_dir}/authfile" \
             OUT_DIR="${case_dir}/out" \
             CONTAINERFILE="${case_dir}/Containerfile" \
             GITHUB_OUTPUT="${case_dir}/github-output" \
@@ -348,21 +362,49 @@ assert_eq "neither IMAGE_REF nor the owner/name pair is a hard failure" 1 "${STA
 assert_contains "says which variables were required" \
     "${STDOUT}" "GITHUB_REPOSITORY_OWNER or IMAGE_REF required"
 
+# The credential must reach skopeo through a 0600 file, never through the
+# command line: /proc/<pid>/cmdline is mode 0444, so an argv token is readable
+# by every uid on the runner for as long as the inspect runs, and is printed by
+# any `ps` added while debugging a hung one. build.yml already refuses the same
+# exposure for the signing key (`--key env://`, tests/test-build-publish.sh).
 new_case credentials-passed
 standard_containerfile
 stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
 run_badges IMAGE_REF="${LATEST_REF}" REGISTRY_ACTOR=someone REGISTRY_TOKEN=s3cret
-assert_contains "registry credentials are passed to the :latest inspect" \
-    "${SKOPEO_CALLS}" "--creds someone:s3cret"
+assert_contains "the :latest inspect is authenticated through a file" \
+    "${SKOPEO_CALLS}" "--authfile "
+assert_not_contains "the token never appears in skopeo's argv" \
+    "${SKOPEO_CALLS}" "s3cret"
+assert_not_contains "and neither does the actor:token pair --creds took" \
+    "${SKOPEO_CALLS}" "--creds"
 assert_not_contains "credentials are not sent to the public upstream inspects" \
-    "$(grep 'akmods' "${case_dir}/skopeo-calls.log")" "--creds"
+    "$(grep 'akmods' "${case_dir}/skopeo-calls.log")" "--authfile"
+assert_eq "the file skopeo is handed is readable only by its owner" \
+    "600" "$(cat "${case_dir}/authfile/mode")"
+assert_eq "it carries the pair under the reference's registry host" \
+    "someone:s3cret" \
+    "$(jq -r '.auths["ghcr.io"].auth' "${case_dir}/authfile/body" | base64 -d)"
+assert_file_missing "and is removed when the script exits" \
+    "$(cat "${case_dir}/authfile/path")"
+
+# A bare `owner/name` is a Docker Hub shorthand, not a host -- keying the entry
+# on `owner` would leave skopeo with no credential for the reference it was
+# given and silently turn the inspect anonymous.
+new_case credentials-bare-reference
+standard_containerfile
+stub_created 'someone/private-image:latest' "$(days_ago 0)T06:00:00Z"
+run_badges IMAGE_REF='someone/private-image:latest' \
+    REGISTRY_ACTOR=someone REGISTRY_TOKEN=s3cret
+assert_eq "a reference with no registry host is keyed on docker.io" \
+    "someone:s3cret" \
+    "$(jq -r '.auths["docker.io"].auth' "${case_dir}/authfile/body" | base64 -d)"
 
 new_case credentials-partial
 standard_containerfile
 stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
 run_badges IMAGE_REF="${LATEST_REF}" REGISTRY_ACTOR=someone
-assert_not_contains "an actor with no token sends no --creds" \
-    "${SKOPEO_CALLS}" "--creds"
+assert_not_contains "an actor with no token sends no credentials at all" \
+    "${SKOPEO_CALLS}" "--authfile"
 assert_file_exists "an anonymous inspect still writes the badge" \
     "${case_dir}/out/last-good-build-badge.json"
 

@@ -137,9 +137,45 @@ if [ -z "$IMAGE_REF" ]; then
   IMAGE_REF="ghcr.io/${owner}/${name}:latest"
 fi
 
+# The first path component of a reference is a registry host only when it
+# contains a dot or a port, or is localhost -- otherwise it is a Docker Hub
+# namespace and the host is implicit. Getting this wrong would key the auth
+# entry on `owner` instead of `ghcr.io`, and skopeo would find no credential
+# and inspect anonymously.
+registry_host_of() {
+  local ref="$1" first="${1%%/*}"
+  if [ "$first" = "$ref" ]; then
+    printf 'docker.io'
+  elif [ "$first" = "localhost" ] ||
+    [ "$first" != "${first#*.}" ] ||
+    [ "$first" != "${first#*:}" ]; then
+    printf '%s' "$first"
+  else
+    printf 'docker.io'
+  fi
+}
+
+# The credential reaches skopeo through a 0600 file rather than --creds:
+# /proc/<pid>/cmdline is mode 0444, so a token on skopeo's command line is
+# readable by every uid on the runner for as long as the inspect runs, and
+# lands in any ps capture taken while debugging a hung one. That is the same
+# reasoning that makes build.yml sign with `--key env://` rather than a key
+# path (tests/test-build-publish.sh). The environment is safer because
+# /proc/<pid>/environ is 0600; the file narrows it to the uid that wrote it.
+#
+# jq reads the pair through env.* rather than --arg so it does not simply move
+# the token from skopeo's argv to jq's.
 creds_args=()
 if [ -n "${REGISTRY_ACTOR:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
-  creds_args=(--creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}")
+  auth_file="$(mktemp)"
+  chmod 600 "$auth_file"
+  # shellcheck disable=SC2064 # expand now: auth_file is never reassigned
+  trap "rm -f '$auth_file'" EXIT
+  REGISTRY_ACTOR="$REGISTRY_ACTOR" REGISTRY_TOKEN="$REGISTRY_TOKEN" \
+    jq -n --arg r "$(registry_host_of "$IMAGE_REF")" \
+    '{auths: {($r): {auth: ((env.REGISTRY_ACTOR + ":" + env.REGISTRY_TOKEN) | @base64)}}}' \
+    >"$auth_file"
+  creds_args=(--authfile "$auth_file")
 fi
 
 created="$(printf '%s' "$(inspect_json "$IMAGE_REF" "${creds_args[@]}")" | jq -r '.Created // empty' 2>/dev/null || true)"

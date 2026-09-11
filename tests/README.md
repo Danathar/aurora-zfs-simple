@@ -53,6 +53,20 @@ two properties its comments call deliberate:
 One case copies the checked-in `Containerfile` in as its fixture: if a stage is
 renamed or dropped, that test fails rather than the badge silently going stale.
 
+The credential cases assert a third property, one the script's shape has to keep
+rather than one it can state: the GHCR token reaches `skopeo` through a `0600`
+file and never through the command line. `/proc/<pid>/cmdline` is mode `0444`, so
+a token in an argv is readable by every uid on the runner for as long as the
+inspect runs, and is printed by any `ps` someone adds while debugging a hung one
+— the same exposure `build.yml` already refuses for the signing key by passing
+`--key env://` rather than a path, which `test-build-publish.sh` asserts. That
+file is meant to be gone by the time the script exits, so it cannot be inspected
+afterwards; the stub records its path, mode and contents from *inside* the call
+instead, and the tests then check that the recorded path no longer exists. The
+registry key is asserted too, because keying the entry on the wrong host leaves
+skopeo with no credential and degrades silently to an anonymous inspect rather
+than failing.
+
 `test-docs-paths.sh` applies the same idea to the prose. AGENTS.md tells an
 agent mid-incident to trust these two documents, so a path they name that does
 not exist is a real defect — README.md advertised `.github/renovate.json5` for
