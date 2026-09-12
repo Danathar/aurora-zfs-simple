@@ -19,7 +19,7 @@ when present and skipped when not.
 | File                        | Covers                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
-| `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd` and `find` stubbed      |
+| `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
 | `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database |
 | `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed            |
 | `test-coverage.sh`          | every shipped `*.sh` is declared covered by a named test or UNCOVERED with a reason        |

@@ -97,17 +97,57 @@ require_ldd_resolved() {
     fi
 }
 
-require_module_signed() {
-    # Verify a module carries a signature naming the certificate this image
-    # installs for MOK enrollment.
+canonical_key_id() {
+    # Reduce one spelling of a key identifier to a comparable form: uppercase
+    # hex digits, no separators, no leading zero bytes.
     #
-    # The kernel records the signer's X.509 commonName in the module's
-    # signature, which is what `modinfo -F signer` prints; an unsigned module
-    # prints nothing at all. Comparing that against the commonName of
-    # /etc/pki/akmods/certs/akmods-ublue.der is what ties the trust anchor the
-    # image ships to the modules it is supposed to authorize.
+    # The same bytes arrive here written three ways. `modinfo -F sig_key`
+    # prints `7D:F8:7A:...`; `openssl x509 -serial` prints `7DF87A...`;
+    # `openssl x509 -ext subjectKeyIdentifier` prints `2C:25:06:...` indented
+    # on a line of its own. Leading zeros are dropped because a serial number
+    # travels as a DER INTEGER, which carries a 0x00 pad byte whenever its top
+    # bit is set, and the magnitude is what gets rendered on the module side.
+    local raw=$1
+    raw="${raw//:/}"
+    raw="${raw//[[:space:]]/}"
+    raw="${raw^^}"
+    raw="${raw#0X}"
+    while [[ "${raw}" == 00* ]]; do
+        raw="${raw#00}"
+    done
+    printf '%s' "${raw}"
+}
+
+require_module_signed() {
+    # Verify a module carries a signature made by the key whose certificate
+    # this image installs for MOK enrollment.
+    #
+    # Two fields are read, because they answer different questions.
+    #
+    # `modinfo -F signer` prints the commonName of the certificate that signed
+    # the module; an unsigned module prints nothing at all. That name is a
+    # label its owner chose, so it says which vendor signed, not which key
+    # did -- and a vendor regenerating its signing certificate keeps the name.
+    # Universal Blue has more than one kernel-module signing key in use: the
+    # akmods-zfs modules carry two PKCS#7 signatures, `CN=ublue kernel` and
+    # `CN=ublue akmods`, and this image installs the certificate for the first
+    # only. So "the name matches" and "the enrolled certificate can validate
+    # this module" are different claims.
+    #
+    # `modinfo -F sig_key` prints the signing key's identity: for the PKCS#7
+    # signatures the kernel uses, the serial number of the signer's
+    # certificate, as uppercase colon-separated hex. A rotation changes it even
+    # when the commonName is untouched, which is the case this gate exists for.
+    #
+    # Either the serial or the subjectKeyIdentifier of the installed
+    # certificate counts as a match: kmod renders whichever identifier the
+    # signature carries, and both forms occur, so accepting one of the two
+    # keeps a legitimate change of signature format from failing the build
+    # while still requiring a key -- not a label -- to line up.
     local kernel=$1 module=$2 expected=$3
-    local signer
+    shift 3
+    local expected_ids=("$@")
+    local signer key_id candidate
 
     # A modinfo that cannot answer is treated as an empty signer rather than
     # letting `set -e` end the script here: the two cases mean the same thing
@@ -123,6 +163,28 @@ require_module_signed() {
     if [[ "${signer}" != "${expected}" ]]; then
         fail "${module} is signed by '${signer}', not by the certificate this image installs ('${expected}')"
     fi
+
+    # A caller with no key identifier to offer has proven nothing beyond the
+    # name, so it does not get to pass as though it had.
+    if [[ "${#expected_ids[@]}" -eq 0 ]]; then
+        fail "no key identifier was read from the certificate this image installs, so '${signer}' on ${module} cannot be tied to a key"
+    fi
+
+    key_id=$(canonical_key_id "$(modinfo -k "${kernel}" -F sig_key "${module}" 2>/dev/null |
+        head -1)") || key_id=""
+
+    if [[ -z "${key_id}" ]]; then
+        fail "${module}'s signature carries no key identifier, so '${signer}' cannot be tied to the certificate this image installs"
+    fi
+
+    for candidate in "${expected_ids[@]}"; do
+        [[ -z "${candidate}" ]] && continue
+        if [[ "${key_id}" == "$(canonical_key_id "${candidate}")" ]]; then
+            return 0
+        fi
+    done
+
+    fail "${module} is signed by key ${key_id} under the name '${signer}', which is not the key in the certificate this image installs (${expected_ids[*]})"
 }
 
 verify_rpm_payload() {
@@ -321,11 +383,28 @@ check_module_signatures() {
         printf '%s\n' "${subject}" >&2
         fail "no commonName in the subject of ${cert}"
     fi
-    log "akmods signing certificate: ${signer_cn}"
+
+    # The commonName says which vendor; these two say which key. The serial
+    # number is what the PKCS#7 signatures on the akmods kmods identify their
+    # signer by, and it is always present. The subjectKeyIdentifier is the
+    # other identifier a module signature can carry, and it is an optional
+    # X.509v3 extension -- a certificate without one is not an error here, it
+    # just contributes no second candidate.
+    local serial skid
+    serial=$(openssl x509 -inform der -in "${cert}" -noout -serial 2>&1) ||
+        fail "could not read the serial number of ${cert}: ${serial}"
+    serial="${serial#serial=}"
+    skid=$(openssl x509 -inform der -in "${cert}" -noout -ext subjectKeyIdentifier 2>/dev/null |
+        sed -n 's/^[[:space:]]\{1,\}\([0-9A-Fa-f:]\{1,\}\)[[:space:]]*$/\1/p' | head -1) || skid=""
+
+    if [[ -z "$(canonical_key_id "${serial}")" && -z "$(canonical_key_id "${skid}")" ]]; then
+        fail "no key identifier could be read from ${cert}; the modules cannot be tied to it"
+    fi
+    log "akmods signing certificate: ${signer_cn} (serial ${serial}${skid:+, subject key id ${skid}})"
 
     local module
     for module in spl zfs; do
-        require_module_signed "${KERNEL}" "${module}" "${signer_cn}"
+        require_module_signed "${KERNEL}" "${module}" "${signer_cn}" "${serial}" "${skid}"
     done
 }
 

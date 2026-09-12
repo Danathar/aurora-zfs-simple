@@ -70,6 +70,35 @@ STUB
 canned() { cat >"${case_dir}/$1.out"; }
 exits() { printf '%s\n' "$2" >"${case_dir}/$1.status"; }
 
+# modinfo is the one command a helper asks more than one question:
+# require_module_signed reads `-F signer` and then `-F sig_key`, and they have
+# to be able to disagree -- a module signed by a second key of the same vendor
+# is the whole case the second read exists for. So this stub dispatches on the
+# requested field and prints nothing for a field no case registered, which is
+# also what modinfo does for a field a module does not carry.
+stub_modinfo_fields() {
+    printf '0\n' >"${case_dir}/modinfo.status"
+    cat >"${case_dir}/bin/modinfo" <<'STUB'
+#!/usr/bin/env bash
+dir="$(dirname "$0")/.."
+field=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -F)
+        field=$2
+        shift 2
+        ;;
+    *) shift ;;
+    esac
+done
+[[ -n "${field}" && -f "${dir}/modinfo.${field}.out" ]] && cat "${dir}/modinfo.${field}.out"
+exit "$(cat "${dir}/modinfo.status")"
+STUB
+    chmod +x "${case_dir}/bin/modinfo"
+}
+
+canned_field() { cat >"${case_dir}/modinfo.$1.out"; }
+
 # Source post-check.sh and call one helper. $0 is deliberately not the script's
 # path, which is exactly the condition the entry-point guard tests for.
 run_helper() {
@@ -548,56 +577,158 @@ assert_contains "reported as a missing file, not as a link error" \
 # enroll into MOK, and kmod-zfs comes from a different upstream image than the
 # RPM that certificate is extracted from. So "the module is signed by the key
 # whose certificate we shipped" is a claim, and this helper is what turns it
-# into a checked one. Both failure directions matter: an unsigned module (which
-# a Secure Boot host cannot load at all) and a module signed by some other key
-# (which means the enrolled certificate authorizes something else).
+# into a checked one. Three failure directions matter: an unsigned module
+# (which a Secure Boot host cannot load at all), a module signed under some
+# other vendor's name, and -- the one a name comparison cannot see -- a module
+# signed by a *different key of the same vendor*, which is what a rotated
+# signing certificate looks like and what leaves an enrolled trust anchor
+# authorizing something the image does not ship.
+#
+# The values below are the real ones, so a change in either upstream image
+# shows up here as a failing case rather than as an agreeing fixture. The
+# installed certificate is
+#   subject O=Universal Blue, OU=kernel signing, CN=ublue kernel
+#   serial  7DF87AF5DEE738D9FAC2F8A38219374BE0A180A7
+#   subject key id 2C:25:06:15:58:B5:02:0C:4B:0D:9C:A5:60:62:E0:0C:6C:DB:04:6A
+# and the akmods-zfs modules carry two PKCS#7 signatures: that key, and a
+# second Universal Blue key, CN=ublue akmods, serial
+# 176E3CE672DA64B6F4272F7392F5A46F3CCE8636, whose certificate the image does
+# not install. modinfo reports the first signer only.
+
+CERT_CN="ublue kernel"
+CERT_SERIAL="7DF87AF5DEE738D9FAC2F8A38219374BE0A180A7"
+CERT_SKID="2C:25:06:15:58:B5:02:0C:4B:0D:9C:A5:60:62:E0:0C:6C:DB:04:6A"
+MODULE_SIG_KEY="7D:F8:7A:F5:DE:E7:38:D9:FA:C2:F8:A3:82:19:37:4B:E0:A1:80:A7"
+OTHER_UBLUE_KEY="17:6E:3C:E6:72:DA:64:B6:F4:27:2F:73:92:F5:A4:6F:3C:CE:86:36"
 
 new_case module-signed-by-the-shipped-key
-stub_command modinfo
-canned modinfo <<'EOF'
-Universal Blue akmods
+stub_modinfo_fields
+canned_field signer <<EOF
+${CERT_CN}
 EOF
-run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
-assert_eq "a module signed by the shipped certificate passes" 0 "${STATUS}"
+canned_field sig_key <<EOF
+${MODULE_SIG_KEY}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
+assert_eq "a module signed by the shipped certificate's key passes" 0 "${STATUS}"
 
 new_case module-signer-padded
 # modinfo pads its field output when it is not asked for a single field, and a
 # trailing newline is always there. Neither is a mismatch.
-stub_command modinfo
-canned modinfo <<'EOF'
-   Universal Blue akmods
+stub_modinfo_fields
+canned_field signer <<EOF
+   ${CERT_CN}
 EOF
-run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+canned_field sig_key <<EOF
+${MODULE_SIG_KEY}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
 assert_eq "surrounding whitespace is not a mismatch" 0 "${STATUS}"
+
+new_case module-key-id-matched-by-subject-key-id
+# A signature that identifies its signer by subjectKeyIdentifier rather than by
+# serial number is the other form kmod renders, and it is still the key this
+# image installs.
+stub_modinfo_fields
+canned_field signer <<EOF
+${CERT_CN}
+EOF
+canned_field sig_key <<EOF
+${CERT_SKID}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
+assert_eq "the subject key identifier is accepted too" 0 "${STATUS}"
+
+new_case module-key-id-spelling
+# The two sides are produced by different tools: modinfo prints colon-separated
+# uppercase hex, `openssl x509 -serial` prints unseparated hex, and a serial
+# whose top bit is set travels as a DER INTEGER with a 0x00 pad byte that the
+# module side does not render. None of the three is a mismatch.
+stub_modinfo_fields
+canned_field signer <<EOF
+${CERT_CN}
+EOF
+canned_field sig_key <<'EOF'
+7d:f8:7a:f5:de:e7:38:d9:fa:c2:f8:a3:82:19:37:4b:e0:a1:80:a7
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "00${CERT_SERIAL}" ""
+assert_eq "case, separators and a leading pad byte are not a mismatch" 0 "${STATUS}"
 
 new_case module-unsigned
 # `modinfo -F signer` prints nothing for a module with no signature.
-stub_command modinfo
-canned modinfo </dev/null
-run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+stub_modinfo_fields
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
 assert_eq "an unsigned module fails" 1 "${STATUS}"
 assert_contains "the failure says the module is unsigned" \
     "${OUTPUT}" "zfs carries no module signature"
 assert_contains "and names the certificate the image ships" \
-    "${OUTPUT}" "Universal Blue akmods"
+    "${OUTPUT}" "${CERT_CN}"
 
-new_case module-signed-by-another-key
-stub_command modinfo
-canned modinfo <<'EOF'
+new_case module-signed-by-another-vendor
+stub_modinfo_fields
+canned_field signer <<'EOF'
 Some Other Vendor Key
 EOF
-run_helper require_module_signed 6.1.0-1.fc44.x86_64 spl "Universal Blue akmods"
-assert_eq "a module signed by a different key fails" 1 "${STATUS}"
+canned_field sig_key <<EOF
+${MODULE_SIG_KEY}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 spl "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
+assert_eq "a module signed under a different name fails" 1 "${STATUS}"
 assert_contains "the failure names both signers" \
-    "${OUTPUT}" "spl is signed by 'Some Other Vendor Key', not by the certificate this image installs ('Universal Blue akmods')"
+    "${OUTPUT}" "spl is signed by 'Some Other Vendor Key', not by the certificate this image installs ('${CERT_CN}')"
+
+new_case module-signed-by-another-key-of-the-same-vendor
+# The case the name comparison cannot see, and the one this gate was written
+# for: the akmods-zfs image starts shipping modules signed by a second
+# Universal Blue key while the akmods image still ships the old certificate. A
+# regenerated signing certificate carries the same commonName, so only the key
+# identifier tells the two apart.
+stub_modinfo_fields
+canned_field signer <<EOF
+${CERT_CN}
+EOF
+canned_field sig_key <<EOF
+${OTHER_UBLUE_KEY}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
+assert_eq "a module signed by a second key of the same vendor fails" 1 "${STATUS}"
+assert_contains "the failure names the key that signed" \
+    "${OUTPUT}" "176E3CE672DA64B6F4272F7392F5A46F3CCE8636"
+assert_contains "and the key the image installs" "${OUTPUT}" "${CERT_SERIAL}"
+
+new_case module-key-id-absent
+# A signature whose signer carries no identifier at all proves nothing about
+# which key made it, which is not the same as proving it was the right one.
+stub_modinfo_fields
+canned_field signer <<EOF
+${CERT_CN}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
+assert_eq "a signature with no key identifier fails" 1 "${STATUS}"
+assert_contains "reported as an untied signature" \
+    "${OUTPUT}" "carries no key identifier"
+
+new_case module-no-expected-key-id
+# And a caller that read no identifier off the certificate does not get to pass
+# on the name alone.
+stub_modinfo_fields
+canned_field signer <<EOF
+${CERT_CN}
+EOF
+canned_field sig_key <<EOF
+${MODULE_SIG_KEY}
+EOF
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}"
+assert_eq "no key identifier to compare against fails" 1 "${STATUS}"
+assert_contains "reported as a certificate that yielded no key" \
+    "${OUTPUT}" "no key identifier was read from the certificate"
 
 new_case module-signer-unreadable
 # modinfo failing outright is the same outcome as an unsigned module: nothing
 # was proven, so the gate fails rather than passing on doubt.
-stub_command modinfo
+stub_modinfo_fields
 exits modinfo 1
-canned modinfo </dev/null
-run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "Universal Blue akmods"
+run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "${CERT_SERIAL}" "${CERT_SKID}"
 assert_eq "a modinfo that cannot answer fails" 1 "${STATUS}"
 assert_contains "reported as no signature rather than passing" \
     "${OUTPUT}" "zfs carries no module signature"
