@@ -37,6 +37,7 @@ when present and skipped when not.
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement, and the split of work between `renovate.json` and `.github/dependabot.yml` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
+| `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook, extracted and executed against a recording `shellcheck` stub, plus the permission table's `deny` rules and the two decisions its `_note_*` keys record |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -685,6 +686,47 @@ The other `build_files/*.sh` scripts still run their work at the top level, so
 `source` executes the whole file. Their happy path is exercised by the `Build
 container image` workflow — a failure there blocks the push — and their failure
 branches remain untested.
+
+## The agent settings file
+
+`.claude/settings.json` is not prose. It holds a `PostToolUse` hook — a shell
+one-liner that runs `shellcheck -x` over every `*.sh` an agent writes and, by
+exiting 2, blocks the edit — and a permission table whose `deny` list is what
+stands between an agent and `cosign.key`, `podman system prune` and
+`git push --force`. Both halves fail open and fail silently: a settings file
+that does not parse as JSON is ignored in full, `deny` rules included, and a
+misspelled event or tool name registers a hook that is never dispatched.
+
+`test-claude-settings.sh` extracts that hook command with `jq` and runs it,
+feeding it the same `{"tool_input":{"file_path":…}}` payload Claude Code does
+and answering it with a recording `shellcheck` stub, from a working directory
+that is not the repository. That last detail is the point of the exercise: the
+hook's `cd "$CLAUDE_PROJECT_DIR"` is load-bearing, because `shellcheck -x`
+resolves a `# shellcheck source=tests/lib/assert.sh` directive relative to the
+working directory. Without the `cd`, editing any file under `tests/` comes back
+as SC1091 and a cascade of SC2034s — a blocked edit on a file
+`test-shell-syntax.sh` calls clean. The band that needs the real tool asserts
+exactly that, on a committed file, and skips when `shellcheck` is not installed,
+the same way `test-shell-syntax.sh` does.
+
+The stub is what makes the rest cheap: its exit code, argv and working
+directory are all asserted, and the cases where it must *not* run — a `.md` or
+`.json` path, a payload with no `file_path`, no `shellcheck` on `PATH` — check
+that it was never invoked. The `*.sh` filter is held against
+`test-shell-syntax.sh`'s `-name '*.sh'` selection, so the hook and the gate
+cannot come to disagree about which files have to be clean.
+
+For the permission table the assertions are joins rather than a second copy of
+the list. No `allow` rule may cover a command the `ask` or `deny` list gates —
+adding `Bash(podman:*)` to `allow` stops the agent being asked before
+`podman rmi`. The two `_note_*` keys are held against the rules they explain, so
+the recorded reasoning and the table cannot drift apart. And the rules that name
+files are checked against the tree: `cosign.key` and `.env` are denied to
+`Read`, gitignored, and tracked by nothing, which is the order those three
+defences belong in.
+
+`build.yml` does not `paths-ignore` `.claude/**`, so a change to that file runs
+this suite.
 
 ## In CI
 
