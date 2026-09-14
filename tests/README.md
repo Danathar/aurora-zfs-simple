@@ -21,7 +21,7 @@ when present and skipped when not.
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
 | `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
 | `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database |
-| `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed            |
+| `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed; and that no tracked file is a shell script under some other name |
 | `test-coverage.sh`          | every shipped `*.sh` is declared covered by a named test or UNCOVERED with a reason        |
 | `test-docs-paths.sh`        | every repo path README.md and AGENTS.md name actually exists                               |
 | `test-ci-workflows.sh`      | CI still runs this suite with its dependencies, neither workflow's path filter leaves a gap, workflow run/shell values contain no Actions expressions, and every action any workflow uses is pinned to immutable code |
@@ -715,6 +715,19 @@ directory are all asserted, and the cases where it must *not* run — a `.md` or
 that it was never invoked. The `*.sh` filter is held against
 `test-shell-syntax.sh`'s `-name '*.sh'` selection, so the hook and the gate
 cannot come to disagree about which files have to be clean.
+
+Two filters agreeing is not the same as either one being complete, and the
+suffix is the third selection of its kind: `test-coverage.sh` takes
+`git ls-files '*.sh'` before it demands a covered-or-`UNCOVERED` decision. A
+shell script named without the suffix sits outside all three at once — never
+`bash -n`'d, never shellchecked, never required to record a coverage decision,
+never linted at write time — and nothing fails. So `test-shell-syntax.sh` also
+asserts that no tracked file is a shell script under another name: a shell
+shebang, or the executable bit with no interpreter line at all, on a path that
+does not end in `.sh`. A shebang naming another interpreter is exempt; a Python
+helper has no business being called `*.sh`. `git ls-files` returning nothing
+fails rather than passing, because an empty list would satisfy the assertion
+without checking anything.
 
 For the permission table the assertions are joins rather than a second copy of
 the list. No `allow` rule may cover a command the `ask` or `deny` list gates —
