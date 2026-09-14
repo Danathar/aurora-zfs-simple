@@ -36,6 +36,7 @@ when present and skipped when not.
 | `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement, and the split of work between `renovate.json` and `.github/dependabot.yml` |
+| `test-manual-input-check.sh` | `docs/manual-input-check.md`: the manual pre-bump procedure held against the machine it describes — the artifact references and tag template against the `Containerfile`'s `FROM` lines, the copied payload paths against its bind mounts, the RPM names and `rpm --qf` query against `build_files/post-check.sh`, and the worked release example against `ARG FEDORA_VERSION` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
 | `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook, extracted and executed against a recording `shellcheck` stub, plus the permission table's `deny` rules and the two decisions its `_note_*` keys record |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
@@ -75,6 +76,24 @@ some time while the file was `renovate.json` at the repo root. It checks the
 "Repository Layout" block line by line, then the inline code spans, anchoring
 the filter on `git ls-files` so that GitHub `org/repo` references are skipped
 while anything rooted in a real top-level entry is enforced.
+
+`test-manual-input-check.sh` takes the next step: from "the paths this document
+names exist" to "the values this document names are still the repo's". The
+document it covers is the whole procedure for moving `ARG FEDORA_VERSION`, and
+it deliberately ships no script, so every command in it is a copy of something
+that lives in the `Containerfile` or `build_files/post-check.sh` — the two
+artifact references and their tag template, the payload directories copied out
+of them, the ZFS package names that have to agree, the `rpm --qf` query whose
+answer the reader carries forward, and the `ARG` defaults the base image guard
+rests on. A copy drifts in silence: renaming a build stage or adding a package
+to `check_zfs_packages` leaves a reader checking the wrong inputs against the
+wrong image immediately before the one change this document exists to gate. So
+nothing is typed in twice — each expectation is computed from the other side
+and compared, including the worked "Fedora N to N+1" example, which is an
+instruction rather than an illustration and is held to this repo's current
+release and the one after it. The extractions fail when they match nothing,
+because a renamed heading that quietly verifies an empty set is the same
+outcome as no test.
 
 `test-issue-templates.sh` extends that to the one set of instructions a human
 reads before anything in this repo runs: `.github/ISSUE_TEMPLATE/**`. Those
