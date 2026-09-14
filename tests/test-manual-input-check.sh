@@ -174,6 +174,9 @@ if require_block 'the "How To Check The Inputs" commands' "${how_to}"; then
         "${AKMODS_REF#*:}" "${documented_tag}"
 
     # Both artifact images are inspected, under that tag, by their real names.
+    # SC2016: ${AKMODS_TAG} is the literal text the document writes, not a
+    # variable this test expands.
+    # shellcheck disable=SC2016
     expected_inspects="$(printf 'docker://%s:${AKMODS_TAG}\ndocker://%s:${AKMODS_TAG}\n' \
         "${AKMODS_REF%%:*}" "${AKMODS_ZFS_REF%%:*}" | sort)"
     actual_inspects="$(grep -oE 'docker://[^"]+' <<<"${how_to}" | sort)"
@@ -370,6 +373,8 @@ if [[ -z "${guard_run}" ]]; then
 else
     _pass "the Containerfile compares the base image's Fedora release with FEDORA_VERSION"
     assert_contains "the guard fails the build on a mismatch" "${guard_run}" "exit 1"
+    # SC2016: the needle is the Containerfile's own unexpanded text.
+    # shellcheck disable=SC2016
     assert_contains "and its message names the base image it checked" \
         "${guard_run}" '${AURORA_IMAGE}:${AURORA_TAG}'
 fi
@@ -381,6 +386,8 @@ fi
 # numbers have to be this repo's current release and the one after it, or the
 # reader checks inputs for a release that already shipped here.
 
+# SC2016: the backticks are the document's Markdown code span, matched literally.
+# shellcheck disable=SC2016
 NEXT_HEADING='## When Fedora `N+1` Is Released'
 next_args="$(blocks_in_section "${DOC}" "${NEXT_HEADING}" 'Dockerfile')"
 next_refs="$(blocks_in_section "${DOC}" "${NEXT_HEADING}" 'text')"
