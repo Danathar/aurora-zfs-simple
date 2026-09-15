@@ -226,6 +226,30 @@ else
         "allowing a path that moved turns every suite run back into a prompt"
 fi
 
+# Allowing a script is allowing whatever that script runs. Every other rule here
+# gates the Bash tool's argv; none of them gates what an approved command then
+# executes, so the runner's own argument handling is part of this table whether
+# it is written here or not. It is asserted by running it: a path outside
+# tests/ has to be refused rather than executed.
+assert_contains "the run-tests allow rule's reach is written down" \
+    "$(jq -r '._note_run_tests // ""' "${SETTINGS}")" "argv"
+
+PAYLOAD="${WORK}/payload-marker"
+PAYLOAD_SH="${WORK}/test-payload.sh"
+cat >"${PAYLOAD_SH}" <<PAYLOAD_STUB
+#!/usr/bin/env bash
+: >"${PAYLOAD}"
+exit 0
+PAYLOAD_STUB
+chmod +x "${PAYLOAD_SH}"
+
+runner_out="$("${REPO_ROOT}/tests/run-tests.sh" "${PAYLOAD_SH}" 2>&1)"
+runner_status=$?
+assert_eq "the runner refuses a path outside its own directory" \
+    "1" "${runner_status}"
+assert_contains "and says why" "${runner_out}" "not a test file in"
+assert_file_missing "and never executes it" "${PAYLOAD}"
+
 # --- 4. the PostToolUse hook: wiring ----------------------------------------
 
 assert_eq "exactly one PostToolUse matcher is registered" \

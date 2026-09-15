@@ -38,9 +38,9 @@ when present and skipped when not.
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement, and the split of work between `renovate.json` and `.github/dependabot.yml` |
 | `test-manual-input-check.sh` | `docs/manual-input-check.md`: the manual pre-bump procedure held against the machine it describes — the artifact references and tag template against the `Containerfile`'s `FROM` lines, the copied payload paths against its bind mounts, the RPM names and `rpm --qf` query against `build_files/post-check.sh`, and the worked release example against `ARG FEDORA_VERSION` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
-| `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook, extracted and executed against a recording `shellcheck` stub, plus the permission table's `deny` rules and the two decisions its `_note_*` keys record |
+| `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook, extracted and executed against a recording `shellcheck` stub, plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
 | `test-quality-docs.sh`      | `docs/quality.md`, `docs/metrics.md` and `docs/review-rubric.md`: the badge and gate tables against `.github/workflows/build.yml`, `.github/workflows/status-badges.yml`, the `Containerfile` and `ci/write-badges.sh`; the metrics commands parsed and their `jq` filters compiled; and the rubric's checks, incident comments, shell bar, evidence table and signing claim against the code each one names |
-| `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, selection and failure reporting |
+| `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
 Containerfile (a fixture file) and `skopeo inspect`, which a stub earlier on
@@ -611,6 +611,17 @@ files behind it, and a selected name has to be the only thing that runs. The
 error paths matter for the same reason as the `paths-ignore` assertions above —
 a typo'd test name, or a checkout without `jq`, must not resolve to a run of
 nothing that exits 0.
+
+Selection is also a permission boundary, which is why the sandbox holds files
+outside the runner's directory as well as inside it. `.claude/settings.json`
+allow-lists `Bash(./tests/run-tests.sh:*)`, so any path the runner is willing to
+`bash` is a path that runs without a prompt, and allowing a script is allowing
+whatever that script runs — the permission table gates the Bash tool's argv, not
+what an approved command then executes. A selection argument therefore resolves
+to a `test-*.sh` in the runner's own directory or fails with `not a test file
+in`, which is a different message from `no such test` so a mistyped path is
+still diagnosable. What remains reachable is a file written at
+`tests/test-*.sh`, which the no-argument glob would run anyway.
 
 This is the one file here that does not source `lib/assert.sh`. A test of the
 assertion helpers cannot report its own verdict through them: an `assert.sh`
