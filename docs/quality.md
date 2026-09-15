@@ -46,9 +46,13 @@ Two properties of the badge pipeline are deliberate and worth knowing:
 
 ### What each one does not cover
 
-`Shell tests` cannot reach `build_files/*.sh` or the `Containerfile`; those only
-execute inside an image build. A green suite is not evidence for a change to
-either.
+`Shell tests` cannot reach `build_files/build.sh`,
+`build_files/kernel-akmods.sh`, `build_files/zfs.sh` or the `Containerfile`;
+those scripts do their work at the top level inside an image build. A green
+suite is not evidence for a change to any of them.
+
+`build_files/post-check.sh` is the exception: its `BASH_SOURCE`-guarded entry
+point lets the suite source and exercise its helpers.
 
 `post-check.sh` and `bootc container lint` are `RUN` steps, so they validate the
 image **before** the workflow hands it to Chunkah. The re-layered archive that

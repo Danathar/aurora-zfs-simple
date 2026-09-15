@@ -3,11 +3,11 @@
 # Asserts that every repo path the docs name actually exists.
 #
 # README.md's "Repository Layout" block and the inline path references scattered
-# through it and AGENTS.md are load-bearing: AGENTS.md tells an agent
-# mid-incident to trust them. They drifted before — the layout block advertised
-# `.github/renovate.json5` while the file was `renovate.json` at the repo root,
-# and nothing failed — so this test makes that a red suite instead of a reader's
-# problem.
+# through it and AGENTS.md are load-bearing: README.md is the public entry point
+# and sends readers with a failed build to AGENTS.md. They drifted before — the
+# layout block advertised `.github/renovate.json5` while the file was
+# `renovate.json` at the repo root, and nothing failed — so this test makes that
+# a red suite instead of a reader's problem.
 #
 # Three passes, because the three kinds of reference fail differently:
 #

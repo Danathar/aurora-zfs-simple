@@ -14,6 +14,12 @@ On its own that is a typo. What made it a defect is the structure around it:
 response, handed to a reader who by construction does not know the tree well
 enough to notice.
 
+> **Correction, 2026-09-15:** The relationship above was recorded backwards.
+> `AGENTS.md` has never pointed to `README.md`; `README.md` is the entry document
+> and directs readers with a failed build to `AGENTS.md`. The drift and the need
+> for the test remain real. See
+> [#170](https://github.com/Danathar/aurora-zfs-simple/issues/170).
+
 Every other claim in that document had exactly the same standing, and nothing
 checked any of them.
 

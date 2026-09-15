@@ -59,8 +59,9 @@ candid about what is not.
 
 ## What the tests cannot reach
 
-`build_files/*.sh` and the `Containerfile` run inside an image build against a
-real RPM database, module tree and initramfs. Nothing on the host reaches them.
+`build_files/build.sh`, `build_files/kernel-akmods.sh`, `build_files/zfs.sh` and
+the `Containerfile` run inside an image build against a real RPM database,
+module tree and initramfs. Nothing on the host reaches them.
 
 `build_files/post-check.sh` is the exception, and only partly: it guards its
 entry point with
@@ -109,8 +110,9 @@ Match the file you are editing. Across the repo:
 
 ## Docs are load-bearing
 
-`AGENTS.md` instructs an agent mid-incident to trust `README.md`. A path or a
-behaviour claim that has drifted is a real defect, not a nit —
+`README.md` is the public entry document and directs a reader with a failed
+build to `AGENTS.md`. A path or a behaviour claim that has drifted is a real
+defect, not a nit —
 [#70](https://github.com/Danathar/aurora-zfs-simple/issues/70) was exactly
 that.
 
