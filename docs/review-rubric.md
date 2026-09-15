@@ -29,10 +29,11 @@ remembers.
 
 ## 3. Does it claim something the code does not do?
 
-`AGENTS.md` instructs agents mid-incident to trust `README.md`. A documentation
-claim that has drifted is a real defect here, not a nit — #70 was exactly that:
-the README described digest-level pinning the repo does not implement, so a
-reader would have assumed a supply-chain guarantee that was not there.
+`README.md` is the entry document, and directs readers handling a failed build
+to `AGENTS.md`. A documentation claim that has drifted is a real defect here,
+not a nit — #70 was exactly that: the README described digest-level pinning the
+repo does not implement, so a reader would have assumed a supply-chain
+guarantee that was not there.
 
 For any behavioural claim in a diff, find the line of code that makes it true.
 Pay particular attention to claims about *ordering*, which are easy to get

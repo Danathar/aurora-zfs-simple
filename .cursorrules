@@ -47,6 +47,8 @@ them; write in the same register.
 
 ## Testing reality
 
-build_files/*.sh and the Containerfile only execute inside an image build.
-Nothing on the host reaches them, so a green suite is not evidence for a change
-to either. State how it was verified, or that it was not.
+build_files/build.sh, build_files/kernel-akmods.sh, build_files/zfs.sh and the
+Containerfile only execute inside an image build. Nothing on the host reaches
+them, so a green suite is not evidence for a change to any of them. post-check.sh
+is partly covered through its sourceable helpers. State how an image-build
+change was verified, or that it was not.

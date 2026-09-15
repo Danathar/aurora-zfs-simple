@@ -2,10 +2,12 @@
 #
 # A coverage gate for a repository where most code cannot be covered.
 #
-# Line coverage is meaningless here: build_files/*.sh run inside an image build
-# against a real RPM database, module tree and initramfs, and nothing on the
-# host reaches them. A percentage threshold would either sit near zero forever
-# or be gamed. What is worth enforcing is that the gap stays *deliberate*.
+# Line coverage is meaningless here: build_files/build.sh,
+# build_files/kernel-akmods.sh and build_files/zfs.sh run at the top level inside
+# an image build against a real RPM database, module tree and initramfs, and
+# nothing on the host reaches them. A percentage threshold would either sit near
+# zero forever or be gamed. What is worth enforcing is that the gap stays
+# *deliberate*.
 #
 # So this asserts a decision, not a number. Every shell script the repo ships
 # outside tests/ is listed below as either covered by a named test file, or

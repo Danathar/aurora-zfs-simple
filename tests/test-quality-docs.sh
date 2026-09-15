@@ -31,24 +31,11 @@
 # holds the sentences the joins below hang off, so deleting the claim fails
 # instead of quietly turning its assertion into a no-op.
 #
-# Deliberately not asserted, because the committed tree contradicts the document
-# and a test that encoded either side would be wrong:
-#
-#   * docs/review-rubric.md section 3 says "`AGENTS.md` instructs agents
-#     mid-incident to trust `README.md`". AGENTS.md contains no reference to
-#     README.md -- `git log -S README -- AGENTS.md` is empty, so it never did.
-#   * docs/quality.md says "`Shell tests` cannot reach `build_files/*.sh` or the
-#     `Containerfile`". The glob is too wide: build_files/post-check.sh is
-#     reached, which is why tests/test-coverage.sh's manifest pairs it with
-#     tests/test-post-check.sh. What this file asserts instead is the form the
-#     manifest actually holds -- the three scripts it marks UNCOVERED are
-#     exactly the ones with no sourceable entry point.
-#
-# Both are prose corrections rather than test changes. Each unlocks one more
-# join here once the document is corrected: the first, that the document named
-# as instructing agents actually references the document it names; the second,
-# that the set of scripts called unreachable equals the set the manifest marks
-# UNCOVERED, which is already computed below.
+# The prose names its relationships precisely enough to join them too. The
+# source and destination documents in review-rubric.md are read from the claim
+# before their link is checked; the scripts quality.md calls unreachable are
+# compared with the manifest's UNCOVERED set; and metrics.md must point at the
+# file that actually holds that manifest.
 
 set -uo pipefail
 
@@ -458,6 +445,22 @@ require_nonempty "a coverage manifest in tests/test-coverage.sh" "${manifest}"
 # is covered anyway, because the host can run it end to end with stubs.
 uncovered="$(awk -F'\t' '$2 == "UNCOVERED" && $1 ~ /^build_files\// { print $1 }' <<<"${manifest}" |
     LC_ALL=C sort | tr '\n' ' ')"
+unreachable_claim="$(awk '
+    /^`Shell tests` cannot reach / { found = 1 }
+    found && NF == 0 { exit }
+    found
+' "${QUALITY_DOC}")"
+require_nonempty "the Shell tests unreachability claim" "${unreachable_claim}"
+documented_unreachable="$(grep -oE 'build_files/[a-z-]+\.sh' <<<"${unreachable_claim}" |
+    LC_ALL=C sort -u | tr '\n' ' ')"
+assert_eq "quality.md names exactly the build_files scripts the manifest marks UNCOVERED" \
+    "${uncovered}" "${documented_unreachable}"
+assert_contains "the same claim still names the Containerfile as unreachable" \
+    "${unreachable_claim}" "Containerfile"
+require_claim "${QUALITY_DOC}" "post-check.sh is the sourceable exception" \
+    "post-check.sh\` is the exception"
+assert_contains "quality.md names the seam that makes post-check.sh sourceable" \
+    "$(cat "${QUALITY_DOC}")" "BASH_SOURCE"
 no_seam=""
 while IFS= read -r script; do
     [[ -z "${script}" ]] && continue
@@ -554,9 +557,25 @@ assert_contains "AGENTS.md still names the review bot metrics.md points at" \
 assert_contains "and still shows how to fetch its inline comments" \
     "$(cat "${AGENTS_DOC}")" "/pulls/<N>/comments"
 
-# "What tests/README.md tracks instead is which scripts are unreachable and why"
+# The per-script decisions live in the manifest; tests/README.md explains the
+# gate rather than carrying the list itself.
 require_claim "${METRICS_DOC}" "a stated decision per script replaces the number" \
     "a stated decision per script rather than a number"
+decision_claim="$(awk '
+    /The `MANIFEST` in / { found = 1 }
+    found && /^- \*\*/ && !/Test coverage percentage/ { exit }
+    found
+' "${METRICS_DOC}")"
+require_nonempty "the per-script decision pointer" "${decision_claim}"
+# SC2016: the backticks are Markdown delimiters in the regex, not substitution.
+# shellcheck disable=SC2016
+decision_file="$(grep -oE '`tests/[a-z-]+\.sh`' <<<"${decision_claim}" | head -1 | tr -d '`')"
+assert_eq "metrics.md points at the file that holds the per-script decisions" \
+    "${COVERAGE_TEST#"${REPO_ROOT}"/}" "${decision_file}"
+# SC2016: this is the literal manifest assignment the document names.
+# shellcheck disable=SC2016
+assert_contains "that file contains the manifest metrics.md names" \
+    "$(cat "${REPO_ROOT}/${decision_file}")" 'MANIFEST=$('
 assert_contains "tests/README.md documents the covered-or-UNCOVERED decision" \
     "$(cat "${TESTS_README}")" "the literal \`UNCOVERED\` and a reason"
 while IFS=$'\t' read -r script _ reason; do
@@ -585,6 +604,23 @@ assert_eq "the severity list classifies every numbered section exactly once" \
     "${rubric_sections}" "${severity_numbers}"
 assert_eq "the sections run 1..N without a gap" \
     "$(seq 1 "$(wc -w <<<"${rubric_sections}")" | tr '\n' ' ')" "${rubric_sections}"
+
+# Section 3 names the direction of the incident-response handoff. Read both
+# filenames from the prose so reversing them, or substituting another source,
+# checks that claim rather than a second hard-coded copy of it.
+reader_route_claim="$(awk '
+    /directs readers handling a failed build/ { found = 1 }
+    found { print; if (/`\./) exit }
+' "${RUBRIC_DOC}")"
+require_nonempty "the incident-response document route" "${reader_route_claim}"
+route_source="$(code_spans "${reader_route_claim}" | sed -n '1p')"
+route_target="$(code_spans "${reader_route_claim}" | sed -n '2p')"
+require_nonempty "a source document in that route" "${route_source}"
+require_nonempty "a destination document in that route" "${route_target}"
+assert_file_exists "the route source exists: ${route_source}" "${REPO_ROOT}/${route_source}"
+assert_file_exists "the route destination exists: ${route_target}" "${REPO_ROOT}/${route_target}"
+assert_contains "the source document points readers to the destination" \
+    "$(cat "${REPO_ROOT}/${route_source}")" "(${route_target}"
 
 # Section 1: the four checks it says turn a red build green by deleting the
 # protection. Each has to still be the thing it describes.

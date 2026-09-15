@@ -21,11 +21,11 @@ request that edits `tests/` and one line of `build_files/` is Tier 3.
 
 ## Why Tier 1 is not the bottom
 
-In most repos, docs are the safe tier. Here they are not, and the reason is
-mechanical: [`AGENTS.md`](../AGENTS.md) instructs an agent handling a broken
-build to trust [`README.md`](../README.md). A path or a behaviour claim that has
-drifted is therefore an input to an incident response, and a wrong one sends the
-responder somewhere that does not exist.
+In most repos, docs are the safe tier. Here they are not: the public
+[`README.md`](../README.md) sends a reader handling a broken build to the
+diagnosis in [`AGENTS.md`](../AGENTS.md). A path or a behaviour claim that has
+drifted is therefore an input to an incident response, and a wrong one sends
+the responder somewhere that does not exist.
 
 That is not hypothetical.
 [#70](https://github.com/Danathar/aurora-zfs-simple/issues/70) was exactly this:

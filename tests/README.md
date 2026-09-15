@@ -70,10 +70,11 @@ registry key is asserted too, because keying the entry on the wrong host leaves
 skopeo with no credential and degrades silently to an anonymous inspect rather
 than failing.
 
-`test-docs-paths.sh` applies the same idea to the prose. AGENTS.md tells an
-agent mid-incident to trust these two documents, so a path they name that does
-not exist is a real defect — README.md advertised `.github/renovate.json5` for
-some time while the file was `renovate.json` at the repo root. It checks the
+`test-docs-paths.sh` applies the same idea to the prose. README.md is the public
+entry document and sends readers with a failed build to AGENTS.md, so a path
+either document names that does not exist is a real defect — README.md
+advertised `.github/renovate.json5` for some time while the file was
+`renovate.json` at the repo root. It checks the
 "Repository Layout" block line by line, then the inline code spans, anchoring
 the filter on `git ls-files` so that GitHub `org/repo` references are skipped
 while anything rooted in a real top-level entry is enforced.

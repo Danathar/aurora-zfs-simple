@@ -60,6 +60,8 @@ whose comment explains an incident. Add to that style rather than stripping it.
 
 ## What cannot be tested from the host
 
-`build_files/*.sh` and the `Containerfile` only run inside an image build. A
-green local suite is not evidence for a change to either. Say how such a change
-was verified, or say that it was not.
+`build_files/build.sh`, `build_files/kernel-akmods.sh`, `build_files/zfs.sh` and
+the `Containerfile` only run inside an image build. A green local suite is not
+evidence for a change to any of them. `build_files/post-check.sh` is partly
+covered through its sourceable helpers. Say how an image-build change was
+verified, or say that it was not.
