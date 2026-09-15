@@ -294,6 +294,21 @@ exit ${status}
 STUB
 }
 
+# The same stub, written somewhere the runner is not. It still marks the case's
+# own marks directory, so "was this executed" stays answerable for a file that
+# lives outside the sandbox the runner was copied into.
+fake_outside() {
+    local path=$1 name
+    name="$(basename "${path}")"
+    mkdir -p "$(dirname "${path}")"
+    cat >"${path}" <<STUB
+#!/usr/bin/env bash
+: >"\${MARKS}/${name}"
+printf 'inside %s\n' "${name}"
+exit 0
+STUB
+}
+
 run_runner() {
     STDOUT="$(MARKS="${case_dir}/marks" bash "${case_dir}/run-tests.sh" "$@" 2>&1)"
     STATUS=$?
@@ -395,6 +410,83 @@ expect_eq "one unknown name among known ones still exits 1" 1 "${STATUS}"
 expect_contains "and names the one it could not find" "${STDOUT}" \
     "run-tests: no such test: test-alfa"
 expect_not_ran "the resolvable name is not run either" "${case_dir}/marks/test-alpha.sh"
+
+# --- what a selection argument is allowed to reach ---------------------------
+#
+# `.claude/settings.json` allow-lists `Bash(./tests/run-tests.sh:*)` -- "this
+# command with any arguments" -- so a path this runner is willing to `bash` is a
+# path that runs with no permission prompt. A selection branch that took any
+# readable path therefore made the runner a general-purpose interpreter, and the
+# `deny` rules beside it in that file (`cosign sign`, `git push --force`,
+# `Read(./cosign.key)`) reachable by writing a file and naming it here.
+#
+# So selection resolves to a test-*.sh in the runner's own directory or fails.
+# The residual is a file written *at* tests/test-*.sh, which the no-argument
+# discovery branch would run anyway; that is the surface shellcheck,
+# test-shell-syntax.sh and review already cover.
+
+runner_case select-outside-absolute
+fake_test test-alpha.sh 0
+fake_outside "${WORK_ROOT}/test-outside-absolute.sh"
+run_runner "${WORK_ROOT}/test-outside-absolute.sh"
+expect_eq "a path outside the test directory exits 1" 1 "${STATUS}"
+expect_contains "and says the file is not a test, not that it is missing" \
+    "${STDOUT}" "run-tests: not a test file in"
+expect_not_ran "and the file is never executed" \
+    "${case_dir}/marks/test-outside-absolute.sh"
+
+# The relative spelling resolves through the runner's own directory, so it has
+# to be refused by the same check rather than by the path happening to be absent.
+runner_case select-outside-relative
+fake_test test-alpha.sh 0
+fake_outside "${WORK_ROOT}/test-outside-relative.sh"
+run_runner ../test-outside-relative.sh
+expect_eq "a relative path climbing out of the directory exits 1" 1 "${STATUS}"
+expect_contains "with the same message" "${STDOUT}" "run-tests: not a test file in"
+expect_not_ran "and runs nothing" "${case_dir}/marks/test-outside-relative.sh"
+
+# A file in the directory that the discovery branch would skip is not selectable
+# either: the glob and the argument have to agree on what a test is.
+runner_case select-non-test-name
+fake_test test-alpha.sh 0
+fake_test helper.sh 0
+run_runner helper.sh
+expect_eq "a non-test file in the directory exits 1" 1 "${STATUS}"
+expect_contains "and is reported as not a test" "${STDOUT}" \
+    "run-tests: not a test file in"
+expect_not_ran "and is not executed" "${case_dir}/marks/helper.sh"
+
+# The bare-name form appends .sh, which is a second route to the same file.
+runner_case select-non-test-bare
+fake_test test-alpha.sh 0
+fake_test helper.sh 0
+run_runner helper
+expect_eq "the bare-name form does not reach it either" 1 "${STATUS}"
+expect_not_ran "and it still does not run" "${case_dir}/marks/helper.sh"
+
+# Same rule as a typo among good names: nothing runs, so a refused argument
+# cannot be hidden behind a suite that looks like it executed.
+runner_case outside-among-known
+fake_test test-alpha.sh 0
+fake_outside "${WORK_ROOT}/test-outside-among.sh"
+run_runner test-alpha "${WORK_ROOT}/test-outside-among.sh"
+expect_eq "a refused path next to a resolvable name still exits 1" 1 "${STATUS}"
+expect_not_ran "the resolvable name is not run" "${case_dir}/marks/test-alpha.sh"
+expect_not_ran "and neither is the refused path" \
+    "${case_dir}/marks/test-outside-among.sh"
+
+# The forms the documentation promises keep working, named from a different
+# working directory so the resolution is doing the work rather than the caller.
+runner_case select-path-from-elsewhere
+fake_test test-alpha.sh 0
+fake_test test-beta.sh 1
+harness_pwd="${PWD}"
+cd "${WORK_ROOT}" || exit 1
+run_runner "${case_dir}/test-alpha.sh"
+cd "${harness_pwd}" || exit 1
+expect_eq "an absolute path to a test in the directory still runs" 0 "${STATUS}"
+expect_ran "and that file did run" "${case_dir}/marks/test-alpha.sh"
+expect_not_ran "while the other did not" "${case_dir}/marks/test-beta.sh"
 
 # An empty directory is the shape a bad move leaves behind — the test files
 # relocated, the runner left pointing at nothing. Exiting 0 there would
