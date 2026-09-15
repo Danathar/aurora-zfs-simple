@@ -471,9 +471,13 @@ assert_contains "post-check.sh is covered, which is why it is not in that set" \
     "${manifest}" "build_files/post-check.sh	tests/test-post-check.sh"
 
 # No percentage is produced anywhere, which is what makes the manifest the gate.
+# Scoped to what CI runs -- the workflows and ci/ -- rather than tests/, where a
+# test that names a coverage tool in order to assert its absence would match
+# itself.
 for coverage_tool in bashcov kcov "coverage run"; do
-    assert_eq "no workflow measures a line-coverage percentage with ${coverage_tool}" \
-        "0" "$(cd "${REPO_ROOT}" && git grep -c -F -- "${coverage_tool}" -- .github ci tests | wc -l)"
+    matched="$(cd "${REPO_ROOT}" && git grep -l -F -- "${coverage_tool}" -- .github ci | tr '\n' ' ')"
+    assert_eq "CI measures no line-coverage percentage with ${coverage_tool}" \
+        "" "${matched}"
 done
 
 # =============================================================================
