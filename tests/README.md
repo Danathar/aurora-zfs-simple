@@ -40,6 +40,7 @@ when present and skipped when not.
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
 | `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook and the `PreToolUse` hook that gates `git diff --no-index`, both extracted and executed — the first against a recording `shellcheck` stub, the second against the command payloads it has to refuse and the ones it must leave alone — plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
 | `test-quality-docs.sh`      | `docs/quality.md`, `docs/metrics.md` and `docs/review-rubric.md`: the badge and gate tables against `.github/workflows/build.yml`, `.github/workflows/status-badges.yml`, the `Containerfile` and `ci/write-badges.sh`; the metrics commands parsed and their `jq` filters compiled; and the rubric's checks, incident comments, shell bar, evidence table and signing claim against the code each one names |
+| `test-memory-corrections.sh` | `.claude/memory/corrections.md`: the entry shape `.claude/memory/README.md` asks for, every repository path the entries cite, and each correction's claims against the machine that settles it — the `Containerfile`'s final two `RUN` steps and the rechunk's place after them in `.github/workflows/build.yml`, that step's `.Config` read and incident numbers, AGENTS.md's `--state all` query, diagnosis block and pin example, and `test-shell-syntax.sh`'s shellcheck skip against CI's `Install shellcheck` step |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -584,6 +585,38 @@ real regression signal. Both directions are asserted.
 What still needs a real image is what the checks inspect — whether ZFS userspace
 is actually present, whether there is exactly one module tree. These tests cover
 how the script reacts to those answers, not the answers themselves.
+
+## The memory
+
+`.claude/memory/corrections.md` is the one document here written to be believed
+without being checked. Every agent configuration in the tree points a reader at
+it before the code, and each entry is a claim about how the build behaves today,
+phrased in the past tense of an incident that is over. Nothing opened the file:
+`test-coverage.sh` sees only shipped `*.sh`, and `test-docs-paths.sh` resolves
+what README.md and AGENTS.md name, not what the memory cites.
+
+That combination fails in one direction. Move the Chunkah step, change what
+`--config-str` is handed, drop the `shellcheck` skip branch, or renumber the
+upstream PRs AGENTS.md sends a reader to, and the memory keeps confidently
+describing the previous repository — to exactly the reader who came here to
+avoid rediscovering something. So `test-memory-corrections.sh` computes every
+literal from the file the entry cites and compares it with what the entry says:
+the size cap, layer counts and exit code out of the rechunk step's own comments,
+the hidden PR numbers out of AGENTS.md's sentence about them, the skip notice
+out of `test-shell-syntax.sh`'s own `printf`.
+
+Two of its checks are structural rather than textual. The four labels an entry
+carries are paired with the sentences in `.claude/memory/README.md` that ask for
+them, and both directions are asserted, so a label nobody declared fails rather
+than going unchecked. And a citation counts as a path when it has a directory
+component, when its suffix is one the tree tracks, *or* when its stem names a
+tracked file — the last rule is what stops a rename to `post-check.bash` from
+escaping as an unrecognized token that is therefore never resolved.
+
+`test-agent-prompts.sh` already holds the Containerfile's two akmods `FROM`
+lines to one tag and `kernel-akmods.sh` to erasing the base module tree. Both
+properties are reached here from the other side, through AGENTS.md's pin example
+and its 60-second diagnosis, which is where a reader mid-incident meets them.
 
 ## The harness
 
