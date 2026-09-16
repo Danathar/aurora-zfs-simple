@@ -158,9 +158,24 @@ assert_contains "corrections.md points back at README.md for what belongs here" 
 # match none of the three and stay out of it.
 
 TRACKED="$(cd "${REPO_ROOT}" && git ls-files)"
-TRACKED_NAMES="$(sed 's#.*/##' <<<"${TRACKED}" | sort -u)"
-TRACKED_SUFFIXES="$(sed -n 's/.*\.\([A-Za-z0-9]\{1,8\}\)$/\1/p' <<<"${TRACKED_NAMES}" | sort -u)"
-TRACKED_STEMS="$(sed 's/\.[A-Za-z0-9]\{1,8\}$//' <<<"${TRACKED_NAMES}" | sort -u)"
+# A suffix is one to eight alphanumerics after the last dot; a stem is the name
+# with that suffix removed, or the whole name when it has no such suffix.
+TRACKED_NAMES=""
+TRACKED_SUFFIXES=""
+TRACKED_STEMS=""
+while IFS= read -r tracked_path; do
+    tracked_name="${tracked_path##*/}"
+    TRACKED_NAMES+="${tracked_name}"$'\n'
+    if [[ "${tracked_name}" =~ ^(.*)\.([A-Za-z0-9]{1,8})$ ]]; then
+        TRACKED_STEMS+="${BASH_REMATCH[1]}"$'\n'
+        TRACKED_SUFFIXES+="${BASH_REMATCH[2]}"$'\n'
+    else
+        TRACKED_STEMS+="${tracked_name}"$'\n'
+    fi
+done <<<"${TRACKED}"
+TRACKED_NAMES="$(sort -u <<<"${TRACKED_NAMES%$'\n'}")"
+TRACKED_SUFFIXES="$(sort -u <<<"${TRACKED_SUFFIXES%$'\n'}")"
+TRACKED_STEMS="$(sort -u <<<"${TRACKED_STEMS%$'\n'}")"
 
 if [[ -z "${TRACKED_SUFFIXES}" || -z "${TRACKED_STEMS}" ]]; then
     _fail "the tracked file names were read" "git ls-files produced none"
@@ -198,6 +213,7 @@ while IFS= read -r token; do
             "git tracks no such file; the entry cites something that moved"
     fi
 done < <(
+    # shellcheck disable=SC2016 # a backtick is the delimiter being matched, not a command
     grep -o '`[^`]*`' "${DOC}" |
         tr -d '`' |
         grep -E '^\.?/?[A-Za-z0-9][A-Za-z0-9._/-]*$' |
@@ -351,6 +367,7 @@ rechunk_body="$(step_run build_push "${RECHUNK_STEP}")"
 if [[ -z "${rechunk_body}" ]]; then
     _fail "the '${RECHUNK_STEP}' step still has a body" "extracted nothing"
 else
+    # shellcheck disable=SC2016 # workflow shell, compared as literal text
     config_assignment="$(grep -F 'CHUNKAH_CONFIG_STR="$(' <<<"${rechunk_body}")"
     if [[ -z "${config_assignment}" ]]; then
         _fail "the rechunk step still computes CHUNKAH_CONFIG_STR" "no assignment found"
@@ -428,6 +445,7 @@ assert_contains "the Install shellcheck step installs the tool the entry names" 
 
 # --- 4a. "gh pr list hides the window you are looking for" ------------------
 
+# shellcheck disable=SC2016 # Markdown code spans, compared as literal text
 assert_contains "AGENTS.md still states the default the entry warns about" \
     "${AGENTS_TEXT}" '`gh pr list` defaults to `--state open`'
 
@@ -447,7 +465,9 @@ else
 fi
 
 # "Avoid by: always --state all when checking upstream for a fix in flight" is
-# only advice if the tree itself keeps taking it.
+# only advice if the tree itself keeps taking it. This file is excluded along
+# with the entry: the query string appears here as the thing being searched
+# for, and matching it would count this test's own source as a query.
 upstream_queries=0
 while IFS= read -r line; do
     upstream_queries=$((upstream_queries + 1))
@@ -459,7 +479,8 @@ while IFS= read -r line; do
     fi
 done < <(
     cd "${REPO_ROOT}" &&
-        git grep -h 'gh pr list --repo ublue-os/akmods' -- ':!.claude/memory/corrections.md'
+        git grep -h 'gh pr list --repo ublue-os/akmods' -- \
+            ':!.claude/memory/corrections.md' ':!tests/test-memory-corrections.sh'
 )
 if [[ "${upstream_queries}" -eq 0 ]]; then
     _fail "the tree still queries upstream akmods PRs" \
@@ -472,10 +493,12 @@ assert_contains "AGENTS.md's diagnosis still loops exactly the two akmods images
     "${AGENTS_TEXT}" "for img in akmods akmods-zfs"
 assert_contains "and marks the aurora-dx inspect as context rather than part of the test" \
     "${AGENTS_TEXT}" "# context only — not part of the skew test"
+# shellcheck disable=SC2016 # a Markdown code span, compared as literal text
 assert_contains "AGENTS.md still says a differing aurora-dx kernel is not skew" \
     "${AGENTS_TEXT}" 'Do **not** treat a differing `aurora-dx` kernel as skew'
 
 kernel_akmods_text="$(cat "${KERNEL_AKMODS}")"
+# shellcheck disable=SC2016 # the script's own expansion, compared as literal text
 assert_contains "kernel-akmods.sh still erases the base image's kernel RPMs" \
     "${kernel_akmods_text}" 'rpm --erase "${pkg}" --nodeps'
 assert_contains "and still installs the kernel from the akmods stream" \
@@ -509,6 +532,7 @@ else
     fi
 fi
 
+# shellcheck disable=SC2016 # a Markdown code span, compared as literal text
 assert_contains "AGENTS.md still requires the labels be confirmed identical before pushing" \
     "${AGENTS_TEXT}" 'Verify the `ostree.linux` labels are identical before doing this'
 
