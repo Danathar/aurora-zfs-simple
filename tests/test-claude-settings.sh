@@ -508,7 +508,7 @@ assert_contains "git diff --no-index prints the contents of a file git does not 
 # And with no flag at all. Git enters the same mode on its own once two
 # operands are given and one of them is not repository content, which is the
 # form the first version of this hook did not see.
-implicit_out="$(cd "${REPO_ROOT}" && git diff /dev/null "${NO_INDEX_FIXTURE}" 2>&1 || true)"
+implicit_out="$(cd "${REPO_ROOT}" && git diff /dev/null "${NO_INDEX_FIXTURE}" 2>&1)" || true
 assert_contains "and prints them with no --no-index flag present" \
     "${implicit_out}" "DECOY-SECRET-BYTES"
 
