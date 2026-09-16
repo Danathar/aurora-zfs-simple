@@ -189,6 +189,20 @@ for verb in "podman image prune" "podman system prune" "podman rmi -a" \
     assert_contains "and ${verb} is denied outright" "${DENY}" "Bash(${verb}:*)"
 done
 
+# `git diff` stays allowed -- it is the most common read here -- and the one
+# form of it that reads arbitrary files is gated by the hook exercised in
+# section 7 rather than by a rule. The note carries that reasoning; assert both
+# ends so neither can move without the other.
+GIT_DIFF_NOTE="$(jq -r '._note_git_diff // ""' "${SETTINGS}")"
+assert_contains "the git diff decision is written down" \
+    "${GIT_DIFF_NOTE}" "--no-index"
+assert_contains "git diff is allowed, as that note says" \
+    "${ALLOW}" "Bash(git diff:*)"
+# A prefix rule for the flag would read like a control and gate one flag
+# ordering, which is the note's whole argument against writing one.
+assert_not_contains "and no deny rule claims to gate that flag by prefix" \
+    "${DENY}" "git diff --no-index"
+
 # --- 3. the deny rules that name files, held against the tree ---------------
 
 assert_contains "reading the signing key is denied" "${DENY}" "Read(./cosign.key)"
@@ -467,5 +481,177 @@ DIRTY
 else
     printf '  skip real-shellcheck band (not installed)\n'
 fi
+
+# --- 7. the PreToolUse hook: the one allowed command that reads any file -----
+#
+# `Bash(git diff:*)` is on the allow list, so `git diff` runs with any arguments
+# and no prompt. `--no-index` makes git compare two paths as plain files rather
+# than as repository content, which turns that pre-approved command into a
+# reader of anything this uid can open -- including `cosign.key` and a `.env`,
+# whose `Read(...)` deny rules gate the Read tool and say nothing about Bash.
+#
+# No rule in the table closes it: patterns match by prefix and flags may appear
+# in any order, so a narrower allow admits the flag anyway and a deny for it
+# catches one spelling of the command. A hook can, because it is handed the
+# whole command string. So the block below is asserted the way section 5 asserts
+# the other hook -- by running it.
+
+# The capability first, against a fixture rather than a claim, so the rest of
+# this section is visibly about something real. `--no-index` exits 1 when the
+# files differ, which is the normal case here.
+NO_INDEX_FIXTURE="${WORK}/decoy-secret"
+printf 'DECOY-SECRET-BYTES\n' >"${NO_INDEX_FIXTURE}"
+no_index_out="$(git diff --no-index -- /dev/null "${NO_INDEX_FIXTURE}" 2>&1 || true)"
+assert_contains "git diff --no-index prints the contents of a file git does not track" \
+    "${no_index_out}" "DECOY-SECRET-BYTES"
+
+# And with no flag at all. Git enters the same mode on its own once two
+# operands are given and one of them is not repository content, which is the
+# form the first version of this hook did not see.
+implicit_out="$(cd "${REPO_ROOT}" && git diff /dev/null "${NO_INDEX_FIXTURE}" 2>&1)" || true
+assert_contains "and prints them with no --no-index flag present" \
+    "${implicit_out}" "DECOY-SECRET-BYTES"
+
+assert_eq "exactly one PreToolUse matcher is registered" \
+    "1" "$(jq -r '.hooks.PreToolUse | length' "${SETTINGS}")"
+assert_eq "with exactly one hook on it" \
+    "1" "$(jq -r '.hooks.PreToolUse[0].hooks | length' "${SETTINGS}")"
+assert_eq "and it is a command hook" \
+    "command" "$(jq -r '.hooks.PreToolUse[0].hooks[0].type' "${SETTINGS}")"
+
+PRE_MATCHER="$(jq -r '.hooks.PreToolUse[0].matcher' "${SETTINGS}")"
+if [[ "Bash" =~ ^(${PRE_MATCHER})$ ]]; then
+    _pass "the matcher selects Bash, which is where the command runs"
+else
+    _fail "the matcher selects Bash, which is where the command runs" \
+        "matcher: ${PRE_MATCHER}"
+fi
+
+PRE_COMMAND="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "${SETTINGS}")"
+if [[ -n "${PRE_COMMAND}" && "${PRE_COMMAND}" == *gate-git-diff.sh* ]]; then
+    _pass "the hook command was extracted and names the gate it runs"
+else
+    _fail "the hook command was extracted and names the gate it runs" \
+        "extracted: ${PRE_COMMAND:-<empty>}" \
+        "every execution case below would pass vacuously on an empty command"
+    finish
+    exit
+fi
+
+# The settings entry names a file. A path that does not exist, or one nothing
+# can execute, leaves every case below asserting a gate that never runs.
+assert_file_exists "the gate the settings entry names is in the tree" \
+    "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh"
+if [[ -x "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh" ]]; then
+    _pass "and it is executable"
+else
+    _fail "and it is executable" \
+        "Claude Code cannot run it, so Bash calls go uninspected"
+fi
+
+PRE_OUT=""
+PRE_ERR=""
+PRE_STATUS=0
+
+# Runs the PreToolUse hook with `$1` as the JSON payload on stdin.
+run_pre() {
+    local payload=$1
+    PRE_OUT="${WORK}/pre-out"
+    PRE_ERR="${WORK}/pre-err"
+    printf '%s' "${payload}" |
+        (cd "${REPO_ROOT}" && CLAUDE_PROJECT_DIR="${REPO_ROOT}" \
+            bash -c "${PRE_COMMAND}") >"${PRE_OUT}" 2>"${PRE_ERR}"
+    PRE_STATUS=$?
+    PRE_OUT="$(cat "${PRE_OUT}")"
+    PRE_ERR="$(cat "${PRE_ERR}")"
+}
+
+pre_payload_for() { jq -nc --arg c "$1" '{tool_input: {command: $c}}'; }
+
+# 7a. the command from the finding. Exit 2 is what Claude Code reads as "refuse
+# the call and show stderr to the agent", the same convention section 5 relies
+# on for the lint hook.
+run_pre "$(pre_payload_for "git diff --no-index -- /dev/null ./cosign.key")"
+assert_eq "reading the signing key through git diff is refused" "2" "${PRE_STATUS}"
+assert_contains "and the refusal says why, where the agent reads it" \
+    "${PRE_ERR}" "--no-index"
+assert_eq "and nothing is written to stdout" "" "${PRE_OUT}"
+
+# 7b. the flag behind another flag. This is the case a `Bash(git diff
+# --no-index:*)` deny rule would not match, and the reason this is a hook.
+for variant in "git diff --stat --no-index a b" \
+    "git diff --no-index /etc/shadow /dev/null" \
+    "git grep --no-index -e x ./.env" \
+    "git --no-pager diff --no-index /dev/null ./.env.local"; do
+    run_pre "$(pre_payload_for "${variant}")"
+    assert_eq "refused wherever the flag appears: ${variant}" "2" "${PRE_STATUS}"
+done
+
+# 7b'. and wherever the flag does not appear. Each of these reaches the same
+# mode: the first three by giving git two operands that are not revisions, the
+# last two by a spelling the shell rewrites into --no-index on the way.
+for flagless in "git diff /dev/null ./cosign.key" \
+    "git diff /dev/null /etc/shadow" \
+    "git diff cosign.key .env" \
+    "ls -l && git diff /dev/null ./cosign.key" \
+    "git diff --no-'index' -- /dev/null ./cosign.key" \
+    'git diff --no-\index -- /dev/null ./cosign.key'; do
+    run_pre "$(pre_payload_for "${flagless}")"
+    assert_eq "refused with no literal flag to match: ${flagless}" \
+        "2" "${PRE_STATUS}"
+    assert_eq "and the refusal reaches the agent: ${flagless}" \
+        "0" "$([[ -n "${PRE_ERR}" ]] && printf 0 || printf 1)"
+done
+
+# 7c. the reads the allow rule exists for keep working. A hook that turned
+# `git diff` back into a prompt would be traded for the one it replaced.
+# Two operands are the plain-file form unless both resolve as revisions, so
+# `git diff HEAD HEAD` must stay silent -- HEAD twice rather than HEAD~1 or a
+# branch name, since CI checks out at depth 1 and neither of those resolves
+# there.
+for ordinary in "git diff" "git diff --stat" "git diff HEAD~1 -- build_files/" \
+    "git diff HEAD HEAD" "git diff ./README.md" "git diff -- ./cosign.key" \
+    "grep diff a.txt b.txt" \
+    "git status --short" "./tests/run-tests.sh test-post-check"; do
+    run_pre "$(pre_payload_for "${ordinary}")"
+    assert_eq "still allowed without a prompt: ${ordinary}" "0" "${PRE_STATUS}"
+    assert_eq "and silent: ${ordinary}" "" "${PRE_ERR}${PRE_OUT}"
+done
+
+# 7d. PreToolUse fires for every Bash call, so a payload shaped differently from
+# the one expected must not block every command in the session. `jq // empty` is
+# what keeps that from happening.
+for payload in '{}' '{"tool_input":{}}' '{"tool_input":{"command":""}}'; do
+    run_pre "${payload}"
+    assert_eq "a payload without a command is allowed (${payload})" \
+        "0" "${PRE_STATUS}"
+    assert_eq "and says nothing (${payload})" "" "${PRE_ERR}${PRE_OUT}"
+done
+
+# 7e. and a payload it cannot read at all is the opposite case: the hook cannot
+# tell what the call does, so it must not decide that it is safe. The first
+# version read the command with jq and never checked for jq, so on a host
+# without it the substitution left the variable empty and execution fell
+# through to the hook's own `exit 0` -- a missing dependency silently disabling
+# the only gate on this route. These settings run wherever a contributor runs
+# Claude Code, not only on the CI runner.
+run_pre 'not json at all'
+assert_eq "an unparseable payload is refused, not waved through" "2" "${PRE_STATUS}"
+assert_contains "and says why" "${PRE_ERR}" "parse"
+
+NOJQ="${WORK}/nojq-path"
+mkdir -p "${NOJQ}"
+for tool in bash env git cat; do
+    tool_path="$(command -v "${tool}" 2>/dev/null)" || continue
+    ln -sf "${tool_path}" "${NOJQ}/${tool}"
+done
+nojq_err="${WORK}/nojq-err"
+printf '%s' "$(pre_payload_for "git diff --no-index -- /dev/null ./cosign.key")" |
+    (cd "${REPO_ROOT}" && PATH="${NOJQ}" CLAUDE_PROJECT_DIR="${REPO_ROOT}" \
+        bash -c "${PRE_COMMAND}") >/dev/null 2>"${nojq_err}"
+nojq_status=$?
+assert_eq "a host without jq gets a refusal, not an unchecked call" \
+    "2" "${nojq_status}"
+assert_contains "and is told what is missing" "$(cat "${nojq_err}")" "jq"
 
 finish

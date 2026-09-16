@@ -38,7 +38,7 @@ when present and skipped when not.
 | `test-renovate.sh`          | the Chunkah regex manager against both checked-in pin syntaxes, including a simulated version-only replacement, and the split of work between `renovate.json` and `.github/dependabot.yml` |
 | `test-manual-input-check.sh` | `docs/manual-input-check.md`: the manual pre-bump procedure held against the machine it describes — the artifact references and tag template against the `Containerfile`'s `FROM` lines, the copied payload paths against its bind mounts, the RPM names and `rpm --qf` query against `build_files/post-check.sh`, and the worked release example against `ARG FEDORA_VERSION` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
-| `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook, extracted and executed against a recording `shellcheck` stub, plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
+| `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook and the `PreToolUse` hook that gates `git diff --no-index`, both extracted and executed — the first against a recording `shellcheck` stub, the second against the command payloads it has to refuse and the ones it must leave alone — plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
 | `test-quality-docs.sh`      | `docs/quality.md`, `docs/metrics.md` and `docs/review-rubric.md`: the badge and gate tables against `.github/workflows/build.yml`, `.github/workflows/status-badges.yml`, the `Containerfile` and `ci/write-badges.sh`; the metrics commands parsed and their `jq` filters compiled; and the rubric's checks, incident comments, shell bar, evidence table and signing claim against the code each one names |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
@@ -747,6 +747,24 @@ directory are all asserted, and the cases where it must *not* run — a `.md` or
 that it was never invoked. The `*.sh` filter is held against
 `test-shell-syntax.sh`'s `-name '*.sh'` selection, so the hook and the gate
 cannot come to disagree about which files have to be clean.
+
+The file holds a second hook, on `PreToolUse`, for a hole the permission table
+cannot close. `Bash(git diff:*)` is on the `allow` list, and
+`git diff --no-index` compares two paths as plain files rather than as
+repository content — so the pre-approved command prints any file this uid can
+open, `cosign.key` and a `.env` included. The `Read(...)` rules that name those
+paths gate the Read tool and have nothing to say about Bash, and no rule can
+take their place: patterns match by prefix and flags may appear in any order, so
+a narrower `allow` admits the flag anyway and a `deny` for it matches one
+spelling of the command. A hook is handed the whole command string, so it can.
+
+`test-claude-settings.sh` runs that one too, and starts by demonstrating what it
+is for: `git diff --no-index` against a fixture in the test's own temp directory
+has to print the fixture's contents. Then the hook itself — refusing the command
+from the finding and three variants that put the flag somewhere a prefix rule
+would miss, and leaving `git diff`, `git diff --stat`, `git status` and a
+payload with no command in it alone, because a hook that turned the allow rule
+back into a prompt would have traded one problem for the one it replaced.
 
 Two filters agreeing is not the same as either one being complete, and the
 suffix is the third selection of its kind: `test-coverage.sh` takes

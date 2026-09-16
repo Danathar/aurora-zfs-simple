@@ -39,6 +39,7 @@ source "${TEST_DIR}/lib/assert.sh"
 # covered precisely because it grew one (a `BASH_SOURCE`-guarded entry point).
 MANIFEST=$(
     cat <<'EOF'
+.claude/hooks/gate-git-diff.sh	tests/test-claude-settings.sh
 build_files/build.sh	UNCOVERED	runs its work at the top level; sourcing it executes the whole file. Exercised only by a real image build.
 build_files/kernel-akmods.sh	UNCOVERED	same, and it erases the running system's kernel RPMs. Exercised only by a real image build.
 build_files/zfs.sh	UNCOVERED	same. Its happy path is exercised by the Build container image workflow; its failure branches are not.
