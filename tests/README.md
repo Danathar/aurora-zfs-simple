@@ -41,6 +41,7 @@ when present and skipped when not.
 | `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook and the `PreToolUse` hook that gates `git diff --no-index`, both extracted and executed — the first against a recording `shellcheck` stub, the second against the command payloads it has to refuse and the ones it must leave alone — plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
 | `test-quality-docs.sh`      | `docs/quality.md`, `docs/metrics.md` and `docs/review-rubric.md`: the badge and gate tables against `.github/workflows/build.yml`, `.github/workflows/status-badges.yml`, the `Containerfile` and `ci/write-badges.sh`; the metrics commands parsed and their `jq` filters compiled; and the rubric's checks, incident comments, shell bar, evidence table and signing claim against the code each one names |
 | `test-memory-corrections.sh` | `.claude/memory/corrections.md`: the entry shape `.claude/memory/README.md` asks for, every repository path the entries cite, and each correction's claims against the machine that settles it — the `Containerfile`'s final two `RUN` steps and the rechunk's place after them in `.github/workflows/build.yml`, that step's `.Config` read and incident numbers, AGENTS.md's `--state all` query, diagnosis block and pin example, and `test-shell-syntax.sh`'s shellcheck skip against CI's `Install shellcheck` step |
+| `test-editorconfig.sh`      | `.editorconfig`: every section resolved the way EditorConfig resolves them and measured against the tree — line endings, final newlines, charset and the two trailing-whitespace exemptions over every tracked file, `indent_size` against the indentation each shell, YAML, JSON and `Containerfile` actually uses, and the header note's claims about Prettier and `.shellcheckrc` |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -823,6 +824,52 @@ defences belong in.
 
 `build.yml` does not `paths-ignore` `.claude/**`, so a change to that file runs
 this suite.
+
+## The editor settings
+
+`.editorconfig` opens by saying it "encodes the conventions already in the tree
+rather than proposing new ones". That is the whole contract, and it is a claim
+about every tracked file rather than a preference — which makes it testable, and
+makes it rot silently. `test-editorconfig.sh` measures it.
+
+The consequence of drift is a diff. EditorConfig does not reformat anything on
+its own, but an editor acts on it: a file whose real indentation differs from
+the `indent_size` its editor believes gets reindented by the next person who
+touches it, and the formatting noise lands in a PR about something else. That is
+exactly the diff the file exists to prevent, so a stale rule is worse than none.
+
+It had already drifted. `.claude/hooks/gate-git-diff.sh` arrived with the
+`git diff --no-index` gate and is written two-space, while `[*.sh]` declares four
+and a comment named `ci/write-badges.sh` as "the one exception in the tree". The
+two-space set is now asserted in both directions — every script measured at two
+spaces must be declared, and every script declared at two must measure that way
+— so the third one to arrive fails whichever side it lands on.
+
+Resolution is last-match-wins over the sections, with globs that are not
+fnmatch: a pattern with no separator matches at any depth, `**` crosses
+separators, `{a,b}` is an alternation. The matcher is hand-rolled here and
+carries its own case table, because a matcher that quietly matched everything
+would make every assertion resting on it vacuously true.
+
+The two measurements are picked around the same trap. Most-common-step is right
+for shell only once heredoc bodies are skipped — the tests embed YAML, JSON and
+Python fixtures, and a measure that reads those reports the fixture's language.
+It is wrong for YAML outright: `.github/labeler.yml` steps by four at its nested
+sequences while the file is two-space, so YAML and JSON are measured by their
+first nesting level instead. Markdown and Python are not measured at all and the
+file says so: a list continuation and a line wrapped to an open parenthesis both
+indent to an alignment column, which is not an indent step.
+
+The rest of the file's prose is joined to what it describes. The note arguing
+against a Prettier config rests on nothing running one, so no tracked Prettier
+config and no `prettier` invocation are both asserted; its alternative — "shell
+style is enforced by `.shellcheckrc`, which CI actually runs" — is only true
+while every workflow that runs this suite installs `shellcheck` first, since
+`test-shell-syntax.sh` skips that pass when the binary is missing and stays
+green. `.shellcheckrc`'s own reason for leaving `require-double-brackets` off
+names `ci/write-badges.sh`; `.editorconfig` names it for the same style from the
+other side; neither file mentions the other, and the fact underneath both is
+measured here.
 
 ## In CI
 

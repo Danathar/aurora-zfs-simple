@@ -26,14 +26,23 @@ indent_size = 4
 [*.sh]
 indent_size = 4
 
-# ci/write-badges.sh is the one exception in the tree: two-space, and single
-# brackets. Left as it is, so declare it rather than let an editor fight it.
+# Two scripts are two-space rather than four. Left as they are, so declare them
+# rather than let an editor fight them. ci/write-badges.sh is also the only
+# shipped script written with single brackets throughout, which is the reason
+# .shellcheckrc gives for leaving require-double-brackets off.
 [ci/write-badges.sh]
 indent_size = 2
 
-# tests/test-coverage.sh's MANIFEST is tab-separated and the tabs are load
-# bearing — they separate the script path from its covering test file.
-[tests/test-coverage.sh]
+[.claude/hooks/gate-git-diff.sh]
+indent_size = 2
+
+# Two test files contain tabs in a tree that is otherwise spaces, and both are
+# measured rather than accidental: tests/test-coverage.sh separates its MANIFEST
+# columns with them, and tests/test-post-check.sh reproduces ldd output, which
+# is tab-indented. Both are content rather than indentation, so indent_style
+# above never reaches them; this section exists so a reader who finds a tab
+# knows it was looked at.
+[{tests/test-coverage.sh,tests/test-post-check.sh}]
 indent_size = 4
 
 [*.{yml,yaml}]
