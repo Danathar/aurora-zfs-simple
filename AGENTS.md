@@ -9,6 +9,25 @@ Companion doc: [`docs/manual-input-check.md`](docs/manual-input-check.md) covers
 *pre-flight* checks before a Fedora major-release bump. This file covers
 *post-mortem* diagnosis of a build that already broke.
 
+## Writing issues, PRs and comments
+
+A person who was not in your head will read what you write. Write for them.
+
+- **Start with a plain summary**: two or three short sentences saying what
+  changed (or what is wrong), why it matters, and what the reader should look
+  at or do. Someone who reads only that should still get the point.
+- In a PR, put the rest under the pull request template's headings.
+- Short sentences. One idea per bullet. No nested dash-clauses.
+- Use this project's own words. If you coin a term, define it the first time
+  you use it.
+- Tell the reader what they can check themselves: the command to run, the file
+  to open, the number to compare.
+- Keep the body under about 300 words. Long evidence (mutation lists, full test
+  output, logs) goes in a collapsed `<details>` block.
+- Issues: state the problem as a user would see it, then the evidence, then the
+  proposed fix. The title says what is wrong, not what kind of finding it is;
+  keep any prefix the tooling requires.
+
 ## Pull request review
 
 After opening a PR here, check what `chatgpt-codex-connector[bot]` said before
