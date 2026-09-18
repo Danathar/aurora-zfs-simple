@@ -184,12 +184,14 @@ fedora_from_containerfile="$(sed -n 's/^ARG FEDORA_VERSION=\([0-9][0-9]*\).*/\1/
 require_nonempty "the Fedora release the Containerfile targets" "${fedora_from_containerfile}"
 assert_contains "ci/write-badges.sh reads that same ARG out of the Containerfile" \
     "$(cat "${WRITE_BADGES}")" 's/^ARG FEDORA_VERSION='
+# shellcheck disable=SC2016 # the literal ${FEDORA_VERSION} is the needle
 assert_contains "and the akmods tag the Containerfile pulls carries that release" \
     "$(cat "${CONTAINERFILE}")" 'ghcr.io/ublue-os/akmods:coreos-stable-"${FEDORA_VERSION}"'
 
 # "kernel-akmods.sh erases Aurora's kernel outright" -- the reason the rules give
 # for the image legitimately running a newer kernel than Aurora stable.
 kernel_akmods_text="$(cat "${KERNEL_AKMODS}")"
+# shellcheck disable=SC2016 # the literal ${pkg} is the needle
 assert_contains "kernel-akmods.sh erases the base kernel RPMs" \
     "${kernel_akmods_text}" 'rpm --erase "${pkg}" --nodeps'
 assert_contains "over a package list that includes the kernel itself" \
@@ -228,6 +230,7 @@ assert_eq "no install in build_files/zfs.sh is made non-fatal" "" "${non_fatal}"
 
 # The rules' reason -- "the failure moves from the build to the boot" -- is only
 # true while the script checks that the modules it installed are really there.
+# shellcheck disable=SC2016 # the literal ${ZFS_MODULE_DIR}/${module} is the needle
 assert_contains "build_files/zfs.sh fails the build when a module is missing" \
     "${zfs_text}" 'compgen -G "${ZFS_MODULE_DIR}/${module}.ko*"'
 
@@ -247,6 +250,7 @@ assert_eq "and nothing under node_modules is tracked" \
 
 # "shellcheck -x must produce zero output, informational findings included."
 shell_syntax_text="$(cat "${SHELL_SYNTAX}")"
+# shellcheck disable=SC2016 # the literal ${rel} is the needle
 assert_contains "tests/test-shell-syntax.sh runs shellcheck with -x" \
     "${shell_syntax_text}" 'shellcheck -x "${rel}"'
 # shellcheck disable=SC2016 # matching the assertion's own text, ${rel} included
@@ -261,8 +265,10 @@ assert_contains ".shellcheckrc resolves sourced paths, matching that -x" \
 # Command position only. tests/test-quality-docs.sh holds the same property from
 # the docs/review-rubric.md side and names `--severity` in an assertion string;
 # matching that would be matching a test for this rule, not a breach of it.
-severity_flags="$(cd "${REPO_ROOT}" &&
-    git grep -nE '(^|[;&|(]|\$\()[[:space:]]*shellcheck[[:space:]][^"'"'"']*(--severity|[[:space:]]-S([[:space:]]|=))' -- . || true)"
+severity_flags="$(
+    cd "${REPO_ROOT}" || exit 1
+    git grep -nE '(^|[;&|(]|\$\()[[:space:]]*shellcheck[[:space:]][^"'"'"']*(--severity|[[:space:]]-S([[:space:]]|=))' -- . || true
+)"
 assert_eq "no shellcheck invocation raises a severity floor" "" "${severity_flags}"
 disabled="$(grep -E '^[[:space:]]*disable=' "${SHELLCHECKRC}" || true)"
 assert_eq ".shellcheckrc switches no check off" "" "${disabled}"
@@ -385,13 +391,16 @@ done < <(tr ' ' '\n' <<<"${uncovered}")
 # accepts three uncovered scripts at all.
 # Command position again: tests/test-editorconfig.sh lists those paths inside a
 # string it compares against, which is a mention and not an execution.
-host_execs="$(cd "${REPO_ROOT}" &&
-    grep -rnE '(^|[;&|(]|\$\()[[:space:]]*(source|\.|bash|sh)[[:space:]]+[^[:space:]"]*build_files/(build|kernel-akmods|zfs)\.sh' tests/ || true)"
+host_execs="$(
+    cd "${REPO_ROOT}" || exit 1
+    grep -rnE '(^|[;&|(]|\$\()[[:space:]]*(source|\.|bash|sh)[[:space:]]+[^[:space:]"]*build_files/(build|kernel-akmods|zfs)\.sh' tests/ || true
+)"
 assert_eq "no test on the host sources or runs those three scripts" "" "${host_execs}"
 
 # "post-check.sh is partly covered through its sourceable helpers." Partly: the
 # entry point is behind a BASH_SOURCE guard, which is the seam, and the manifest
 # records the test that uses it.
+# shellcheck disable=SC2016 # the literal ${BASH_SOURCE[0]} is the needle
 assert_contains "build_files/post-check.sh has the BASH_SOURCE guard the rules imply" \
     "$(cat "${POST_CHECK}")" '"${BASH_SOURCE[0]}" == "${0}"'
 assert_contains "and the coverage manifest records it as covered, not UNCOVERED" \
