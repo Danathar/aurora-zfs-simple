@@ -98,10 +98,12 @@ Match the file you are editing. Across the repo:
 
 - `set -euo pipefail` at the top of anything executed; `set -uo pipefail` in the
   test runner, which needs to survive a failing test and report it.
-- Four-space indentation in shell, except `ci/write-badges.sh`, which uses two
-  and is left alone.
-- Shebang and executable bit on every `*.sh`. The test suite enforces this,
-  because the `Containerfile` and the workflows run these scripts by path.
+- Four-space indentation in shell, except `ci/write-badges.sh` and
+  `.claude/hooks/gate-git-diff.sh`, which use two and are left alone.
+- Shebang and executable bit on anything run by path. The test suite enforces
+  this, because the `Containerfile` and the workflows run these scripts by path.
+  The exception is `tests/lib/`, which is only ever sourced and deliberately
+  carries neither.
 - Comments explain *why*, and especially why something that looks wrong is
   deliberate. This repo has several of those — the `.Config`-only inspect that
   works around `MAX_ARG_STRLEN`, the badge script refusing to guess when an
