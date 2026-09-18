@@ -33,9 +33,11 @@ the failure moves from the build to the boot.
 
 - Shell only. No package manager, no node_modules, no build step. Do not add one.
 - shellcheck -x must produce zero output, informational findings included.
-- Shebang and executable bit on every *.sh; the Containerfile and the workflows
-  run them by path.
-- Four-space indent, except ci/write-badges.sh, which is two.
+- Shebang and executable bit on anything run by path; the Containerfile and the
+  workflows run scripts that way. The exception is tests/lib/, which is sourced
+  and carries neither.
+- Four-space indent, except ci/write-badges.sh and .claude/hooks/gate-git-diff.sh,
+  which are two.
 - Run ./tests/run-tests.sh with shellcheck installed; the suite skips that pass
   when it is missing, so a local green is weaker than CI's.
 

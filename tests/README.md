@@ -41,6 +41,7 @@ when present and skipped when not.
 | `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook and the `PreToolUse` hook that gates `git diff --no-index`, both extracted and executed — the first against a recording `shellcheck` stub, the second against the command payloads it has to refuse and the ones it must leave alone — plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
 | `test-quality-docs.sh`      | `docs/quality.md`, `docs/metrics.md` and `docs/review-rubric.md`: the badge and gate tables against `.github/workflows/build.yml`, `.github/workflows/status-badges.yml`, the `Containerfile` and `ci/write-badges.sh`; the metrics commands parsed and their `jq` filters compiled; and the rubric's checks, incident comments, shell bar, evidence table and signing claim against the code each one names |
 | `test-memory-corrections.sh` | `.claude/memory/corrections.md`: the entry shape `.claude/memory/README.md` asks for, every repository path the entries cite, and each correction's claims against the machine that settles it — the `Containerfile`'s final two `RUN` steps and the rechunk's place after them in `.github/workflows/build.yml`, that step's `.Config` read and incident numbers, AGENTS.md's `--state all` query, diagnosis block and pin example, and `test-shell-syntax.sh`'s shellcheck skip against CI's `Install shellcheck` step |
+| `test-cursorrules.sh`       | `.cursorrules`: every rule that names something in this repository, held against it — the three artifacts the `Containerfile` assembles and the two `ci/write-badges.sh` compares, the `kmod-zfs` glob and the fatal install in `build_files/zfs.sh`, the kernel erase in `build_files/kernel-akmods.sh`, the indent exceptions against `.editorconfig`, the shebang, executable-bit and `shellcheck` bars against `test-shell-syntax.sh` and `.shellcheckrc`, and the scripts it calls unreachable from the host against `test-coverage.sh`'s `UNCOVERED` set |
 | `test-editorconfig.sh`      | `.editorconfig`: every section resolved the way EditorConfig resolves them and measured against the tree — line endings, final newlines, charset and the two trailing-whitespace exemptions over every tracked file, `indent_size` against the indentation each shell, YAML, JSON and `Containerfile` actually uses, and the header note's claims about Prettier and `.shellcheckrc` |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
@@ -618,6 +619,39 @@ escaping as an unrecognized token that is therefore never resolved.
 lines to one tag and `kernel-akmods.sh` to erasing the base module tree. Both
 properties are reached here from the other side, through AGENTS.md's pin example
 and its 60-second diagnosis, which is where a reader mid-incident meets them.
+
+## The Cursor rules
+
+`.cursorrules` is the same kind of surface one step further out: Cursor loads it
+before every edit, and nothing opened it either. `grep -rl cursorrules tests/`
+returned two hits and neither read the file — `test-labeler.sh` asserts the path
+matches the `area/agents` glob, and `test-memory-corrections.sh` names it in a
+comment listing the agent configuration.
+
+Its rules are instructions rather than notes, which makes a stale one act
+immediately. Two were already wrong when `test-cursorrules.sh` was written. The
+two-space exception list named only `ci/write-badges.sh` while `.editorconfig`
+declares `.claude/hooks/gate-git-diff.sh` as well, so an agent following the
+rules would have written a four-space diff into a two-space script. And the
+shebang rule claimed every `*.sh`, when `lib/assert.sh` and `lib/markdown.sh`
+are sourced and deliberately carry neither — which is exactly why
+`test-shell-syntax.sh` skips them by name. Both lines were corrected with the
+test that now holds them.
+
+The rest is computed rather than restated: the artifacts out of the
+`Containerfile`'s `FROM` stages, the two compared kernels out of
+`write-badges.sh`'s own `from_ref` calls, the `kmod-zfs` glob and the absence of
+a `|| true` out of `build_files/zfs.sh`, the two-space set out of
+`.editorconfig`'s sections, and the three scripts no host test reaches out of
+`test-coverage.sh`'s `UNCOVERED` column — both directions, so neither side can
+gain a script alone. Where a rule is a judgement rather than a claim — "write in
+the same register", "most red builds here are caused upstream" — it is left
+alone.
+
+`test-quality-docs.sh` already holds the run-by-path shebang rule as
+`docs/review-rubric.md` states it, and `test-editorconfig.sh` measures the
+indentation itself. This file asks the other question: whether `.cursorrules`
+still describes the sets those two enforce.
 
 ## The harness
 
