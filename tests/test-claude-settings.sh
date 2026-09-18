@@ -603,6 +603,59 @@ for flagless in "git diff /dev/null ./cosign.key" \
         "0" "$([[ -n "${PRE_ERR}" ]] && printf 0 || printf 1)"
 done
 
+# 7b''. the spellings that carry no flag and no second revision either. Each of
+# these reached the plain-file mode past the first version of this gate, which
+# ended its operand scan at any `--`, skipped every dash-prefixed word, split on
+# whitespace alone, and read the value half of a two-token git option as the
+# subcommand. They are asserted one per line rather than as a family because
+# each is a separate way for the scan to stop matching what git does.
+for reach in "git diff -- /dev/null ./cosign.key" \
+    "git diff -- /dev/null ./.env" \
+    "git diff ./cosign.key -" \
+    "git diff - ./cosign.key" \
+    "ls&&git diff /dev/null ./cosign.key" \
+    "true;git diff /dev/null ./cosign.key" \
+    "git -C / diff /dev/null ./cosign.key" \
+    "git -c core.pager=cat diff /dev/null ./cosign.key" \
+    "git --git-dir=/tmp/x diff /dev/null ./cosign.key"; do
+    run_pre "$(pre_payload_for "${reach}")"
+    assert_eq "refused with no flag and no whitespace to match: ${reach}" \
+        "2" "${PRE_STATUS}"
+done
+
+# A `..` that leaves the checkout and comes back names a file inside this
+# repository, and git's own inside-or-outside test reads the spelling, so it
+# enters the plain-file mode anyway. A gate that resolved the path first would
+# see a tidy in-tree path and allow it, which is why the test in the hook is
+# lexical. Built from the checkout's own directory name, since where a clone
+# lands is not fixed.
+climbed="../$(basename "${REPO_ROOT}")/cosign.key"
+for climb in "git diff -- ${climbed} -" \
+    "git diff -- ${climbed} ./README.md" \
+    "git diff -- /dev/null ${climbed}"; do
+    run_pre "$(pre_payload_for "${climb}")"
+    assert_eq "a path that climbs out and back is still outside: ${climb}" \
+        "2" "${PRE_STATUS}"
+done
+
+# 7b'''. the write half. `--output=FILE` sends the diff to the path it names
+# instead of to stdout, so it overwrites any file this uid can reach -- and it
+# belongs to the diff-generation machinery rather than to one subcommand, so
+# `git log` and `git show`, both allow-listed here, reach it with the word
+# `diff` nowhere in the command. No Read(...) deny rule gates a write.
+for writer in "git diff --output=cosign.pub HEAD" \
+    "git log -p --output=cosign.pub -1" \
+    "git show --output=.claude/settings.json HEAD" \
+    "git log --output cosign.pub -1" \
+    "git log --grep=a|b --output=cosign.pub -1" \
+    "git log -1 && git log -p --output=cosign.pub -1"; do
+    run_pre "$(pre_payload_for "${writer}")"
+    assert_eq "writing a file through an allow-listed git command is refused: ${writer}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the flag: ${writer}" \
+        "${PRE_ERR}" "--output=FILE"
+done
+
 # 7c. the reads the allow rule exists for keep working. A hook that turned
 # `git diff` back into a prompt would be traded for the one it replaced.
 # Two operands are the plain-file form unless both resolve as revisions, so
@@ -611,6 +664,10 @@ done
 # there.
 for ordinary in "git diff" "git diff --stat" "git diff HEAD~1 -- build_files/" \
     "git diff HEAD HEAD" "git diff ./README.md" "git diff -- ./cosign.key" \
+    "git diff -- cosign.pub README.md" \
+    "git log --output-indicator-new=% -1" \
+    "git diff --output-indicator-old=- HEAD HEAD" \
+    "git diff --output-indicator-frag=@ HEAD HEAD" \
     "grep diff a.txt b.txt" \
     "git status --short" "./tests/run-tests.sh test-post-check"; do
     run_pre "$(pre_payload_for "${ordinary}")"
