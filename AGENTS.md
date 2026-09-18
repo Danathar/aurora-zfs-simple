@@ -16,8 +16,8 @@ A person who was not in your head will read what you write. Write for them.
 - **Start with a plain summary**: two or three short sentences saying what
   changed (or what is wrong), why it matters, and what the reader should look
   at or do. Someone who reads only that should still get the point.
-- Then the detail under short headings: `What changed`, `Why`, `How to review`,
-  and `Also in this PR` for unrelated tidy-ups.
+- In a PR, put the rest under the pull request template's headings. Work
+  unrelated to the change goes in its own PR, not in a section of this one.
 - Short sentences. One idea per bullet. No nested dash-clauses.
 - Use this project's own words. If you coin a term, define it the first time
   you use it.
