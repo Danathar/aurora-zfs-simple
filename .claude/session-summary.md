@@ -10,7 +10,7 @@ agent will act on it.
 
 ---
 
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-19
 
 ## Where things stand
 
@@ -22,18 +22,7 @@ reason belongs in `AGENTS.md`'s incident log, not here.
 
 ## In flight
 
-A batch of repository-hygiene work opened together, all off `main` and
-independent of each other — no forward references between them, so merge order
-does not matter:
-
-| Subject                        | Notes                                                                                                                          |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| README accuracy (#70)          | Corrected the Chunkah pinning and renovate config claims, plus a test that fails when the docs name a path that does not exist |
-| Contributor templates          | `CONTRIBUTING.md`, PR template, issue forms                                                                                    |
-| Style config and coverage gate | `.shellcheckrc`, `.editorconfig`, a coverage manifest, and a workflow covering the paths `build.yml` ignores                   |
-| End-to-end build               | `tests/e2e/`, including a mode that re-checks the rechunked image                                                              |
-| Agent configuration            | Prompts, commands, and this file                                                                                               |
-| L3 quality docs                | `docs/quality.md`, `docs/metrics.md`, `docs/review-rubric.md`, `.claude/settings.json`                                         |
+Nothing is currently in flight.
 
 `docs/` is in `build.yml`'s `paths-ignore`, so a docs-only branch may show no
 checks at all. That is the workflow config, not a failure.
