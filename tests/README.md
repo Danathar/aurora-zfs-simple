@@ -43,6 +43,7 @@ when present and skipped when not.
 | `test-memory-corrections.sh` | `.claude/memory/corrections.md`: the entry shape `.claude/memory/README.md` asks for, every repository path the entries cite, and each correction's claims against the machine that settles it — the `Containerfile`'s final two `RUN` steps and the rechunk's place after them in `.github/workflows/build.yml`, that step's `.Config` read and incident numbers, AGENTS.md's `--state all` query, diagnosis block and pin example, and `test-shell-syntax.sh`'s shellcheck skip against CI's `Install shellcheck` step |
 | `test-cursorrules.sh`       | `.cursorrules`: every rule that names something in this repository, held against it — the three artifacts the `Containerfile` assembles and the two `ci/write-badges.sh` compares, the `kmod-zfs` glob and the fatal install in `build_files/zfs.sh`, the kernel erase in `build_files/kernel-akmods.sh`, the indent exceptions against `.editorconfig`, the shebang, executable-bit and `shellcheck` bars against `test-shell-syntax.sh` and `.shellcheckrc`, and the scripts it calls unreachable from the host against `test-coverage.sh`'s `UNCOVERED` set |
 | `test-editorconfig.sh`      | `.editorconfig`: every section resolved the way EditorConfig resolves them and measured against the tree — line endings, final newlines, charset and the two trailing-whitespace exemptions over every tracked file, `indent_size` against the indentation each shell, YAML, JSON and `Containerfile` actually uses, and the header note's claims about Prettier and `.shellcheckrc` |
+| `test-session-summary.sh`   | `.claude/session-summary.md`: every claim that names something here — the retired branch and tag against README.md, `ARG FEDORA_VERSION` and both unpinned akmods `FROM` lines against the `Containerfile`, `docs/**` against every path filter in `.github/workflows/build.yml`, the unchecked-after-Chunkah ordering against the `Containerfile`'s last two `RUN` steps and the workflow's step order, the `--rechunk` remedy against `tests/e2e/run-e2e.sh`, the Chunkah pin against the workflow and `renovate.json`'s own exclusion, the badge name and its leave-alone branch against `ci/write-badges.sh`, and the label-comparison snippet executed against the `Containerfile` it reads |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -652,6 +653,50 @@ alone.
 `docs/review-rubric.md` states it, and `test-editorconfig.sh` measures the
 indentation itself. This file asks the other question: whether `.cursorrules`
 still describes the sets those two enforce.
+
+## The session summary
+
+`.claude/session-summary.md` is the third file in that family and the one with
+the shortest path to a wrong action. It is written for an agent that has read
+nothing else, and its claims are almost all negative or procedural: neither
+akmods input is pinned, nothing validates the image after Chunkah, the
+openzfs/kernel badge can outlive the skew it described, run this snippet before
+acting on it. A reader who believes one of those after it stops being true has
+no reason to doubt it — which is the failure the document's own opening warns
+about, aimed at itself: "a stale entry here is worse than an empty file, because
+the next agent will act on it."
+
+Nothing opened it before `test-session-summary.sh`. `test-coverage.sh` sees only
+shipped `*.sh`, `test-docs-paths.sh` resolves what README.md and AGENTS.md name,
+and `test-editorconfig.sh` reads the file as bytes to classify its indentation
+rather than as claims.
+
+So each claim is computed from the file it is about. The Fedora major is
+compared as a number against `ARG FEDORA_VERSION`, so a bump fails here rather
+than leaving the summary asserting 44. "Neither akmods input is pinned" is both
+`FROM` lines checked for a digest and for the `FEDORA_VERSION` they still float
+on. "`docs/` is in `build.yml`'s `paths-ignore`" is asserted for every trigger
+that filters paths at all, because the reassurance it supports — a docs-only
+branch showing no checks is config, not breakage — needs all of them. The open
+thread about Chunkah is an ordering, so the ordering is what is asserted, and
+the one remedy the summary offers is held to verifying the rechunked tag rather
+than the built one. The badge is named by `ci/write-badges.sh` rather than
+spelled here, and the leave-the-badge-alone branch the "confirm it against the
+live labels" paragraph rests on is asserted on both halves: the inspect that
+degrades to empty, and the branch that then writes nothing.
+
+The snippet at the end is the one block a reader executes rather than believes,
+so it is executed: the `sed` line runs against the real `Containerfile` and has
+to return the same Fedora major, the two images it loops over have to be the two
+the `Containerfile` pulls, and its `docker://` reference is expanded and
+compared with each `FROM` line. A pin edited during an outage — the documented
+workaround — cannot leave the snippet inspecting images the build no longer
+uses, which is the trap `write-badges.sh`'s own comments describe.
+
+`test-memory-corrections.sh` already holds the `Containerfile`'s trailing check
+order and the rechunk's place in `build.yml`. Both are reached here from the
+other side: that test asks what an incident record claims, this one asks whether
+the summary's "Open threads" still describes today's pipeline.
 
 ## The harness
 
