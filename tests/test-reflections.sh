@@ -661,10 +661,12 @@ assert_contains "while tests/** is what the self-checking tier covers" \
 # noticing. A path that wraps across two lines cannot be resolved by anyone
 # and counts as broken.
 
-# A cite ends where the prose does: a trailing period or comma belongs to the
-# sentence, not the path.
-cited="$(cd "${REPO_ROOT}" && git grep -ohE 'docs/reflections/[^[:space:]`)"'"'"']+' -- ':!*.md' |
-    sed -E 's/[.,;:]+$//' | as_set)"
+# Only something shaped like an entry counts as a cite: README.md or a dated
+# YYYY-MM-DD-slug.md. That excludes globs, the <file> placeholder in prose,
+# and this test's own pattern, and because a match must end in .md the
+# sentence's trailing period never rides along.
+cited="$(cd "${REPO_ROOT}" && git grep -ohE 'docs/reflections/(README|[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+)\.md' -- ':!*.md' |
+    as_set)"
 require_nonempty "citations of docs/reflections/ from non-Markdown files" "${cited}"
 for cite in ${cited}; do
     if (cd "${REPO_ROOT}" && git ls-files --error-unmatch "${cite}" >/dev/null 2>&1); then
