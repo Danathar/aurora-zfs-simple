@@ -14,13 +14,13 @@
 # Markdown links in every tracked *.md, tests/test-shell-syntax.sh selects by
 # suffix -- and neither reads a claim.
 #
-# That matters more here than "docs can rot". docs/reflections/2026-09-03-prose-
-# an-agent-is-told-to-trust.md is this repo's own finding that prose named as a
-# source of truth for a reader who does not know the tree is an input to
-# incident response, not decoration. These three documents are exactly that: a
-# badge table that tells a reader a red build is survivable, a gate table that
-# tells them what a green suite proves, and a rubric that tells a reviewer what
-# to reject on sight.
+# That matters more here than "docs can rot".
+# docs/reflections/2026-09-03-prose-an-agent-is-told-to-trust.md is this repo's
+# own finding that prose named as a source of truth for a reader who does not
+# know the tree is an input to incident response, not decoration. These three
+# documents are exactly that: a badge table that tells a reader a red build is
+# survivable, a gate table that tells them what a green suite proves, and a
+# rubric that tells a reviewer what to reject on sight.
 #
 # So nothing here is typed in twice where it can be computed. The expectations
 # are read out of the workflow, the Containerfile, the badge script and the
