@@ -40,6 +40,16 @@
 #      repository by a route that leaves it and comes back; git calls that
 #      outside and prints the file, while a test that folds `..` first sees a
 #      tidy in-tree path and allows it. See `path_inside_worktree` below.
+#   6. Bash rewrites the words before git sees them, and this scan reads them
+#      as typed. A brace turns one word into two -- `git diff
+#      {/dev/null,./cosign.key}` passes the operand scan as a single operand
+#      and reaches git as two -- and it splits a flag name so that no word
+#      here matches it: `--outpu{t,t}=FILE` arrives at git as `--output=FILE`.
+#      ANSI-C quoting does the same to the flag, since the quote and backslash
+#      stripping below leaves `--outpu$'\x74'=FILE` as `--outpu$x74=FILE`
+#      while git receives `--output=FILE`. Command substitution supplies
+#      operands this scan never counted at all. Those characters are refused
+#      inside a git invocation rather than expanded; see `EXPAND_MSG`.
 #
 # The write primitive: `--output=FILE` sends the diff git would have printed to
 # a path instead of stdout, so an allow-listed, unprompted call overwrites any
@@ -70,11 +80,13 @@
 # primitive needs none of that machinery: `--output` anywhere in a git
 # invocation is refused outright.
 #
-# What it still cannot see, stated rather than implied: a command that builds
-# its arguments at runtime (`git diff $x $y`, `sh -c ...`), one that changes
+# What it still cannot see, stated rather than implied: a command that hides a
+# git invocation behind another interpreter (`sh -c ...`), one that changes
 # directory out of the repository first, and anything a command reads or writes
-# once it has started. This re-gates the pre-approved commands that reach past
-# the deny list; it is not a sandbox.
+# once it has started. A git argument built at runtime is no longer waved
+# through -- the expansion characters that build it are refused -- but that is
+# a refusal, not an inspection. This re-gates the pre-approved commands that
+# reach past the deny list; it is not a sandbox.
 
 set -uo pipefail
 
@@ -84,6 +96,11 @@ refuse() {
 }
 
 DIFF_MSG='blocked: this git diff would compare paths as plain files (git'"'"'s --no-index mode, which needs no flag once two operands are given), so it prints any file on disk -- cosign.key, a .env, a private key outside this repository -- past the Read(...) deny rules in .claude/settings.json. Describe such a file with ls -l or wc -c instead.'
+
+# shellcheck disable=SC2016 # the message quotes shell spellings as literal
+# text -- $'\x74' and $(...) are what the reader has to see, not what this
+# script should expand.
+EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before git sees the words, and this gate reads the words as typed, so four characters rebuild both spellings it refuses: `git diff {/dev/null,./cosign.key}` passes the operand scan as one word and reaches git as two operands (the plain-file read), `--outpu{t,t}=FILE` and `--outpu$'"'"'\x74'"'"'=FILE` match no word here and reach git as --output=FILE, and `git diff $(...)` supplies operands this scan never saw. Expanding them correctly means reimplementing bash inside a hook; refusing them costs nothing, because no git command in this repository is spelled with one. Write the command out in full. Only words of a git invocation are affected: awk and jq programs elsewhere in the string are not.'
 
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
@@ -161,6 +178,42 @@ after_dashdash=0
 skip_git_option_value=0
 
 for word in "${words[@]+"${words[@]}"}"; do
+  # Checked before the command-boundary case below, because a backtick is one
+  # of the characters refused here and that case consumes it.
+  #
+  # Every test in this scan reads the word as typed, and bash rewrites the
+  # words before git receives them. A brace makes one word into two, so
+  # `git diff {/dev/null,./cosign.key}` is a single operand here and two
+  # operands at git -- one short of the refusal. A brace inside a flag name
+  # makes the flag unrecognizable here and whole at git: `--outpu{t,t}=FILE`
+  # arrives as `--output=FILE`. `$'\x74'` does the same by another route, and
+  # `$(...)`, `${x}`, `$x` and a backtick each supply words this scan never
+  # saw. Four characters rebuild both refusals.
+  #
+  # They are refused rather than expanded. Correct expansion means
+  # reimplementing bash in a hook -- nesting, `{1..9}` sequences, the rule
+  # that a brace with no comma and no range is a literal, word splitting on
+  # $IFS -- and a half-right expansion is a gate that disagrees with the shell
+  # in some other direction. A refusal cannot be half-right, and it costs
+  # nothing here: no git command in this repository is spelled with one of
+  # these, and a git argument built at runtime was already outside what this
+  # hook can vouch for, so refusing it turns a silent pass into a visible
+  # refusal.
+  #
+  # Scoped to `in_git`, the same latch `--output` uses, so `awk '{print $1}'`
+  # and `jq '{a:1}'` are untouched in a command string that never invokes git.
+  # A brace or a `$` *before* the first `git` word is not checked and does not
+  # need to be: the allow rules in .claude/settings.json match a literal
+  # `git diff`/`git log` prefix, so an invocation assembled out of expansions
+  # (`{git,:} diff ...`, `g{i,i}t diff ...`, `$GIT diff ...`) matches no allow
+  # rule and prompts on its own.
+  if ((in_git)); then
+    case "${word}" in
+    *['{}$`']*) refuse "${EXPAND_MSG}" ;;
+    *) ;;
+    esac
+  fi
+
   case "${word}" in
   ';' | '&&' | '||' | '|' | '&' | '(' | ')' | '`')
     # The operand scan starts over at each command boundary. `in_git` does not:
