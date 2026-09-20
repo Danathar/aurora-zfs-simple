@@ -1229,7 +1229,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     SC_GLOB="${WORK}/shellcheck-glob"
     mkdir -p "${SC_GLOB}"
     printf 'AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GLOB-42\n' >"${SC_GLOB}/.env"
-    sc_glob_out="$(cd "${SC_GLOB}" && bash --norc --noprofile -c 'shellcheck .env*' 2>&1 </dev/null || true)"
+    sc_glob_out="$(cd "${SC_GLOB}" || exit 1; bash --norc --noprofile -c 'shellcheck .env*' 2>&1 </dev/null || true)"
     assert_contains "shellcheck .env* reads the file the glob expands to, which the gate never saw as a word" \
         "${sc_glob_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GLOB-42"
 fi
