@@ -171,7 +171,8 @@ SHELLCHECK_MSG='blocked: shellcheck prints the source line above every diagnosti
 
 SHELLCHECK_OPTS_MSG='blocked: SHELLCHECK_OPTS is not a list of options -- shellcheck splits it and prepends it to its own argv, operands included, so SHELLCHECK_OPTS=./.env shellcheck tests/run-tests.sh lints the .env as well and prints its lines back, with no path in the argv this gate scans. Nothing in this repository sets the variable, so it is refused outright. Pass options after the command name instead.'
 
-SHELLCHECK_EXPAND_MSG='blocked: bash expands braces and substitutions before shellcheck sees the words, and this gate reads the words as typed, so shellcheck {tests/run-tests.sh,/etc/shadow} is one word to the operand scan here and two files to shellcheck -- the second of which it would print back. Expanding them correctly means reimplementing bash inside a hook, so a brace bash could expand, and every $, backtick and process substitution, are refused instead. Write the paths out in full.'
+# shellcheck disable=SC2016 # the literal $HOME is what the reader has to see
+SHELLCHECK_EXPAND_MSG='blocked: bash rewrites this word before shellcheck sees it, and this gate reads the words as typed, so the path checked here is not the path shellcheck would open: shellcheck {tests/run-tests.sh,/etc/shadow} is one word to the operand scan here and two files to shellcheck -- the second of which it would print back; an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to the gate (shellcheck ~/.aws/credentials); an unquoted glob character (*, ? or a bracket) is what bash expands into files this gate never saw (shellcheck .env*); and a $, a backtick or a process substitution supplies operands at runtime. Expanding them correctly means reimplementing bash inside a hook, so they are refused instead. Spell every path out in full, relative to the checkout.'
 
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
@@ -519,7 +520,47 @@ redirection_writes_a_path() {
 # substitution cases build an operand this scan never saw, so they are refused
 # here too rather than in a latch that holds to the end of the string: unlike
 # `--output`, there is no wide test to guard, and a `$` in some later command
-# of the string is that command's own.
+# of the string is that command's own. Two more rewrites turned a checked
+# operand into a different file (review on #207): an unquoted leading `~` is
+# $HOME to bash and a literal `~` to the gate, which `realpath -m -s` resolved
+# to `<checkout>/~/...` -- an inside path -- so `shellcheck ~/.aws/credentials`
+# passed; and an unquoted `*`, `?` or `[` is a glob bash expands into files
+# the gate never saw, so `shellcheck .env*` was one word here and the .env to
+# bash. See `word_bash_would_rewrite`.
+
+# Whether bash would rewrite this word, as typed, into something other than
+# the quote-stripped spelling the operand scan checks: an unquoted `~` at the
+# start (tilde expansion) or an unquoted `*`, `?` or `[` anywhere (pathname
+# expansion). Quote state is tracked so that `'tests/*.sh'` and `tests/\*.sh`
+# are the literal words bash would pass; a `~` that does not lead the word is
+# a character in a filename.
+word_bash_would_rewrite() {
+  local raw="$1" quote='' escaped=0 i ch
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+    if ((escaped)); then
+      escaped=0
+      continue
+    fi
+    if [[ -n "${quote}" ]]; then
+      if [[ "${ch}" == "${quote}" ]]; then
+        quote=''
+      elif [[ "${quote}" == '"' && "${ch}" == $'\\' ]]; then
+        escaped=1
+      fi
+      continue
+    fi
+    case "${ch}" in
+    $'\\') escaped=1 ;;
+    "'" | '"') quote="${ch}" ;;
+    '~') ((i == 0)) && return 0 ;;
+    '*' | '?' | '[') return 0 ;;
+    *) ;;
+    esac
+  done
+  return 1
+}
+
 raw_in_git=0
 raw_in_shellcheck=0
 writing_redirect=0
@@ -555,7 +596,8 @@ for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
   if ((raw_in_shellcheck)) && [[ "${kinds[idx]}" == word ]]; then
     if brace_would_expand "${raw_word}" ||
       [[ "${raw_word}" == '<(' || "${raw_word}" == '>(' ||
-      "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ]]; then
+      "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ]] ||
+      word_bash_would_rewrite "${raw_word}"; then
       refuse "${SHELLCHECK_EXPAND_MSG}"
     fi
   fi

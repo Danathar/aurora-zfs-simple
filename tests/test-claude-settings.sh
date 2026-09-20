@@ -1182,7 +1182,7 @@ for leak in "shellcheck ./.env" \
     "shellcheck -sbash ./.env" \
     "shellcheck --format=gcc ./.env" \
     "shellcheck keys/server.pem" \
-    "shellcheck ~/.ssh/id_ed25519" \
+    "shellcheck /home/someone/.ssh/id_ed25519" \
     "shellcheck -- ./.env" \
     "git status; shellcheck ./.env" \
     "echo x | shellcheck ./.env"; do
@@ -1207,6 +1207,57 @@ for rebuilt in "shellcheck {tests/run-tests.sh,/etc/shadow}" \
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "an expansion in a shellcheck operand is refused: ${rebuilt}" \
         "2" "${PRE_STATUS}"
+done
+
+# 8b''. two more rewrites bash performs turned a checked operand into a
+# different file. A leading unquoted `~` is $HOME to bash and a literal `~` to
+# the gate -- which `realpath -m -s` resolved to `<checkout>/~/...`, an inside
+# path -- so `shellcheck ~/.aws/credentials` passed, and the `~/.ssh/id_ed25519`
+# case in 8a was refused only by its basename. An unquoted `*`, `?` or `[` is
+# a glob bash expands into files the gate never saw as words: `shellcheck
+# .env*` is one word here and the .env to bash. Both shown first, against a
+# throwaway HOME and a temporary directory of this test's own -- never the
+# real $HOME. A quoted or escaped glob character is the literal word bash
+# would pass, and a `~` that does not lead the word is a filename character.
+if command -v shellcheck >/dev/null 2>&1; then
+    SC_HOME="${WORK}/shellcheck-home"
+    mkdir -p "${SC_HOME}/.aws"
+    printf 'AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-TILDE-42\n' >"${SC_HOME}/.aws/credentials"
+    sc_tilde_out="$(HOME="${SC_HOME}" bash --norc --noprofile -c 'shellcheck ~/.aws/credentials' 2>&1 </dev/null || true)"
+    assert_contains "shellcheck ~/path reads the file under \$HOME, not the literal ~ the gate resolves" \
+        "${sc_tilde_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-TILDE-42"
+    SC_GLOB="${WORK}/shellcheck-glob"
+    mkdir -p "${SC_GLOB}"
+    printf 'AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GLOB-42\n' >"${SC_GLOB}/.env"
+    sc_glob_out="$(cd "${SC_GLOB}" && bash --norc --noprofile -c 'shellcheck .env*' 2>&1 </dev/null || true)"
+    assert_contains "shellcheck .env* reads the file the glob expands to, which the gate never saw as a word" \
+        "${sc_glob_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GLOB-42"
+fi
+for rewritten in "shellcheck ~/.aws/credentials" \
+    "shellcheck ~" \
+    "shellcheck ~someone/.bashrc" \
+    "shellcheck .env*" \
+    "shellcheck cosign.ke?" \
+    "shellcheck .en[v]" \
+    "shellcheck ./.*" \
+    "shellcheck tests/*.sh" \
+    "shellcheck -x tests/run-tests.sh ~/.netrc" \
+    "shellcheck ~/.ssh/id_ed25519" \
+    "git log -1 && shellcheck ~/.aws/credentials"; do
+    run_pre "$(pre_payload_for "${rewritten}")"
+    assert_eq "a tilde or glob in a shellcheck operand is refused: ${rewritten}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says bash rewrites it: ${rewritten}" \
+        "${PRE_ERR}" "bash rewrites this word"
+done
+for literal in "shellcheck 'tests/*.sh'" \
+    "shellcheck \"tests/*.sh\"" \
+    "shellcheck tests/\\*.sh" \
+    "shellcheck tests/run-tests.sh~" \
+    "shellcheck 'tests/run-tests.sh'"; do
+    run_pre "$(pre_payload_for "${literal}")"
+    assert_eq "a quoted glob or a non-leading ~ is the literal word: ${literal}" \
+        "0" "${PRE_STATUS}"
 done
 
 # 8b'. the operands do not all arrive in the argv. SHELLCHECK_OPTS is split and
