@@ -897,6 +897,157 @@ run_pre "$(pre_payload_for "git diff HEAD >cosign.{pub,key}")"
 assert_contains "an expansion in the target is reported before the redirection" \
     "${PRE_ERR}" "before git sees the words"
 
+# 7b''''''. bash lets a redirection precede the command name, and the two
+# spellings are the same command: `>cosign.pub git diff HEAD` truncates the
+# file exactly as `git diff HEAD >cosign.pub` does. A scope that opened at
+# the `git` word had not yet seen the target, so `git status; >cosign.pub git
+# diff HEAD` -- allowed on its `git status` prefix -- went through (fixed
+# first in arch-bootc, review on #317). Shown first, against a stand-in in a
+# throwaway repository: the prefix form really truncates the file.
+PREFIX_REPO="${WORK}/prefix-redirect"
+git init -q "${PREFIX_REPO}"
+printf 'ORIGINAL-CONTENT\n' >"${PREFIX_REPO}/victim"
+(cd "${PREFIX_REPO}" || exit 1; bash --norc --noprofile -c \
+    'git status --short >/dev/null; >victim git diff HEAD HEAD' >/dev/null 2>&1 </dev/null || true)
+assert_not_contains "a redirection written before the git word truncates the file it names" \
+    "$(cat "${PREFIX_REPO}/victim")" "ORIGINAL-CONTENT"
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
+for prefixed in ">cosign.pub git diff HEAD" \
+    "git status; >cosign.pub git diff HEAD" \
+    "2>err git log -1" \
+    ">> out git show HEAD" \
+    "FOO=bar >out git diff HEAD" \
+    "git status; >cosign.pub /usr/bin/git diff HEAD" \
+    "> .claude/settings.json git diff HEAD" \
+    "git status; {fd}>cosign.pub git diff HEAD" \
+    "git diff HEAD {fd}>cosign.pub" \
+    'git status; >$(printf cosign.pub) git diff HEAD' \
+    '>$(printf cosign.pub) git diff HEAD'; do
+    run_pre "$(pre_payload_for "${prefixed}")"
+    assert_eq "a redirection written before the git word is refused: ${prefixed}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says to read stdout instead: ${prefixed}" \
+        "${PRE_ERR}" "read that instead"
+done
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
+for harmless in "</dev/null git diff HEAD" \
+    "2>&1 git diff HEAD" \
+    ">&2 git diff HEAD" \
+    ">out echo x; git diff HEAD" \
+    ">out cat f | git diff --stat" \
+    "echo x > out; git diff HEAD" \
+    "git status; >out printf %s git" \
+    ">out echo git; git diff HEAD" \
+    '>$(printf out) echo x; git diff HEAD' \
+    "{fd}>out echo x; git diff HEAD" \
+    'x=$(date); git diff HEAD' \
+    'echo $(date) *.sh; git status' \
+    'echo $(git log -1) | git diff HEAD'; do
+    run_pre "$(pre_payload_for "${harmless}")"
+    assert_eq "a prefix redirection that writes no path, or belongs to another command, is allowed: ${harmless}" \
+        "0" "${PRE_STATUS}"
+done
+
+# 7b'''''''. an unquoted leading `~` is $HOME to bash and a literal `~` to the
+# gate, which `realpath -m -s` resolved to `<checkout>/~/...`, an inside path.
+# So `git diff -- ~/.aws/credentials ~/.bashrc` counted two operands, found
+# both inside the working tree, and exited 0, and bash then handed git two
+# files from the home directory, which it printed as a plain-file diff. The
+# ShellCheck operand scan in 8b'' already refused the word; the git scope now does
+# the same. Shown first, against a throwaway HOME of this test's own -- never
+# the real one.
+TILDE_HOME="${WORK}/tilde-home"
+mkdir -p "${TILDE_HOME}/.aws"
+printf 'AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GIT-TILDE-42\n' >"${TILDE_HOME}/.aws/credentials"
+printf 'export FIXTURE=1\n' >"${TILDE_HOME}/.bashrc"
+git_tilde_out="$(cd "${REPO_ROOT}" || exit 1; HOME="${TILDE_HOME}" bash --norc --noprofile -c \
+    'git diff -- ~/.aws/credentials ~/.bashrc' 2>&1 </dev/null || true)"
+assert_contains "git diff -- ~/path ~/path prints the files under \$HOME, not the literal ~ the gate resolves" \
+    "${git_tilde_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GIT-TILDE-42"
+for tilded in "git diff -- ~/.aws/credentials ~/.bashrc" \
+    "git diff ~/.bashrc ~/.aws/credentials" \
+    "git diff -- ~ ~/.bashrc" \
+    "git diff -- ~root/.bashrc ./cosign.pub" \
+    "git log -p -- ~/.ssh/config" \
+    "git show HEAD -- ~/.ssh/config" \
+    "git diff HEAD -- ~/.bashrc" \
+    "git status; git diff -- ~/.aws/credentials ~/.bashrc" \
+    "echo x | git diff -- ~/.aws/credentials ~/.bashrc"; do
+    run_pre "$(pre_payload_for "${tilded}")"
+    assert_eq "a word with an unquoted leading ~ is refused in a git invocation: ${tilded}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the tilde: ${tilded}" \
+        "${PRE_ERR}" "unquoted leading ~"
+done
+for literal in "git diff HEAD@{1}" \
+    "git diff HEAD~1" \
+    "git diff -- 'lit~eral'" \
+    "git diff -- '~/x'" \
+    "git diff -- \"~/x\"" \
+    "git diff -- \\~/x" \
+    "git diff HEAD -- x~" \
+    "git show HEAD:~/x" \
+    "ls ~/.bashrc; git diff HEAD" \
+    "echo x > out; git diff HEAD"; do
+    run_pre "$(pre_payload_for "${literal}")"
+    assert_eq "a quoted, escaped or non-leading ~ is the literal word: ${literal}" \
+        "0" "${PRE_STATUS}"
+done
+# The containment test never resolves a leading `~` inside the tree, quoted
+# or not, so two quoted tildes after a `--` are refused as the plain-file form
+# although bash would hand git two literal paths: the stricter direction,
+# taken on purpose (review on zfs-kinoite-complex#220, the same hook).
+run_pre "$(pre_payload_for "git diff -- '~/x' '~/y'")"
+assert_eq "two quoted tildes after -- are refused as the plain-file form" "2" "${PRE_STATUS}"
+assert_contains "and the refusal is the operand scan's" "${PRE_ERR}" "--no-index"
+# The tilde rule's corpus, checked against bash the way the brace corpus is:
+# every word bash rewrites must be refused, every word of the literal set
+# must be allowed, and a word in neither class is only held to the first
+# rule. Each word is inserted verbatim into a bash script under a HOME that
+# does not exist, which changes nothing about whether bash expands it.
+tilde_literal_set=(
+    "'~/x'"
+    '"~/x"'
+    '\~/x'
+    'HEAD~1'
+    'HEAD~2..HEAD~1'
+    'lit~eral'
+    'x~'
+)
+# shellcheck disable=SC2088 # the quoted tildes are corpus words, not paths this test opens
+tilde_corpus=(
+    "${tilde_literal_set[@]}"
+    '~'
+    '~/.aws/credentials'
+    '~/.bashrc'
+    '~root/.bashrc'
+    '~/'
+)
+bash_rewrites_word() {
+    local typed stripped
+    typed="$(HOME=/nonexistent-home bash --norc --noprofile -c 'printf "%s" '"$1" 2>/dev/null)"
+    stripped="${1//[\'\"\\]/}"
+    [[ "${typed}" != "${stripped}" ]]
+}
+corpus_rewritten=0
+for word in "${tilde_corpus[@]}"; do
+    if bash_rewrites_word "${word}"; then
+        corpus_rewritten=$((corpus_rewritten + 1))
+        run_pre "$(pre_payload_for "git diff -- ${word} ./cosign.pub")"
+        assert_eq "bash rewrites it, so it is refused: ${word}" "2" "${PRE_STATUS}"
+        assert_contains "and the refusal names the tilde: ${word}" \
+            "${PRE_ERR}" "unquoted leading ~"
+    fi
+done
+assert_eq "bash rewrote at least 4 corpus words, so the check was not vacuous" \
+    "0" "$(((corpus_rewritten >= 4) ? 0 : 1))"
+for word in "${tilde_literal_set[@]}"; do
+    assert_eq "bash leaves the literal word alone: ${word}" \
+        "1" "$(bash_rewrites_word "${word}" && echo 0 || echo 1)"
+    run_pre "$(pre_payload_for "git log -1 -- ${word}")"
+    assert_eq "and so does the hook: ${word}" "0" "${PRE_STATUS}"
+done
+
 # 7b''''''. the word that names a command has to be literal. Every scope
 # above opens at a literal `git` word, and the allow rule matched the string
 # on its literal prefix; `git status; G=git; $G diff /dev/null ./cosign.key`
