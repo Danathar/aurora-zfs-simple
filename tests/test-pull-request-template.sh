@@ -252,6 +252,23 @@ steps_of() {
     ' "${JSON_DIR}/$(basename "$1").json"
 }
 
+# jobs_of <workflow>: every job of a workflow, one JSON object per line. A job
+# that calls a reusable workflow carries a job-level `uses:` and no `steps:`,
+# so steps_of emits nothing for it and a check that reads only steps never
+# sees it -- while the call itself can carry `permissions:` and
+# `secrets: inherit` and publish. step_count is what separates the two job
+# shapes; an absent key comes out as "", as it does for a step.
+jobs_of() {
+    jq -c --arg file "$(basename "$1")" '
+        def field($k): if has($k) then (.[$k] | tostring) else "" end;
+        (.jobs // {}) | to_entries[]
+        | { file: $file, job: .key,
+            if: (.value | field("if")),
+            uses: (.value | field("uses")),
+            step_count: ((.value.steps // []) | length) }
+    ' "${JSON_DIR}/$(basename "$1").json"
+}
+
 # field <key> <step>: one value out of a step object.
 field() {
     jq -r --arg k "$1" '.[$k]' <<<"$2"
@@ -333,6 +350,11 @@ jobs:
         run: sudo apt-get install -y shellcheck || true
       - name: Suite with a suffix
         run: ./tests/run-tests.sh || true
+  called:
+    uses: ./.github/workflows/reusable.yml
+    permissions:
+      packages: write
+    secrets: inherit
 YAML
 normalize "${FIXTURE_WF}"
 assert_eq "the step extractor sees block scalars, counts every step, keeps step and job conditions, and resolves the shell" \
@@ -345,6 +367,16 @@ assert_eq "the step extractor sees block scalars, counts every step, keeps step 
     "$(steps_of "${FIXTURE_WF}" |
         jq -r '[.job, .position, .name, .if, .continue_on_error, .job_if, .job_continue_on_error,
                 .shell, .uses, .run] | @tsv')"
+
+# The same fixture read as jobs: the reusable-workflow call contributes no
+# step at all above, and here it is a job like any other, with its `uses:`
+# and a step count of zero.
+assert_eq "the job extractor sees every job, including a reusable-workflow call with no steps" \
+    "$(printf '%s\n' \
+        $'block\t\t\t2' \
+        $'called\t\t./.github/workflows/reusable.yml\t0' \
+        $'loose\tfalse\t\t3')" \
+    "$(jobs_of "${FIXTURE_WF}" | jq -r '[.job, .if, .uses, .step_count] | @tsv' | LC_ALL=C sort)"
 
 # GitHub reads both extensions, so a suite step in a .yaml file is as much a
 # claim about CI as one in a .yml file, and a glob on one of them is a hole.
@@ -755,6 +787,74 @@ while IFS=$'\t' read -r job name classification; do
         ;;
     esac
 done <<<"${PUBLISH_MANIFEST}"
+
+# Steps are not the only shape a publish can arrive in. A job with a
+# job-level `uses:` calls a reusable workflow: it has no steps of its own, so
+# the manifest above never reaches it, while the call can carry
+# `permissions: packages: write` and `secrets: inherit` and push from a pull
+# request. So the jobs are classified too, the same way, both directions.
+#
+# STEPS is a job whose own steps the manifest above decides -- it must have
+# steps and no job-level `uses:`. GUARDED is a reusable-workflow call that
+# cannot run from a pull request: what the called workflow does is not
+# readable here (it may live in another repository, behind a ref that moves),
+# so the guard on the call is the whole claim, and it is read by the same
+# rule as a step's. A job that is neither -- a call classified STEPS, a call
+# with no guard, a job with neither steps nor a `uses:` -- fails.
+JOB_MANIFEST=$(
+    cat <<'EOF'
+tests	STEPS
+build_push	STEPS
+EOF
+)
+
+build_jobs="$(jobs_of "${BUILD_WF}")"
+require_nonempty "jobs in build.yml" "${build_jobs}"
+
+# Both directions in one comparison: a new job fails until it is classified,
+# and a row left behind by a rename or a removal fails too.
+assert_eq "the jobs JOB_MANIFEST classifies are exactly the jobs build.yml has" \
+    "$(cut -f1 <<<"${JOB_MANIFEST}" | LC_ALL=C sort)" \
+    "$(jq -r '.job' <<<"${build_jobs}" | LC_ALL=C sort)"
+
+while IFS=$'\t' read -r job classification; do
+    [[ -n "${job}" ]] || continue
+    # shellcheck disable=SC2016 # $job is a jq variable, bound by --arg
+    entry="$(jq -c --arg job "${job}" 'select(.job == $job)' <<<"${build_jobs}" | head -1)"
+    # A row with no job is already a failure of the comparison above.
+    [[ -n "${entry}" ]] || continue
+    job_uses="$(field uses "${entry}")"
+    job_steps="$(field step_count "${entry}")"
+    job_condition="$(field if "${entry}")"
+    case "${classification}" in
+    STEPS)
+        if [[ -z "${job_uses}" && "${job_steps}" -gt 0 ]]; then
+            _pass "build.yml: job '${job}' runs steps of its own, as its STEPS row says"
+        else
+            _fail "build.yml: job '${job}' runs steps of its own, as its STEPS row says" \
+                "uses: ${job_uses:-<none>}, steps: ${job_steps}" \
+                "a job that calls a reusable workflow has no steps for PUBLISH_MANIFEST to classify;" \
+                "reclassify it GUARDED and guard the call"
+        fi
+        ;;
+    GUARDED)
+        if [[ -z "${job_uses}" ]]; then
+            _fail "build.yml: job '${job}' calls a reusable workflow, as its GUARDED row says" \
+                "no job-level uses:; classify it STEPS so PUBLISH_MANIFEST reads its steps"
+        elif excludes_pull_requests "${job_condition}"; then
+            _pass "build.yml: job '${job}' does not run from a pull request"
+        else
+            _fail "build.yml: job '${job}' does not run from a pull request" \
+                "if: ${job_condition:-<none>}" \
+                "expected one && chain with '${PR_GUARD}' as a whole operand, no || and no negation"
+        fi
+        ;;
+    *)
+        _fail "JOB_MANIFEST classifies '${job}' as STEPS or GUARDED" \
+            "found: ${classification}"
+        ;;
+    esac
+done <<<"${JOB_MANIFEST}"
 
 # --- 7. the diagnosis the template sends a reviewer to ----------------------
 
