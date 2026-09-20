@@ -904,10 +904,15 @@ assert_contains "an expansion in the target is reported before the redirection" 
 # `$` latch to the end of the string already caught that spelling once a
 # `git` word had been seen, and left `$G diff ...` and `G=git; $G diff ...`
 # with no git word ahead of them to the permission layer. The name is the
-# first word after a separator (or of the string) that is not an assignment,
-# a keyword that takes a command, or a wrapper that runs its arguments; one
-# carrying a `$` or a backtick, or an unquoted backtick opening there, is
-# refused wherever it stands. An assignment before a literal name is fine.
+# first word after a separator (or of the string) that is not an assignment
+# or a keyword that takes a command; one carrying a `$` or a backtick, or an
+# unquoted backtick opening there, is refused wherever it stands. So is a
+# brace bash would expand or a glob there -- `{,git}`, `g?t`,
+# `/usr/bin/g[i]t` all reach git (review on #205) -- and after a wrapper
+# that runs its arguments (`command`, `env`, `timeout`, ...) every remaining
+# word of the command is held to the test, because `command -- $G` put a
+# literal `--` where the first version of this rule stopped looking. `[` and
+# `[[` are commands, not globs. An assignment before a literal name is fine.
 for built in "git status; G=git; \$G diff /dev/null ./cosign.key" \
     "git status; \$(printf git) diff /dev/null ./cosign.key" \
     "git status; \`echo git\` diff x" \
@@ -918,7 +923,14 @@ for built in "git status; G=git; \$G diff /dev/null ./cosign.key" \
     "git status; { \$G diff x; }" \
     "git status; exec \$G diff x" \
     "git status; env G=git \$G diff x" \
-    "git status | \$G diff x"; do
+    "git status | \$G diff x" \
+    "git status; {,git} diff /dev/null ./cosign.key" \
+    "git status; g?t diff /dev/null ./cosign.key" \
+    "git status; gi* diff /dev/null ./cosign.key" \
+    "git status; /usr/bin/g[i]t diff /dev/null ./cosign.key" \
+    "shellcheck --version; G=git; command -- \$G diff /dev/null ./cosign.key" \
+    "git status; env -u X \$G diff /dev/null ./cosign.key" \
+    "git status; timeout -s KILL 5 \$G diff x"; do
     run_pre "$(pre_payload_for "${built}")"
     assert_eq "a command name built by an expansion is refused: ${built}" \
         "2" "${PRE_STATUS}"
@@ -932,11 +944,39 @@ for literal in "git status; git diff HEAD@{1}" \
     "echo \`date\`; git diff HEAD" \
     "if [ -n \"\$x\" ]; then git diff HEAD; fi" \
     "ls > out; git status" \
-    "env FOO=\$x git diff HEAD"; do
+    "env FOO=\$x git diff HEAD" \
+    "[[ -n \"\$x\" ]] && git diff HEAD" \
+    "git status; [ -f cosign.pub ]" \
+    "env -i PATH=\$PATH git diff HEAD" \
+    "timeout 60 git diff HEAD" \
+    "xargs -I{} git diff {} < list" \
+    "command -v shellcheck" \
+    "find . -name '*.sh'"; do
     run_pre "$(pre_payload_for "${literal}")"
     assert_eq "a literal command name is left alone: ${literal}" \
         "0" "${PRE_STATUS}"
 done
+# `/usr/bin/git diff /dev/null ./cosign.key` needs no expansion and opened
+# no scope, because every scan compared the word to `git`. A literal name
+# whose last component is git is rewritten to git before any scan runs, so
+# each refusal reaches it.
+for pathed in "git status; /usr/bin/git diff /dev/null ./cosign.key" \
+    "/usr/bin/git diff /dev/null ./cosign.key" \
+    "git status; ~/bin/git diff /dev/null ./cosign.key" \
+    "git status; command /usr/bin/git diff /dev/null ./cosign.key"; do
+    run_pre "$(pre_payload_for "${pathed}")"
+    assert_eq "a literal path to git is git: ${pathed}" "2" "${PRE_STATUS}"
+    assert_contains "and the refusal is the plain-file one: ${pathed}" \
+        "${PRE_ERR}" "--no-index"
+done
+run_pre "$(pre_payload_for "/usr/bin/git log -1 --output=cosign.pub")"
+assert_contains "and --output is refused behind a path to git" \
+    "${PRE_ERR}" "--output=FILE"
+run_pre "$(pre_payload_for "git status; /usr/bin/git diff HEAD >cosign.pub")"
+assert_contains "and a redirection is refused behind a path to git" \
+    "${PRE_ERR}" "read that instead"
+run_pre "$(pre_payload_for "/usr/bin/git diff HEAD")"
+assert_eq "and the ordinary diff behind a path to git is allowed" "0" "${PRE_STATUS}"
 
 # The `$` test is the one refusal that still reads to the end of the string:
 # it runs on the normalized words, whose quotes are gone, and `in_git` holds
