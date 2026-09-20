@@ -907,7 +907,7 @@ assert_contains "an expansion in the target is reported before the redirection" 
 PREFIX_REPO="${WORK}/prefix-redirect"
 git init -q "${PREFIX_REPO}"
 printf 'ORIGINAL-CONTENT\n' >"${PREFIX_REPO}/victim"
-(cd "${PREFIX_REPO}" && bash --norc --noprofile -c \
+(cd "${PREFIX_REPO}" || exit 1; bash --norc --noprofile -c \
     'git status --short >/dev/null; >victim git diff HEAD HEAD' >/dev/null 2>&1 </dev/null || true)
 assert_not_contains "a redirection written before the git word truncates the file it names" \
     "$(cat "${PREFIX_REPO}/victim")" "ORIGINAL-CONTENT"
@@ -947,7 +947,7 @@ TILDE_HOME="${WORK}/tilde-home"
 mkdir -p "${TILDE_HOME}/.aws"
 printf 'AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GIT-TILDE-42\n' >"${TILDE_HOME}/.aws/credentials"
 printf 'export FIXTURE=1\n' >"${TILDE_HOME}/.bashrc"
-git_tilde_out="$(cd "${REPO_ROOT}" && HOME="${TILDE_HOME}" bash --norc --noprofile -c \
+git_tilde_out="$(cd "${REPO_ROOT}" || exit 1; HOME="${TILDE_HOME}" bash --norc --noprofile -c \
     'git diff -- ~/.aws/credentials ~/.bashrc' 2>&1 </dev/null || true)"
 assert_contains "git diff -- ~/path ~/path prints the files under \$HOME, not the literal ~ the gate resolves" \
     "${git_tilde_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-GIT-TILDE-42"
