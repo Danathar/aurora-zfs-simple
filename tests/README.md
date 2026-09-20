@@ -45,6 +45,7 @@ when present and skipped when not.
 | `test-editorconfig.sh`      | `.editorconfig`: every section resolved the way EditorConfig resolves them and measured against the tree — line endings, final newlines, charset and the two trailing-whitespace exemptions over every tracked file, `indent_size` against the indentation each shell, YAML, JSON and `Containerfile` actually uses, and the header note's claims about Prettier and `.shellcheckrc` |
 | `test-session-summary.sh`   | `.claude/session-summary.md`: every claim that names something here — the retired branch and tag against README.md, `ARG FEDORA_VERSION` and both unpinned akmods `FROM` lines against the `Containerfile`, `docs/**` against every path filter in `.github/workflows/build.yml`, the unchecked-after-Chunkah ordering against the `Containerfile`'s last two `RUN` steps and the workflow's step order, the `--rechunk` remedy against `tests/e2e/run-e2e.sh`, the Chunkah pin against the workflow and `renovate.json`'s own exclusion, the badge name and its leave-alone branch against `ci/write-badges.sh`, and the label-comparison snippet executed against the `Containerfile` it reads |
 | `test-reflections.sh`       | `docs/reflections/**`: every entry against the format spec its `README.md` states — filename shape, a date stamp equal to the filename date, the three headings in order — and each entry's checkable claims against the file the claim is about: the tag set, single push, `skopeo copy --preserve-digests`, verify-before-sign order and digest-targeted `cosign sign` recomputed from `.github/workflows/build.yml` plus the nightly re-check in `nightly-compliance.yml`; the Chunkah field names and numbers held equal across the entry, AGENTS.md's diagnosis and the rechunk step's comment, with the cap's arithmetic checked; the corrected `README.md` → `AGENTS.md` direction both ways, the historical `renovate.json5` path's absence, the coverage-gate trigger as the complement of `build.yml`'s ignore list, and `docs/risk-tiers.md`'s tier order; and every `docs/reflections/<file>` cited from a non-Markdown file resolving to a tracked file |
+| `test-pull-request-template.sh` | `.github/pull_request_template.md`: every claim in the checklist against the thing it restates — the suite command against the `run:` steps that invoke it, the shellcheck caveat against `test-shell-syntax.sh`'s skip and every suite-running workflow's `Install shellcheck` step, the scripts it calls unreachable against `test-coverage.sh`'s `UNCOVERED` set and the `Containerfile`'s `/ctx/` invocations, `post-check.sh`'s exception against its `BASH_SOURCE` guard, the `Build container image` name and `pull_request` trigger against `build.yml` with every publish and sign step's `github.event_name != 'pull_request'` guard, the load-bearing-prose status of README.md and AGENTS.md against `docs/risk-tiers.md`'s tier 1 row, and the skew diagnosis headings a reviewer is sent to against AGENTS.md — plus the structure GitHub renders: one template at the path it reads, its five sections, and no pre-ticked box |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -822,11 +823,28 @@ are pinned third-party actions with no shell of this repository's own. Nothing h
 `metadata-action` produces is only observable through the `run:` bodies on
 either side of it, which is where the tests supply it themselves.
 
-What is left unchecked under `.github/` after `test-issue-templates.sh` is the
-prose that has no machine-readable contract: `.github/prompts/**`,
-`pull_request_template.md` and `copilot-instructions.md`. Their relative links
-are resolved by `test-docs-paths.sh`'s third pass, and nothing else about them is
-assertable — they are read by a human or an agent, not parsed.
+What is left unchecked under `.github/` is `copilot-instructions.md`. Its
+relative links are resolved by `test-docs-paths.sh`'s third pass, and what
+remains is advice to a reader rather than a claim about the tree.
+
+That list used to include `.github/prompts/**` and `pull_request_template.md`,
+on the reasoning that prose read by a human or an agent is not parsed and so is
+not assertable. That reasoning was wrong twice. The prompts restate the
+procedure the workflows and the `Containerfile` implement, which is what
+`test-agent-prompts.sh` holds them to; the pull request template restates the
+suite command, which build scripts no test can reach, what a pull request build
+does not do, and where a reviewer is sent when the build is red — all of it
+written down somewhere else in the tree, and all of it now recomputed from there
+by `test-pull-request-template.sh`. The third pass was no protection either way:
+the template contains no Markdown links at all, so the pass that was supposed to
+cover it never looked at it, and the pass that checks path-shaped code spans
+reads README.md and AGENTS.md only.
+
+The distinction that survives is not human-readable versus machine-readable. It
+is whether a sentence restates something the tree already decides. Where it
+does, the sentence can be recomputed and drift fails the suite; where it is
+advice, judgement or an instruction to a reader, there is nothing to compare it
+against and these tests leave it alone.
 
 The other `build_files/*.sh` scripts still run their work at the top level, so
 `source` executes the whole file. Their happy path is exercised by the `Build
