@@ -117,18 +117,6 @@ as_set() {
     tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
-# The block of one `- name:` step in a workflow file: from the step that
-# contains ${needle} up to the next step at the same indent. `if:` lives inside
-# that block, so a guard that moved to a different step is not counted here.
-step_block() {
-    local file=$1 needle=$2
-    awk -v needle="${needle}" '
-        /^[[:space:]]+- (name|uses):/ { if (found) exit; buf = ""; collecting = 1 }
-        collecting { buf = buf $0 "\n"; if (index($0, needle)) found = 1 }
-        END { if (found) printf "%s", buf }
-    ' "${file}"
-}
-
 # --- 1. the file GitHub actually reads --------------------------------------
 
 tracked_templates="$(cd "${REPO_ROOT}" &&
@@ -196,46 +184,78 @@ if ! "${WORKFLOW_PYTHON}" -c 'import yaml' >/dev/null 2>&1; then
     exit 1
 fi
 
-RUN_STEPS="${TMP_ROOT}/run-steps.py"
-cat >"${RUN_STEPS}" <<'PY'
-"""Print one line per workflow step that has a run: body.
+NORMALIZER="${TMP_ROOT}/normalize.py"
+cat >"${NORMALIZER}" <<'PY'
+"""Print one workflow file as JSON, with the `on:` key readable by name.
 
-Five tab-separated fields: the workflow's file name, the job id, the step's
-1-based position in that job (steps with no run: body still count, so the
-order is the job's), the step name, and the run: body with surrounding
-whitespace stripped and any inner newline or tab written out as \n or \t, so
-a multi-line body stays on one line.
+PyYAML implements YAML 1.1, where a bare `on` is the boolean true, so
+doc["on"] raises KeyError on every workflow ever written.
 """
 
-import os
+import json
 import sys
 
 import yaml
 
-for path in sys.argv[1:]:
-    with open(path, encoding="utf-8") as handle:
-        doc = yaml.safe_load(handle)
-    if not isinstance(doc, dict):
-        continue
-    for job_id, job in (doc.get("jobs") or {}).items():
-        for position, step in enumerate((job or {}).get("steps") or [], start=1):
-            run = step.get("run")
-            if not isinstance(run, str):
-                continue
-            body = run.strip().replace("\t", "\\t").replace("\n", "\\n")
-            name = str(step.get("name", "<unnamed>"))
-            print(f"{os.path.basename(path)}\t{job_id}\t{position}\t{name}\t{body}")
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle)
+
+if isinstance(doc, dict) and True in doc:
+    doc["on"] = doc.pop(True)
+
+json.dump(doc, sys.stdout)
 PY
 
-run_steps_in() {
-    "${WORKFLOW_PYTHON}" -B "${RUN_STEPS}" "$@"
+JSON_DIR="${TMP_ROOT}/json"
+mkdir -p "${JSON_DIR}"
+
+# normalize <workflow>: writes ${JSON_DIR}/<basename>.json, or ends the run --
+# a workflow that does not parse leaves nothing below worth reading.
+normalize() {
+    local file=$1 out
+    out="${JSON_DIR}/$(basename "${file}").json"
+    if ! "${WORKFLOW_PYTHON}" -B "${NORMALIZER}" "${file}" >"${out}" 2>"${TMP_ROOT}/normalize.err"; then
+        _fail "$(basename "${file}") parses" "$(cat "${TMP_ROOT}/normalize.err")"
+        finish
+        exit 1
+    fi
 }
 
-# The extractor is only worth trusting if it sees the block form and keeps the
-# job's order. A fixture with an install step above the suite, both in `run: |`
-# blocks, and a `uses:` step ahead of a `|| true` suite step has to yield every
-# run: body at its position, suffix kept, so the checks below can refuse the
-# suffix and tell which step came first.
+# steps_of <workflow>: every step of every job, one JSON object per line, in
+# the job's order. A key that is absent comes out as "" and one that is
+# present as its text, so `if: false` reads "false" rather than as no `if:`
+# at all -- the difference between a step that runs and one that is skipped.
+# A run: body is trimmed, so a block scalar's trailing newline does not spoil
+# an exact comparison.
+steps_of() {
+    jq -c --arg file "$(basename "$1")" '
+        def field($k): if has($k) then (.[$k] | tostring) else "" end;
+        (.jobs // {}) | to_entries[] | .key as $job
+        | ((.value.steps // []) | to_entries[]) | .key as $index | .value
+        | { file: $file, job: $job, position: ($index + 1),
+            name: (if has("name") then (.name | tostring) else "<unnamed>" end),
+            if: field("if"), continue_on_error: field("continue-on-error"),
+            uses: field("uses"),
+            run: (field("run") | sub("^\\s+"; "") | sub("\\s+$"; "")) }
+    ' "${JSON_DIR}/$(basename "$1").json"
+}
+
+# field <key> <step>: one value out of a step object.
+field() {
+    jq -r --arg k "$1" '.[$k]' <<<"$2"
+}
+
+# steps_where <jq filter> [jq --arg ...]: the steps, out of every workflow,
+# that the filter selects.
+steps_where() {
+    local filter=$1
+    shift
+    jq -c "$@" "select(${filter})" <<<"${STEPS}"
+}
+
+# The extractor is only worth trusting if it sees the block form, counts a
+# step with no run: body so positions stay the job's, and keeps an `if:` and a
+# `continue-on-error:` as the text they carry. The fixture has all three.
 FIXTURE_WF="${TMP_ROOT}/fixture.yml"
 cat >"${FIXTURE_WF}" <<'YAML'
 name: fixture
@@ -254,14 +274,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Not the suite
-        run: echo not the suite
+      - name: Softened install
+        if: false
+        continue-on-error: true
+        run: sudo apt-get install -y shellcheck || true
       - name: Suite with a suffix
         run: ./tests/run-tests.sh || true
 YAML
-assert_eq "the step extractor sees block-scalar run: bodies, keeps a suffix and counts positions" \
-    $'fixture.yml\tblock\t1\tInstall shellcheck\tsudo apt-get install -y shellcheck\nfixture.yml\tblock\t2\tSuite in a block scalar\t./tests/run-tests.sh\nfixture.yml\tloose\t2\tNot the suite\techo not the suite\nfixture.yml\tloose\t3\tSuite with a suffix\t./tests/run-tests.sh || true' \
-    "$(run_steps_in "${FIXTURE_WF}")"
+normalize "${FIXTURE_WF}"
+assert_eq "the step extractor sees block scalars, counts every step, and keeps if: and continue-on-error:" \
+    "$(printf '%s\n' \
+        $'block\t1\tInstall shellcheck\t\t\t\tsudo apt-get install -y shellcheck' \
+        $'block\t2\tSuite in a block scalar\t\t\t\t./tests/run-tests.sh' \
+        $'loose\t1\t<unnamed>\t\t\tactions/checkout@v4\t' \
+        $'loose\t2\tSoftened install\tfalse\ttrue\t\tsudo apt-get install -y shellcheck || true' \
+        $'loose\t3\tSuite with a suffix\t\t\t\t./tests/run-tests.sh || true')" \
+    "$(steps_of "${FIXTURE_WF}" |
+        jq -r '[.job, .position, .name, .if, .continue_on_error, .uses, .run] | @tsv')"
 
 # GitHub reads both extensions, so a suite step in a .yaml file is as much a
 # claim about CI as one in a .yml file, and a glob on one of them is a hole.
@@ -275,22 +304,27 @@ if [[ "${#WORKFLOW_FILES[@]}" -eq 0 ]]; then
 fi
 _pass "still has workflow files under .github/workflows"
 
-run_steps="$(run_steps_in "${WORKFLOW_FILES[@]}" 2>"${TMP_ROOT}/run-steps.err")" || {
-    _fail "every workflow under .github/workflows parses" "$(cat "${TMP_ROOT}/run-steps.err")"
-    finish
-    exit 1
-}
-suite_steps="$(awk -F'\t' 'index($5, "run-tests.sh") { print }' <<<"${run_steps}")"
+STEPS=""
+for wf_path in "${WORKFLOW_FILES[@]}"; do
+    normalize "${wf_path}"
+    STEPS+="$(steps_of "${wf_path}")"$'\n'
+done
+
+suite_steps="$(steps_where '.run | contains("run-tests.sh")')"
 require_nonempty "workflow steps that run the shell suite" "${suite_steps}"
 
 # The value is compared, not searched for. `./tests/run-tests.sh || true`
 # contains the command and returns success from a failing suite; an argument
-# runs only part of it; a wrapper runs something else. Each is a workflow whose
-# green does not mean what the checkbox says it means.
-while IFS=$'\t' read -r wf job _ step body; do
-    [[ -n "${wf}" ]] || continue
-    assert_eq "${wf}: step '${step}' of job '${job}' runs the suite as the template writes it" \
-        "./tests/run-tests.sh" "${body}"
+# runs only part of it; a wrapper runs something else. A step-level `if:` or
+# `continue-on-error:` leaves the job green with the suite skipped or red.
+# Each is a workflow whose green does not mean what the checkbox says.
+while IFS= read -r step; do
+    [[ -n "${step}" ]] || continue
+    label="$(field file "${step}"): '$(field name "${step}")' in job '$(field job "${step}")'"
+    assert_eq "${label} runs the suite as the template writes it" \
+        "./tests/run-tests.sh" "$(field run "${step}")"
+    assert_eq "${label} has no if: that could skip the suite" "" "$(field if "${step}")"
+    assert_eq "${label} does not continue on error" "" "$(field continue_on_error "${step}")"
 done <<<"${suite_steps}"
 
 # --- 3. the shellcheck caveat -----------------------------------------------
@@ -305,23 +339,49 @@ assert_contains "and says so rather than failing when it is not" \
     "${syntax_test_body}" 'skip shellcheck (not installed)'
 
 # "CI installs it" is a claim about every job that runs the suite, and about
-# the order inside that job. An install step in a different job of the same
-# file, or one placed after the suite step, leaves test-shell-syntax.sh's pass
-# skipped in exactly the job whose green the checkbox points at, and a grep
-# over the whole file would call either of those installed. test-ci-workflows.sh
-# asserts this for the three workflows it names; discovering the jobs here is
-# what keeps the template's sentence true when a fourth starts running the suite.
-while IFS=$'\t' read -r wf job position step body; do
-    [[ -n "${wf}" ]] || continue
-    install_position="$(awk -F'\t' -v wf="${wf}" -v job="${job}" \
-        '$1 == wf && $2 == job && index($5, "apt-get install -y shellcheck") { print $3; exit }' \
-        <<<"${run_steps}")"
-    if [[ -n "${install_position}" && "${install_position}" -lt "${position}" ]]; then
-        _pass "${wf}: job '${job}' installs shellcheck before '${step}', as the template says CI does"
-    else
-        _fail "${wf}: job '${job}' installs shellcheck before '${step}', as the template says CI does" \
-            "install step: ${install_position:-none in this job}; suite step: ${position}" \
+# the step that does the installing: it has to come before the suite step in
+# the same job, it cannot carry an `if:` or a `continue-on-error:` that lets
+# it skip or fail quietly, and the install has to be the command itself in
+# command position -- `apt-get install -y shellcheck || true` and an echo of
+# the command both contain the text and install nothing. Any of those leaves
+# test-shell-syntax.sh's pass skipped in exactly the job whose green the
+# checkbox points at. test-ci-workflows.sh asserts this for the three workflows
+# it names; discovering the jobs here is what keeps the template's sentence
+# true when a fourth starts running the suite.
+INSTALL_LINE='^[[:space:]]*(sudo )?apt-get install -y shellcheck( [A-Za-z0-9._+-]+)*[[:space:]]*$'
+while IFS= read -r step; do
+    [[ -n "${step}" ]] || continue
+    wf="$(field file "${step}")"
+    job="$(field job "${step}")"
+    suite_position="$(field position "${step}")"
+    label="${wf}: job '${job}'"
+    # shellcheck disable=SC2016 # $wf and $job are jq variables, bound by --arg
+    install="$(steps_where '.file == $wf and .job == $job and (.run | contains("apt-get install -y shellcheck"))' \
+        --arg wf "${wf}" --arg job "${job}" | head -1)"
+    if [[ -z "${install}" ]]; then
+        _fail "${label} installs shellcheck before running the suite, as the template says CI does" \
+            "no step in this job runs apt-get install -y shellcheck" \
             "the shellcheck pass would skip silently and the job would still be green"
+        continue
+    fi
+    install_name="$(field name "${install}")"
+    install_position="$(field position "${install}")"
+    if [[ "${install_position}" -lt "${suite_position}" ]]; then
+        _pass "${label} installs shellcheck before running the suite, as the template says CI does"
+    else
+        _fail "${label} installs shellcheck before running the suite, as the template says CI does" \
+            "'${install_name}' is step ${install_position}; the suite is step ${suite_position}"
+    fi
+    assert_eq "${label}: '${install_name}' has no if: that could skip the install" \
+        "" "$(field if "${install}")"
+    assert_eq "${label}: '${install_name}' does not continue on error" \
+        "" "$(field continue_on_error "${install}")"
+    if grep -qE "${INSTALL_LINE}" <<<"$(field run "${install}")"; then
+        _pass "${label}: '${install_name}' runs the install in command position, unsoftened"
+    else
+        _fail "${label}: '${install_name}' runs the install in command position, unsoftened" \
+            "no line of the step is the install command on its own;" \
+            "a suffix such as '|| true', or an echo of it, contains the text and installs nothing"
     fi
 done <<<"${suite_steps}"
 
@@ -393,41 +453,49 @@ require_claim "a green build on the pull request is the evidence to point at" \
 require_claim "that a pull request build publishes and signs nothing" \
     'Note that it does not publish or sign anything from a PR.'
 
-named_build_wf="$(grep -lE "^name: Build container image[[:space:]]*$" "${WORKFLOW_FILES[@]}" |
-    awk -F/ '{ print $NF }' | as_set)"
+BUILD_WF_NAME="$(basename "${BUILD_WF}")"
+named_build_wf=""
+for wf_path in "${WORKFLOW_FILES[@]}"; do
+    if [[ "$(jq -r '.name // ""' "${JSON_DIR}/$(basename "${wf_path}").json")" == "Build container image" ]]; then
+        named_build_wf+="$(basename "${wf_path}") "
+    fi
+done
 assert_eq "exactly one workflow is named the way the template names it" \
-    "build.yml" "${named_build_wf}"
+    "${BUILD_WF_NAME}" "$(as_set <<<"${named_build_wf}")"
 
-build_wf_body="$(cat "${BUILD_WF}")"
-if awk '/^on:/ { in_on = 1; next } /^[a-z]/ { in_on = 0 } in_on && /^  pull_request:/ { found = 1 }
-        END { exit !found }' "${BUILD_WF}"; then
+if jq -e '.on | objects | has("pull_request")' "${JSON_DIR}/${BUILD_WF_NAME}.json" >/dev/null; then
     _pass "build.yml still triggers on pull_request, so there is a run to point at"
 else
     _fail "build.yml still triggers on pull_request, so there is a run to point at" \
         "the template tells a contributor a run on this PR is the strongest evidence"
 fi
 
-# Every step that publishes or signs has to carry the guard. The markers are the
+# Every step that publishes or signs has to carry the guard -- every one, not
+# the first: a second push or sign step added without the guard would be
+# validated by nothing if only the first match were read. The markers are the
 # actions and commands themselves, not the step names, so renaming a step does
 # not slip one past this list.
 PR_GUARD="github.event_name != 'pull_request'"
 for marker in \
     'docker/login-action' \
     'redhat-actions/push-to-registry' \
-    'Propagate tags from the pushed digest' \
-    'Verify pushed tags share one digest' \
+    'skopeo copy --preserve-digests' \
+    "skopeo inspect --format '{{.Digest}}'" \
     'sigstore/cosign-installer' \
     'cosign sign -y --key env://COSIGN_PRIVATE_KEY'; do
-    if [[ "${build_wf_body}" != *"${marker}"* ]]; then
-        _fail "build.yml still has the step containing '${marker}'" \
+    # shellcheck disable=SC2016 # $file and $m are jq variables, bound by --arg
+    matching="$(steps_where '.file == $file and ((.uses | contains($m)) or (.run | contains($m)))' \
+        --arg file "${BUILD_WF_NAME}" --arg m "${marker}")"
+    if [[ -z "${matching}" ]]; then
+        _fail "build.yml still has a step containing '${marker}'" \
             "if the publish band changed shape, this list must be updated with it"
         continue
     fi
-    block="$(step_block "${BUILD_WF}" "${marker}")"
-    if require_nonempty "a step block around '${marker}'" "${block}"; then
-        assert_contains "'${marker}' does not run from a pull request" \
-            "${block}" "${PR_GUARD}"
-    fi
+    while IFS= read -r step; do
+        [[ -n "${step}" ]] || continue
+        assert_contains "build.yml: '$(field name "${step}")' ('${marker}') does not run from a pull request" \
+            "$(field if "${step}")" "${PR_GUARD}"
+    done <<<"${matching}"
 done
 
 # --- 7. the diagnosis the template sends a reviewer to ----------------------
