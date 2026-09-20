@@ -13,7 +13,7 @@
 # never consults the deny list. `cat ./cosign.key` prompts; the diff form did
 # not.
 #
-# Five things this gate has to get right, each of them a spelling an earlier
+# Seven things this gate has to get right, each of them a spelling an earlier
 # version of it missed:
 #
 #   1. The mode has no required flag. `git diff /dev/null ./cosign.key` prints
@@ -47,16 +47,22 @@
 #      here matches it: `--outpu{t,t}=FILE` arrives at git as `--output=FILE`.
 #      ANSI-C quoting does the same to the flag, since the quote and backslash
 #      stripping below leaves `--outpu$'\x74'=FILE` as `--outpu$x74=FILE`
-#      while git receives `--output=FILE`. Command substitution supplies
-#      operands this scan never counted at all. Those characters are refused
-#      inside a git invocation rather than expanded -- every `$` and
-#      backtick, and a brace bash would expand; one it would not, git's own
-#      `HEAD@{1}` or `main@{upstream}`, is left alone. The brace test reads
-#      the words *as typed*, quotes and all, before the normalization below
-#      strips quotes and splits on operators: `{a';',b}` is one word to
-#      bash and two paths after expansion, and a test run after the split
-#      saw `{a` and `,b}` and passed both. See `raw_words`,
-#      `brace_would_expand` and `EXPAND_MSG`.
+#      while git receives `--output=FILE`. Command substitution and process
+#      substitution supply operands this scan never counted at all. Those
+#      characters are refused inside a git invocation rather than expanded --
+#      every `$`, backtick and `<(`, and a brace bash would expand; one it
+#      would not, git's own `HEAD@{1}` or `main@{upstream}`, is left alone.
+#      The brace test reads the words *as typed*, quotes and all: `{a';',b}`
+#      is one word to bash and two paths after expansion, and a test run on
+#      the quote-stripped words saw `{a` and `,b}` and passed both. See
+#      `raw_words`, `brace_would_expand` and `EXPAND_MSG`.
+#   7. A git invocation ends where bash ends it, and only there. Every
+#      unquoted `&` once counted as a command separator, so `git log 2>&1
+#      --outpu{t,t}=FILE` closed the brace scope at the `&` of its
+#      redirection and `git diff 2>&1 /dev/null ./cosign.key` reset the
+#      operand count there; `>|` did the same as a pipe and `<(` as a
+#      subshell. The split now reads redirections and process substitution
+#      as bash does. See the split below `brace_would_expand`.
 #
 # The write primitive: `--output=FILE` sends the diff git would have printed to
 # a path instead of stdout, so an allow-listed, unprompted call overwrites any
@@ -107,7 +113,7 @@ DIFF_MSG='blocked: this git diff would compare paths as plain files (git'"'"'s -
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal
 # text -- $'\x74' and $(...) are what the reader has to see, not what this
 # script should expand.
-EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before git sees the words, and this gate reads the words as typed, so four characters rebuild both spellings it refuses: `git diff {/dev/null,./cosign.key}` passes the operand scan as one word and reaches git as two operands (the plain-file read), `--outpu{t,t}=FILE` and `--outpu$'"'"'\x74'"'"'=FILE` match no word here and reach git as --output=FILE, and `git diff $(...)` supplies operands this scan never saw. Expanding them correctly means reimplementing bash inside a hook, so a brace bash could expand -- a { followed, anywhere later in the word, by a comma or a .. and then a } -- and every $ and backtick are refused instead. Write the command out in full. A brace with neither, such as HEAD@{1} or main@{upstream}, is a literal to bash and is not refused; a .. between two reflog entries (HEAD@{2}..HEAD@{1}) has the refused shape, so write HEAD~2..HEAD~1. Only words of a git invocation are affected: awk and jq programs elsewhere in the string are not.'
+EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before git sees the words, and this gate reads the words as typed, so four characters rebuild both spellings it refuses: `git diff {/dev/null,./cosign.key}` passes the operand scan as one word and reaches git as two operands (the plain-file read), `--outpu{t,t}=FILE` and `--outpu$'"'"'\x74'"'"'=FILE` match no word here and reach git as --output=FILE, and `git diff $(...)` or `git diff <(...)` supplies operands this scan never saw. Expanding them correctly means reimplementing bash inside a hook, so a brace bash could expand -- a { followed, anywhere later in the word, by a comma or a .. and then a } -- and every $, backtick and process substitution are refused instead. Write the command out in full. A brace with neither, such as HEAD@{1} or main@{upstream}, is a literal to bash and is not refused; a .. between two reflog entries (HEAD@{2}..HEAD@{1}) has the refused shape, so write HEAD~2..HEAD~1. Only words of a git invocation are affected: awk and jq programs elsewhere in the string are not.'
 
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
@@ -143,34 +149,93 @@ cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
 #
 # It is applied to the word as typed, quotes and backslashes included. A
 # quoted comma or operator is still part of the word bash expands --
-# `{a",",b}` and `{a';',b}` both become two words -- and the normalization
-# below would strip the quotes and cut the second at its `;`, leaving
-# `{a` and `,b}` for a per-word test to wave through. A fully quoted
-# `"{a,b}"`, which bash leaves alone, is refused as the price of that.
+# `{a",",b}` and `{a';',b}` both become two words -- and a test on the
+# quote-stripped spelling, cut at its `;`, saw `{a` and `,b}` and waved both
+# through. A fully quoted `"{a,b}"`, which bash leaves alone, is refused as
+# the price of that.
 brace_would_expand() {
   # shellcheck disable=SC2016 # the literal `${` is what is being looked for
   [[ "$1" == *'${'* || "$1" == *'{'*','*'}'* || "$1" == *'{'*..*'}'* ]]
 }
 
-# The command's words as bash would delimit them, and nothing else done to
-# them: split on unquoted whitespace and unquoted operator characters, with
-# every quote mark and backslash kept in place. Bash brace-expands exactly
-# these words, so `brace_would_expand` has to see them in this form; the
-# normalized words below have lost their quotes and been cut at operators.
-# An unquoted command separator -- `;`, `&`, `|`, `(`, `)`, a newline, a
-# backtick -- leaves an empty entry behind it as the boundary marker the
-# brace scan resets on; a redirection character (`<`, `>`) ends a word but
-# not a command. No real word is ever empty here: a typed `""` keeps its
-# quotes.
+# The command's words as bash would delimit them, split once and read by both
+# scans below. Each word is kept in two spellings: as typed, with every quote
+# mark and backslash in place, because bash brace-expands exactly that form
+# and `brace_would_expand` has to see it; and with the quotes and backslashes
+# removed, which is the word git receives and what the operand scan compares.
+# Alongside them is what kind of thing each entry is: a `word` of a command, a
+# `sep` (an unquoted command separator: `;`, `&`, `&&`, `|`, `||`, `|&`, `(`,
+# `)`, a newline, a backtick), or the `target` of a redirection.
+#
+# The separators are the only things that end a command, and the list has to
+# be exactly bash's, in both directions. An earlier version of this split
+# treated every unquoted `&` as a separator and reset the git scope at it, so
+# `git log 2>&1 --outpu{t,t}=cosign.pub -1` passed: the `&` in `2>&1` closed
+# the scope before the brace was seen, then bash expanded the flag and git
+# overwrote the file. The same `&` reset the operand scan, and `git diff 2>&1
+# /dev/null ./cosign.key` printed the key with neither operand counted. `>&`,
+# `<&`, `&>` and `&>>` are redirections, and so is `>|` (the noclobber form),
+# where the `|` is not a pipe. `|&` is a pipe and stays a separator. A `(`
+# behind an unquoted `<` or `>` is a process substitution rather than a
+# subshell: `git diff <(true) ./cosign.key` hands git a `/dev/fd/N` operand
+# the way `$(...)` would, so it is refused in a git invocation as `$(...)` is
+# (see `raw_in_git` below) instead of resetting the scope at its `(`.
+#
+# A redirection is `[n]op word` -- an optional descriptor number written hard
+# against the operator, one of `<`, `>`, `>>`, `<<`, `<<<`, `<>`, `>&`, `<&`,
+# `>|`, `&>`, `&>>`, and the target word. None of it is a word git receives:
+# the number is dropped, the operator is dropped, and the target is kept as
+# `target` so that the operand scan can skip it. `git diff HEAD 2>&1` is a
+# one-operand diff; counting `2` and `1` refused it. A heredoc's body lines
+# are read as words of the command that opened it, which can only over-refuse.
+#
+# No real word is ever empty in the as-typed spelling: a typed `""` keeps its
+# quotes. An unquoted `\` followed by a newline is a line continuation, which
+# bash removes before anything else, and it is removed here.
 raw_words=()
+words=()
+kinds=()
 raw_word=''
 raw_quote=''
 raw_escaped=0
+redirect_pending=0 # the next word is the target of a redirection
+after_redirect=0   # the previous unquoted character was `<` or `>`
+
+push_word() {
+  raw_words+=("${raw_word}")
+  words+=("${raw_word//[\'\"\\]/}")
+  kinds+=("$1")
+  raw_word=''
+}
+end_word() {
+  [[ -n "${raw_word}" ]] || return 0
+  if ((redirect_pending)); then
+    push_word target
+    redirect_pending=0
+  else
+    push_word word
+  fi
+}
+push_sep() {
+  end_word
+  raw_words+=('')
+  words+=("$1")
+  kinds+=(sep)
+  redirect_pending=0
+}
+
 for ((i = 0; i < ${#command_string}; i++)); do
   ch="${command_string:i:1}"
+  next="${command_string:i+1:1}"
+  prev_redirect="${after_redirect}"
+  after_redirect=0
   if ((raw_escaped)); then
-    raw_word+="${ch}"
     raw_escaped=0
+    if [[ "${ch}" == $'\n' ]]; then
+      raw_word="${raw_word%\\}"
+    else
+      raw_word+="${ch}"
+    fi
     continue
   fi
   if [[ -n "${raw_quote}" ]]; then
@@ -191,67 +256,89 @@ for ((i = 0; i < ${#command_string}; i++)); do
     raw_quote="${ch}"
     raw_word+="${ch}"
     ;;
-  ' ' | $'\t' | '<' | '>')
-    [[ -n "${raw_word}" ]] && raw_words+=("${raw_word}")
-    raw_word=''
+  ' ' | $'\t')
+    end_word
     ;;
-  $'\n' | ';' | '&' | '|' | '(' | ')' | '`')
-    [[ -n "${raw_word}" ]] && raw_words+=("${raw_word}")
-    raw_word=''
-    raw_words+=('')
+  '<' | '>')
+    # `2>` and `10<`: the digits are the descriptor, not a word.
+    if ((!redirect_pending)) && [[ "${raw_word}" =~ ^[0-9]+$ ]]; then
+      raw_word=''
+    else
+      end_word
+    fi
+    if [[ "${next}" == '(' ]]; then
+      # Process substitution. Kept as a word spelled `<(` or `>(` so the
+      # brace scan can refuse it inside a git invocation; its body is a
+      # command of its own and is split as one.
+      raw_word="${ch}("
+      push_word word
+      push_sep '('
+      ((i++))
+      continue
+    fi
+    redirect_pending=1
+    after_redirect=1
     ;;
+  '&')
+    if ((prev_redirect)); then
+      : # `>&` or `<&`: the operator continues and its target follows.
+    elif [[ "${next}" == '>' ]]; then
+      end_word # `&>` and `&>>`: the `>` that follows opens the redirection.
+    else
+      push_sep '&'
+    fi
+    ;;
+  '|')
+    if ((prev_redirect)); then
+      : # `>|`: noclobber redirection, not a pipe.
+    else
+      push_sep '|'
+    fi
+    ;;
+  $'\n') push_sep ';' ;;
+  ';' | '(' | ')' | '`') push_sep "${ch}" ;;
   *) raw_word+="${ch}" ;;
   esac
 done
-[[ -n "${raw_word}" ]] && raw_words+=("${raw_word}")
+end_word
 
 # From a `git` word to the end of *that command*: the scope opens at `git`
-# and closes at the next unquoted separator, so `git diff HEAD | jq '{a,b}'`
-# leaves the jq program alone while `git log -1; git diff {a,b}` and
-# `echo x | git diff {a,b}` are each refused at their own `git`. This is
-# narrower than the `in_git` latch below, which holds to the end of the
-# string, and can be: that latch stays up because the normalized split cuts
-# a *quoted* operator inside an argument, and these words keep their quotes,
-# so the only separators here are the ones bash itself honours. The word is
-# compared with its quotes removed so `'git'` opens the scope as `git` does;
-# a `git` assembled from an expansion (`g{i,i}t`) matches no allow rule and
-# prompts on its own.
+# and closes at the next separator, so `git diff HEAD | jq '{a,b}'` leaves
+# the jq program alone while `git log -1; git diff {a,b}` and `echo x | git
+# diff {a,b}` are each refused at their own `git`. A redirection does not
+# close it: `git log 2>&1 --outpu{t,t}=FILE` is one command, and the brace
+# in it is git's. This is narrower than the `in_git` latch below, which holds
+# to the end of the string, and can be: that latch guards the `$` and
+# `--output` tests, which are kept wide on purpose. The word is compared with
+# its quotes removed so `'git'` opens the scope as `git` does; a `git`
+# assembled from an expansion (`g{i,i}t`) matches no allow rule and prompts on
+# its own.
 raw_in_git=0
-for raw_word in "${raw_words[@]+"${raw_words[@]}"}"; do
-  if [[ -z "${raw_word}" ]]; then
+for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
+  if [[ "${kinds[idx]}" == sep ]]; then
     raw_in_git=0
     continue
   fi
-  if ((raw_in_git)) && brace_would_expand "${raw_word}"; then
-    refuse "${EXPAND_MSG}"
+  raw_word="${raw_words[idx]}"
+  if ((raw_in_git)); then
+    if brace_would_expand "${raw_word}" ||
+      [[ "${raw_word}" == '<(' || "${raw_word}" == '>(' ]]; then
+      refuse "${EXPAND_MSG}"
+    fi
   fi
-  [[ "${raw_word//[\'\"\\]/}" == "git" ]] && raw_in_git=1
+  [[ "${kinds[idx]}" == word && "${words[idx]}" == "git" ]] && raw_in_git=1
 done
 
-# Match the word git receives, not the spelling typed: the shell removes
-# quoting and backslashes on the way.
+# The whole string with quoting removed, for the one test that is a substring
+# match rather than a word: the shell removes quotes and backslashes on the
+# way to git, so `--no-'index'` and `--no-\index` both reach it as
+# `--no-index`.
 normalized="${command_string//[\'\"\\]/}"
-normalized="${normalized//$'\n'/ }"
-normalized="${normalized//$'\t'/ }"
 
 case "${normalized}" in
 *--no-index*) refuse "${DIFF_MSG}" ;;
 *) ;;
 esac
-
-# Shell operators need no whitespace around them, and this scan splits on
-# whitespace alone. `ls&&git diff /dev/null ./cosign.key` tokenizes as `ls&&git`,
-# which is not the word `git`, so the command would never be recognized as a git
-# invocation and every test below would stay switched off for it -- the hook
-# exits 0 while the signing key is printed. The write half has the same hole:
-# `true;git log -p --output=cosign.pub -1`. Give each operator character
-# whitespace of its own, so a command written hard against one is still a
-# command here.
-for operator_char in '(' ')' ';' '&' '|' '`'; do
-  normalized="${normalized//"${operator_char}"/ ${operator_char} }"
-done
-
-read -r -a words <<<"${normalized}"
 
 # Git's path_inside_repo, which decides on the *spelling* rather than on where
 # the path ends up. That distinction is the whole of this function, and folding
@@ -285,9 +372,11 @@ unresolved=0
 after_dashdash=0
 skip_git_option_value=0
 
-for word in "${words[@]+"${words[@]}"}"; do
+for ((idx = 0; idx < ${#words[@]}; idx++)); do
+  word="${words[idx]}"
+  kind="${kinds[idx]}"
   # Checked before the command-boundary case below, because a backtick is one
-  # of the characters refused here and that case consumes it.
+  # of the separators and that case consumes it.
   #
   # Every test in this scan reads the word as typed, and bash rewrites the
   # words before git receives them. A brace makes one word into two, so
@@ -312,9 +401,9 @@ for word in "${words[@]+"${words[@]}"}"; do
   # brace test is `brace_would_expand`: a comma or `..` somewhere after a
   # `{` and before a `}`, which every expansion bash performs must have, and
   # nothing bash would leave alone needs. That test ran above, on the words
-  # as typed, because the normalization that produced these words strips the
-  # quotes that keep `{a';',b}` one word. `$` and a backtick stay refused as
-  # typed here: neither has a literal form git relies on.
+  # as typed, because the words here have had their quotes removed and a
+  # quote is what keeps `{a';',b}` one word. `$` and a backtick stay refused
+  # here: neither has a literal form git relies on.
   #
   # The brace test is scoped to the git invocation's own words (see
   # `raw_in_git` above), so `jq '{a:1}'` is untouched before, after, or
@@ -334,23 +423,24 @@ for word in "${words[@]+"${words[@]}"}"; do
     esac
   fi
 
-  case "${word}" in
-  ';' | '&&' | '||' | '|' | '&' | '(' | ')' | '`')
+  if [[ "${kind}" == sep ]]; then
     # The operand scan starts over at each command boundary. `in_git` does not:
-    # it latches for the rest of the command string. Splitting on operator
-    # characters above means one sitting inside an argument -- `git log
-    # --grep=a|b --output=cosign.pub -1` -- would otherwise end the git
-    # invocation as far as this scan is concerned and hand the write primitive
-    # back unwatched. The cost is refusing an `--output` that belongs to some
-    # later non-git command in the same string; the alternative is a bypass
-    # spelled with one pipe.
+    # it latches for the rest of the command string, so an `--output` in any
+    # later command of the same string -- `git log --grep=a|b
+    # --output=cosign.pub -1` is `git log --grep=a` piped into `b --output=...`
+    # -- is refused rather than handed back unwatched. The cost is refusing an
+    # `--output` that belongs to some later non-git command; the alternative
+    # is a bypass spelled with one pipe.
     seen_git=0
     in_diff=0
     skip_git_option_value=0
     continue
-    ;;
-  *) ;;
-  esac
+  fi
+
+  # The target of a redirection is the shell's, not git's: `git diff HEAD
+  # 2>&1` has one operand, and the `1` is neither a revision nor a path.
+  # (The `$` test above still saw it, so `git diff HEAD > $f` stays refused.)
+  [[ "${kind}" == target ]] && continue
 
   # Scoped to the git invocation as a whole, and checked before anything below
   # skips a dash-prefixed word: the write primitive belongs to the

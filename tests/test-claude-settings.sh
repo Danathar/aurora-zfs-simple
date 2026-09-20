@@ -779,6 +779,68 @@ for second in "git log -1; git diff {a,b}" "echo x | git diff {a,b}" \
     assert_contains "and the refusal says the shell rewrites it: ${second}" \
         "${PRE_ERR}" "before git sees the words"
 done
+# The scope ends only where bash ends the command. A redirection is not a
+# separator, and an earlier version of the split treated every unquoted `&`
+# as one: `git log 2>&1 --outpu{t,t}=cosign.pub -1` closed the brace scope at
+# the `&` of `2>&1`, bash expanded the flag, and git overwrote the file
+# (review on #201). `>&`, `<&`, `&>`, `&>>` and `>|` are all redirections;
+# `|&` is a pipe and still ends the command. The same split feeds the operand
+# scan, which counted the words of `2>&1` as diff operands and refused every
+# `git diff ... 2>&1`; a redirection's descriptor and target are the shell's
+# and are not counted.
+for redirected in "git diff HEAD@{1} 2>&1 | jq '{a,b}'" \
+    "git diff HEAD |& jq '{a,b}'" \
+    "git diff HEAD 2>&1" "git diff HEAD 2>/dev/null" \
+    "git diff HEAD >out.txt" "git diff HEAD > out.txt" \
+    "git diff --stat HEAD -- README.md 2>&1 | head"; do
+    run_pre "$(pre_payload_for "${redirected}")"
+    assert_eq "a redirection is not a separator and not an operand: ${redirected}" \
+        "0" "${PRE_STATUS}"
+done
+for through in "git log 2>&1 --outpu{t,t}=cosign.pub -1" \
+    "git diff &>/dev/null {a,b}" \
+    "git diff &>>/dev/null {a,b}" \
+    "git diff <&0 {a,b}" \
+    "git diff 2>&1 {/dev/null,./cosign.key}" \
+    "git log -1 >| out --outpu{t,t}=cosign.pub"; do
+    run_pre "$(pre_payload_for "${through}")"
+    assert_eq "a brace after a redirection is still git's: ${through}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says the shell rewrites it: ${through}" \
+        "${PRE_ERR}" "before git sees the words"
+done
+run_pre "$(pre_payload_for "git log -1 |& git diff {a,b}")"
+assert_eq "|& is a pipe, so the second git command is its own scope" \
+    "2" "${PRE_STATUS}"
+
+# The operand scan reset at the same `&`, so `git diff 2>&1 /dev/null
+# ./cosign.key` printed the key with neither operand counted. A `(` behind an
+# unquoted `<` or `>` is a process substitution, not a subshell: it hands git
+# a /dev/fd path as an operand, the way `$(...)` would, and reset the scan at
+# its `(` instead. It is refused in a git invocation as `$(...)` is, and left
+# alone in any other command.
+for reset in "git diff 2>&1 /dev/null ./cosign.key" \
+    "git diff /dev/null ./cosign.key 2>&1"; do
+    run_pre "$(pre_payload_for "${reset}")"
+    assert_eq "a redirection does not reset the operand count: ${reset}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal is the plain-file one: ${reset}" \
+        "${PRE_ERR}" "--no-index"
+done
+for procsub in "git diff <(true) ./cosign.key" \
+    "git diff -- ./cosign.key <(true)" \
+    "cat <(git diff {a,b})"; do
+    run_pre "$(pre_payload_for "${procsub}")"
+    assert_eq "a process substitution in a git invocation is refused: ${procsub}" \
+        "2" "${PRE_STATUS}"
+done
+for elsewhere in "git log -1; cat <(true)" "cat <(git log -1)" \
+    "diff <(git log -1) <(git log -2)"; do
+    run_pre "$(pre_payload_for "${elsewhere}")"
+    assert_eq "a process substitution outside a git invocation is untouched: ${elsewhere}" \
+        "0" "${PRE_STATUS}"
+done
+
 # The `$` test is the one refusal that still reads to the end of the string:
 # it runs on the normalized words, whose quotes are gone, and `in_git` holds
 # there so a quoted `|` inside an argument cannot end the invocation early.
