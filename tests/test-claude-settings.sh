@@ -929,7 +929,9 @@ for harmless in "</dev/null git diff HEAD" \
     ">&2 git diff HEAD" \
     ">out echo x; git diff HEAD" \
     ">out cat f | git diff --stat" \
-    "echo x > out; git diff HEAD"; do
+    "echo x > out; git diff HEAD" \
+    "git status; >out printf %s git" \
+    ">out echo git; git diff HEAD"; do
     run_pre "$(pre_payload_for "${harmless}")"
     assert_eq "a prefix redirection that writes no path, or belongs to another command, is allowed: ${harmless}" \
         "0" "${PRE_STATUS}"
@@ -980,6 +982,13 @@ for literal in "git diff HEAD@{1}" \
     assert_eq "a quoted, escaped or non-leading ~ is the literal word: ${literal}" \
         "0" "${PRE_STATUS}"
 done
+# The containment test never resolves a leading `~` inside the tree, quoted
+# or not, so two quoted tildes after a `--` are refused as the plain-file form
+# although bash would hand git two literal paths: the stricter direction,
+# taken on purpose (review on zfs-kinoite-complex#220, the same hook).
+run_pre "$(pre_payload_for "git diff -- '~/x' '~/y'")"
+assert_eq "two quoted tildes after -- are refused as the plain-file form" "2" "${PRE_STATUS}"
+assert_contains "and the refusal is the operand scan's" "${PRE_ERR}" "--no-index"
 # The tilde rule's corpus, checked against bash the way the brace corpus is:
 # every word bash rewrites must be refused, every word of the literal set
 # must be allowed, and a word in neither class is only held to the first
