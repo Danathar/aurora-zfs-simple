@@ -196,13 +196,15 @@ if ! "${WORKFLOW_PYTHON}" -c 'import yaml' >/dev/null 2>&1; then
     exit 1
 fi
 
-SUITE_STEPS="${TMP_ROOT}/suite-steps.py"
-cat >"${SUITE_STEPS}" <<'PY'
-"""Print one line per workflow step whose run: body mentions run-tests.sh.
+RUN_STEPS="${TMP_ROOT}/run-steps.py"
+cat >"${RUN_STEPS}" <<'PY'
+"""Print one line per workflow step that has a run: body.
 
-Four tab-separated fields: the workflow's file name, the job id, the step name,
-and the run: body with surrounding whitespace stripped and any inner newline or
-tab written out as \n or \t, so a multi-line body stays on one line.
+Five tab-separated fields: the workflow's file name, the job id, the step's
+1-based position in that job (steps with no run: body still count, so the
+order is the job's), the step name, and the run: body with surrounding
+whitespace stripped and any inner newline or tab written out as \n or \t, so
+a multi-line body stays on one line.
 """
 
 import os
@@ -216,23 +218,24 @@ for path in sys.argv[1:]:
     if not isinstance(doc, dict):
         continue
     for job_id, job in (doc.get("jobs") or {}).items():
-        for step in (job or {}).get("steps") or []:
+        for position, step in enumerate((job or {}).get("steps") or [], start=1):
             run = step.get("run")
-            if not isinstance(run, str) or "run-tests.sh" not in run:
+            if not isinstance(run, str):
                 continue
             body = run.strip().replace("\t", "\\t").replace("\n", "\\n")
             name = str(step.get("name", "<unnamed>"))
-            print(f"{os.path.basename(path)}\t{job_id}\t{name}\t{body}")
+            print(f"{os.path.basename(path)}\t{job_id}\t{position}\t{name}\t{body}")
 PY
 
-suite_steps_in() {
-    "${WORKFLOW_PYTHON}" -B "${SUITE_STEPS}" "$@"
+run_steps_in() {
+    "${WORKFLOW_PYTHON}" -B "${RUN_STEPS}" "$@"
 }
 
-# The extractor is only worth trusting if it sees the block form. A fixture
-# with the suite in a `run: |` block, the suite with a `|| true` suffix, and a
-# step that is not the suite has to yield exactly the two suite steps, suffix
-# kept, so the comparison below can refuse it.
+# The extractor is only worth trusting if it sees the block form and keeps the
+# job's order. A fixture with an install step above the suite, both in `run: |`
+# blocks, and a `uses:` step ahead of a `|| true` suite step has to yield every
+# run: body at its position, suffix kept, so the checks below can refuse the
+# suffix and tell which step came first.
 FIXTURE_WF="${TMP_ROOT}/fixture.yml"
 cat >"${FIXTURE_WF}" <<'YAML'
 name: fixture
@@ -241,39 +244,54 @@ jobs:
   block:
     runs-on: ubuntu-24.04
     steps:
+      - name: Install shellcheck
+        run: |
+          sudo apt-get install -y shellcheck
       - name: Suite in a block scalar
         run: |
           ./tests/run-tests.sh
   loose:
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
       - name: Not the suite
         run: echo not the suite
       - name: Suite with a suffix
         run: ./tests/run-tests.sh || true
 YAML
-assert_eq "the step extractor sees a block-scalar run: body and keeps a suffix" \
-    $'fixture.yml\tblock\tSuite in a block scalar\t./tests/run-tests.sh\nfixture.yml\tloose\tSuite with a suffix\t./tests/run-tests.sh || true' \
-    "$(suite_steps_in "${FIXTURE_WF}")"
+assert_eq "the step extractor sees block-scalar run: bodies, keeps a suffix and counts positions" \
+    $'fixture.yml\tblock\t1\tInstall shellcheck\tsudo apt-get install -y shellcheck\nfixture.yml\tblock\t2\tSuite in a block scalar\t./tests/run-tests.sh\nfixture.yml\tloose\t2\tNot the suite\techo not the suite\nfixture.yml\tloose\t3\tSuite with a suffix\t./tests/run-tests.sh || true' \
+    "$(run_steps_in "${FIXTURE_WF}")"
 
-suite_steps="$(suite_steps_in "${WORKFLOW_DIR}"/*.yml 2>"${TMP_ROOT}/suite-steps.err")" || {
-    _fail "every workflow under .github/workflows parses" "$(cat "${TMP_ROOT}/suite-steps.err")"
+# GitHub reads both extensions, so a suite step in a .yaml file is as much a
+# claim about CI as one in a .yml file, and a glob on one of them is a hole.
+mapfile -t WORKFLOW_FILES < <(find "${WORKFLOW_DIR}" -maxdepth 1 -type f \
+    \( -name '*.yml' -o -name '*.yaml' \) | sort)
+if [[ "${#WORKFLOW_FILES[@]}" -eq 0 ]]; then
+    _fail "still has workflow files under .github/workflows" \
+        "nothing to read the suite steps from"
+    finish
+    exit 1
+fi
+_pass "still has workflow files under .github/workflows"
+
+run_steps="$(run_steps_in "${WORKFLOW_FILES[@]}" 2>"${TMP_ROOT}/run-steps.err")" || {
+    _fail "every workflow under .github/workflows parses" "$(cat "${TMP_ROOT}/run-steps.err")"
     finish
     exit 1
 }
+suite_steps="$(awk -F'\t' 'index($5, "run-tests.sh") { print }' <<<"${run_steps}")"
 require_nonempty "workflow steps that run the shell suite" "${suite_steps}"
 
 # The value is compared, not searched for. `./tests/run-tests.sh || true`
 # contains the command and returns success from a failing suite; an argument
 # runs only part of it; a wrapper runs something else. Each is a workflow whose
 # green does not mean what the checkbox says it means.
-while IFS=$'\t' read -r wf job step body; do
+while IFS=$'\t' read -r wf job _ step body; do
     [[ -n "${wf}" ]] || continue
     assert_eq "${wf}: step '${step}' of job '${job}' runs the suite as the template writes it" \
         "./tests/run-tests.sh" "${body}"
 done <<<"${suite_steps}"
-
-suite_workflows="$(cut -f1 <<<"${suite_steps}" | as_set)"
 
 # --- 3. the shellcheck caveat -----------------------------------------------
 
@@ -286,19 +304,26 @@ assert_contains "test-shell-syntax.sh gates its shellcheck pass on the tool bein
 assert_contains "and says so rather than failing when it is not" \
     "${syntax_test_body}" 'skip shellcheck (not installed)'
 
-# "CI installs it" is a claim about every job that runs the suite, not about one
-# of them. test-ci-workflows.sh asserts this for the three workflows it names;
-# discovering them here is what keeps the template's sentence true when a fourth
-# workflow starts running the suite.
-for wf in ${suite_workflows}; do
-    if grep -q 'apt-get install -y shellcheck' "${WORKFLOW_DIR}/${wf}"; then
-        _pass "${wf} installs shellcheck, as the template says CI does"
+# "CI installs it" is a claim about every job that runs the suite, and about
+# the order inside that job. An install step in a different job of the same
+# file, or one placed after the suite step, leaves test-shell-syntax.sh's pass
+# skipped in exactly the job whose green the checkbox points at, and a grep
+# over the whole file would call either of those installed. test-ci-workflows.sh
+# asserts this for the three workflows it names; discovering the jobs here is
+# what keeps the template's sentence true when a fourth starts running the suite.
+while IFS=$'\t' read -r wf job position step body; do
+    [[ -n "${wf}" ]] || continue
+    install_position="$(awk -F'\t' -v wf="${wf}" -v job="${job}" \
+        '$1 == wf && $2 == job && index($5, "apt-get install -y shellcheck") { print $3; exit }' \
+        <<<"${run_steps}")"
+    if [[ -n "${install_position}" && "${install_position}" -lt "${position}" ]]; then
+        _pass "${wf}: job '${job}' installs shellcheck before '${step}', as the template says CI does"
     else
-        _fail "${wf} installs shellcheck, as the template says CI does" \
-            "it runs ./tests/run-tests.sh with no shellcheck install in the file" \
+        _fail "${wf}: job '${job}' installs shellcheck before '${step}', as the template says CI does" \
+            "install step: ${install_position:-none in this job}; suite step: ${position}" \
             "the shellcheck pass would skip silently and the job would still be green"
     fi
-done
+done <<<"${suite_steps}"
 
 # --- 4. the documents a contributor is told are load-bearing ----------------
 
@@ -368,8 +393,8 @@ require_claim "a green build on the pull request is the evidence to point at" \
 require_claim "that a pull request build publishes and signs nothing" \
     'Note that it does not publish or sign anything from a PR.'
 
-named_build_wf="$(cd "${WORKFLOW_DIR}" &&
-    grep -lE "^name: Build container image[[:space:]]*$" ./*.yml | sed 's|^\./||' | as_set)"
+named_build_wf="$(grep -lE "^name: Build container image[[:space:]]*$" "${WORKFLOW_FILES[@]}" |
+    awk -F/ '{ print $NF }' | as_set)"
 assert_eq "exactly one workflow is named the way the template names it" \
     "build.yml" "${named_build_wf}"
 
