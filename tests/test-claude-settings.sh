@@ -790,8 +790,7 @@ done
 # and are not counted.
 for redirected in "git diff HEAD@{1} 2>&1 | jq '{a,b}'" \
     "git diff HEAD |& jq '{a,b}'" \
-    "git diff HEAD 2>&1" "git diff HEAD 2>/dev/null" \
-    "git diff HEAD >out.txt" "git diff HEAD > out.txt" \
+    "git diff HEAD 2>&1" "git diff HEAD </dev/null" "git diff HEAD < /dev/null" \
     "git diff --stat HEAD -- README.md 2>&1 | head"; do
     run_pre "$(pre_payload_for "${redirected}")"
     assert_eq "a redirection is not a separator and not an operand: ${redirected}" \
@@ -840,6 +839,63 @@ for elsewhere in "git log -1; cat <(true)" "cat <(git log -1)" \
     assert_eq "a process substitution outside a git invocation is untouched: ${elsewhere}" \
         "0" "${PRE_STATUS}"
 done
+
+# 7b'''''. the write half again, in the shell's own spelling. Skipping a
+# redirection's target (so that `2>&1` is not two operands) let `git diff HEAD
+# >cosign.pub` through: bash truncates the target before git runs, and `git
+# diff:*` is allow-listed without a prompt (review on zfs-kinoite-complex#215,
+# the same hook; #201 merged the same split here). It is the older spelling
+# of `--output=FILE` and is refused on the same ground, whatever the target:
+# `>`, `>>`, `>|`, `&>`, `&>>`, `N>`, `>&FILE` (bash's older `&>FILE`) and
+# `<>` (read-write, creates the file). A target that names a descriptor
+# touches no path and stays allowed; so does every input redirection; so does
+# a redirection on another command of the same string, which is that
+# command's own.
+for writer in "git diff HEAD >cosign.pub" \
+    "git diff HEAD > cosign.pub" \
+    "git log -1 >> out" \
+    "git diff 2>err" \
+    "git diff &>/dev/null" \
+    "git diff &>>/dev/null" \
+    "git show HEAD >| x" \
+    "git diff HEAD > .claude/settings.json" \
+    "git diff HEAD > .claude/hooks/gate-git-diff.sh" \
+    "git diff HEAD >&cosign.pub" \
+    "git diff HEAD >& cosign.pub" \
+    "git diff HEAD <>cosign.pub" \
+    "git diff HEAD 2>&1 >cosign.pub" \
+    "git log -1; git diff HEAD >cosign.pub" \
+    "echo x | git diff HEAD >cosign.pub" \
+    "git diff HEAD 2>&1 | jq . ; git log -1 >out"; do
+    run_pre "$(pre_payload_for "${writer}")"
+    assert_eq "an output redirection in a git invocation is refused: ${writer}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says to read stdout instead: ${writer}" \
+        "${PRE_ERR}" "read that instead"
+done
+for harmless in "git diff HEAD 2>&1" \
+    "git diff HEAD 2>&1 | jq '{a,b}'" \
+    "git diff HEAD >&2" \
+    "git diff HEAD 1>&2" \
+    "git diff HEAD >&-" \
+    "git diff HEAD 2>&-" \
+    "git diff < /dev/null" \
+    "git diff HEAD </dev/null" \
+    "git diff HEAD <&0" \
+    "git diff HEAD <<<''" \
+    "git diff HEAD@{1}" \
+    "echo x > out; git diff HEAD" \
+    "echo x >> out && git diff HEAD" \
+    "git diff HEAD | jq . > out"; do
+    run_pre "$(pre_payload_for "${harmless}")"
+    assert_eq "a redirection that writes no path, or is not git's, is allowed: ${harmless}" \
+        "0" "${PRE_STATUS}"
+done
+# An expansion means the words here are not the words git would receive, so
+# its message comes first; the redirection is refused once it is gone.
+run_pre "$(pre_payload_for "git diff HEAD >cosign.{pub,key}")"
+assert_contains "an expansion in the target is reported before the redirection" \
+    "${PRE_ERR}" "before git sees the words"
 
 # The `$` test is the one refusal that still reads to the end of the string:
 # it runs on the normalized words, whose quotes are gone, and `in_git` holds
