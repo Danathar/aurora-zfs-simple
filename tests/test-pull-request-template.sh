@@ -225,17 +225,29 @@ normalize() {
 # the job's order. A key that is absent comes out as "" and one that is
 # present as its text, so `if: false` reads "false" rather than as no `if:`
 # at all -- the difference between a step that runs and one that is skipped.
-# A run: body is trimmed, so a block scalar's trailing newline does not spoil
-# an exact comparison.
+# The job's own `if:` and `continue-on-error:` ride along, because a job that
+# is skipped or allowed to fail takes every step with it. The shell is the
+# effective one: the step's own, else the job's `defaults.run.shell`, else the
+# workflow's, which is how GitHub resolves it. A run: body is trimmed, so a
+# block scalar's trailing newline does not spoil an exact comparison.
 steps_of() {
     jq -c --arg file "$(basename "$1")" '
         def field($k): if has($k) then (.[$k] | tostring) else "" end;
-        (.jobs // {}) | to_entries[] | .key as $job
-        | ((.value.steps // []) | to_entries[]) | .key as $index | .value
+        def default_shell: ((.defaults // {}) | (.run // {}) | field("shell"));
+        default_shell as $wf_shell
+        | (.jobs // {}) | to_entries[] | .key as $job | .value as $j
+        | ($j | field("if")) as $job_if
+        | ($j | field("continue-on-error")) as $job_coe
+        | ($j | default_shell) as $job_shell
+        | (($j.steps // []) | to_entries[]) | .key as $index | .value
         | { file: $file, job: $job, position: ($index + 1),
             name: (if has("name") then (.name | tostring) else "<unnamed>" end),
             if: field("if"), continue_on_error: field("continue-on-error"),
-            shell: field("shell"), uses: field("uses"),
+            job_if: $job_if, job_continue_on_error: $job_coe,
+            shell: (if field("shell") != "" then field("shell")
+                    elif $job_shell != "" then $job_shell
+                    else $wf_shell end),
+            uses: field("uses"),
             run: (field("run") | sub("^\\s+"; "") | sub("\\s+$"; "")) }
     ' "${JSON_DIR}/$(basename "$1").json"
 }
@@ -253,29 +265,48 @@ steps_where() {
     jq -c "$@" "select(${filter})" <<<"${STEPS}"
 }
 
-# A step runs under GitHub's default shell, `bash -eo pipefail`, unless it
-# says otherwise, and the default is what makes a failing command a failing
-# step. `shell: bash` keeps that; anything else -- `sh`, a custom template
-# without -e, another language -- is not the path this test reasons about.
-runs_under_default_shell() {
+# A step runs under GitHub's default shell, `bash -eo pipefail`, unless it or
+# a `defaults.run.shell` above it says otherwise, and `-e` is what makes a
+# failing command a failing step. `shell: bash` keeps that; anything else --
+# `sh`, a custom template without -e, another language -- is not the path
+# this test reasons about. The value read is the effective one, so a shell
+# inherited from the job or the workflow is judged the same as one on the
+# step.
+runs_under_bash_e() {
     local label=$1 step=$2 shell
     shell="$(field shell "${step}")"
     if [[ -z "${shell}" || "${shell}" == "bash" ]]; then
         _pass "${label} runs under bash -e, so a failing command fails the step"
     else
         _fail "${label} runs under bash -e, so a failing command fails the step" \
-            "shell: ${shell}"
+            "effective shell: ${shell}"
     fi
 }
 
+# A step that can be skipped or fail quietly is not one the checkbox can
+# point at. Its own `if:` and `continue-on-error:` do that, and so do the
+# same two keys on the job around it.
+runs_unconditionally() {
+    local label=$1 step=$2
+    assert_eq "${label} has no if: that could skip it" "" "$(field if "${step}")"
+    assert_eq "${label} does not continue on error" "" "$(field continue_on_error "${step}")"
+    assert_eq "${label} is in a job with no if: that could skip it" "" "$(field job_if "${step}")"
+    assert_eq "${label} is in a job that does not continue on error" "" \
+        "$(field job_continue_on_error "${step}")"
+}
+
 # The extractor is only worth trusting if it sees the block form, counts a
-# step with no run: body so positions stay the job's, and keeps `if:`,
-# `continue-on-error:` and `shell:` as the text they carry. The fixture has
-# all of them.
+# step with no run: body so positions stay the job's, keeps `if:` and
+# `continue-on-error:` from both the step and its job as the text they carry,
+# and resolves the shell the way GitHub does: step, then job, then workflow.
+# The fixture has all of it.
 FIXTURE_WF="${TMP_ROOT}/fixture.yml"
 cat >"${FIXTURE_WF}" <<'YAML'
 name: fixture
 on: push
+defaults:
+  run:
+    shell: bash
 jobs:
   block:
     runs-on: ubuntu-24.04
@@ -288,6 +319,11 @@ jobs:
           ./tests/run-tests.sh
   loose:
     runs-on: ubuntu-24.04
+    if: false
+    continue-on-error: true
+    defaults:
+      run:
+        shell: sh
     steps:
       - uses: actions/checkout@v4
       - name: Softened install
@@ -299,15 +335,16 @@ jobs:
         run: ./tests/run-tests.sh || true
 YAML
 normalize "${FIXTURE_WF}"
-assert_eq "the step extractor sees block scalars, counts every step, and keeps if:, continue-on-error: and shell:" \
+assert_eq "the step extractor sees block scalars, counts every step, keeps step and job conditions, and resolves the shell" \
     "$(printf '%s\n' \
-        $'block\t1\tInstall shellcheck\t\t\t\t\tsudo apt-get install -y shellcheck' \
-        $'block\t2\tSuite in a block scalar\t\t\t\t\t./tests/run-tests.sh' \
-        $'loose\t1\t<unnamed>\t\t\t\tactions/checkout@v4\t' \
-        $'loose\t2\tSoftened install\tfalse\ttrue\tbash\t\tsudo apt-get install -y shellcheck || true' \
-        $'loose\t3\tSuite with a suffix\t\t\t\t\t./tests/run-tests.sh || true')" \
+        $'block\t1\tInstall shellcheck\t\t\t\t\tbash\t\tsudo apt-get install -y shellcheck' \
+        $'block\t2\tSuite in a block scalar\t\t\t\t\tbash\t\t./tests/run-tests.sh' \
+        $'loose\t1\t<unnamed>\t\t\tfalse\ttrue\tsh\tactions/checkout@v4\t' \
+        $'loose\t2\tSoftened install\tfalse\ttrue\tfalse\ttrue\tbash\t\tsudo apt-get install -y shellcheck || true' \
+        $'loose\t3\tSuite with a suffix\t\t\tfalse\ttrue\tsh\t\t./tests/run-tests.sh || true')" \
     "$(steps_of "${FIXTURE_WF}" |
-        jq -r '[.job, .position, .name, .if, .continue_on_error, .shell, .uses, .run] | @tsv')"
+        jq -r '[.job, .position, .name, .if, .continue_on_error, .job_if, .job_continue_on_error,
+                .shell, .uses, .run] | @tsv')"
 
 # GitHub reads both extensions, so a suite step in a .yaml file is as much a
 # claim about CI as one in a .yml file, and a glob on one of them is a hole.
@@ -332,17 +369,17 @@ require_nonempty "workflow steps that run the shell suite" "${suite_steps}"
 
 # The value is compared, not searched for. `./tests/run-tests.sh || true`
 # contains the command and returns success from a failing suite; an argument
-# runs only part of it; a wrapper runs something else. A step-level `if:` or
-# `continue-on-error:` leaves the job green with the suite skipped or red.
-# Each is a workflow whose green does not mean what the checkbox says.
+# runs only part of it; a wrapper runs something else. An `if:` or a
+# `continue-on-error:` on the step or on its job leaves the workflow green
+# with the suite skipped or red. Each is a workflow whose green does not mean
+# what the checkbox says.
 while IFS= read -r step; do
     [[ -n "${step}" ]] || continue
     label="$(field file "${step}"): '$(field name "${step}")' in job '$(field job "${step}")'"
     assert_eq "${label} runs the suite as the template writes it" \
         "./tests/run-tests.sh" "$(field run "${step}")"
-    assert_eq "${label} has no if: that could skip the suite" "" "$(field if "${step}")"
-    assert_eq "${label} does not continue on error" "" "$(field continue_on_error "${step}")"
-    runs_under_default_shell "${label}" "${step}"
+    runs_unconditionally "${label}" "${step}"
+    runs_under_bash_e "${label}" "${step}"
 done <<<"${suite_steps}"
 
 # --- 3. the shellcheck caveat -----------------------------------------------
@@ -437,11 +474,8 @@ while IFS= read -r step; do
         _fail "${label} installs shellcheck before running the suite, as the template says CI does" \
             "'${install_name}' is step ${install_position}; the suite is step ${suite_position}"
     fi
-    assert_eq "${label}: '${install_name}' has no if: that could skip the install" \
-        "" "$(field if "${install}")"
-    assert_eq "${label}: '${install_name}' does not continue on error" \
-        "" "$(field continue_on_error "${install}")"
-    runs_under_default_shell "${label}: '${install_name}'" "${install}"
+    runs_unconditionally "${label}: '${install_name}'" "${install}"
+    runs_under_bash_e "${label}: '${install_name}'" "${install}"
     if install_is_straight "$(field run "${install}")"; then
         _pass "${label}: '${install_name}' runs the install on a straight path"
     else
@@ -536,70 +570,191 @@ else
         "the template tells a contributor a run on this PR is the strongest evidence"
 fi
 
-# Every step that publishes or signs has to carry the guard -- every one, not
-# the first: a second push or sign step added without the guard would be
-# validated by nothing if only the first match were read. The markers are the
-# actions and commands themselves, not the step names, so renaming a step does
-# not slip one past this list.
+# "It does not publish or sign anything from a PR" is a claim about every
+# step of build.yml, so every step of build.yml gets a decision recorded here,
+# the way test-coverage.sh records one per shipped script: either the step is
+# safe to run on a pull request, or it is guarded. A step this manifest does
+# not name fails, so a new push, copy or sign step -- by whatever mechanism,
+# `podman push` as much as the push-to-registry action -- cannot arrive
+# without being classified in the open; a manifest row with no step fails, so
+# the list cannot rot after a rename or a removal.
 #
+# The two classifications are checked differently. A GUARDED step's `if:` has
+# to exclude pull requests (below). A PR_SAFE step's action and body have to
+# be free of the publish and sign mechanisms this repository knows: a safe
+# step that grows a push is reclassified, not waved through.
+PUBLISH_MANIFEST=$(
+    cat <<'EOF'
+tests	Checkout	PR_SAFE
+tests	Install shellcheck	PR_SAFE
+tests	Run shell test suite	PR_SAFE
+build_push	Prepare environment	PR_SAFE
+build_push	Checkout	PR_SAFE
+build_push	Maximize build space	PR_SAFE
+build_push	Update Podman	PR_SAFE
+build_push	Move container storage to the large runner disk	PR_SAFE
+build_push	Get current date	PR_SAFE
+build_push	Image Metadata	PR_SAFE
+build_push	Build Image	PR_SAFE
+build_push	Rechunk Image with Chunkah	PR_SAFE
+build_push	Login to GitHub Container Registry	GUARDED
+build_push	Push To GHCR	GUARDED
+build_push	Propagate tags from the pushed digest	GUARDED
+build_push	Verify pushed tags share one digest	GUARDED
+build_push	Install Cosign	GUARDED
+build_push	Sign container image	GUARDED
+EOF
+)
+
+# What a step that publishes or signs looks like: the actions that log in,
+# push or install a signer, and the commands that push, copy or sign. The
+# patterns are matched against the `uses:` reference and every line of the
+# `run:` body, and a PR_SAFE step may match none of them.
+PUBLISH_USES=(
+    'push-to-registry'
+    'login-action'
+    'build-push-action'
+    'cosign-installer'
+    'sigstore/'
+)
+PUBLISH_COMMANDS=(
+    '(^|[^A-Za-z0-9_-])(podman|buildah|docker|crane|oras) +(manifest +)?push([^A-Za-z0-9_-]|$)'
+    '(^|[^A-Za-z0-9_-])skopeo +copy([^A-Za-z0-9_-]|$)'
+    '(^|[^A-Za-z0-9_-])(podman|docker|buildah|skopeo) +login([^A-Za-z0-9_-]|$)'
+    '(^|[^A-Za-z0-9_-])cosign +(sign|attest|attach)([^A-Za-z0-9_-]|$)'
+    '(^|[^A-Za-z0-9_-])gh +release([^A-Za-z0-9_-]|$)'
+)
+publishes() {
+    local step=$1 uses run pattern
+    uses="$(field uses "${step}")"
+    run="$(field run "${step}")"
+    for pattern in "${PUBLISH_USES[@]}"; do
+        [[ "${uses}" == *"${pattern}"* ]] && return 0
+    done
+    for pattern in "${PUBLISH_COMMANDS[@]}"; do
+        grep -qE "${pattern}" <<<"${run}" && return 0
+    done
+    return 1
+}
+
 # The condition is judged whole, not searched for the guard's text: the guard
 # followed by `|| github.event_name == 'pull_request'` contains it and runs on
-# every pull request. A condition excludes pull requests when it has no `||`
-# at all -- so it is one `&&` chain, false as soon as any operand is -- and the
-# guard is one of its operands, whole and unnegated. A safe form this rule
-# cannot read, such as `(guard) && x`, fails here and is written in the
-# accepted form instead.
+# every pull request, and so does `!(false && guard)`. A condition excludes
+# pull requests when it has no `||` at all -- so it is one `&&` chain, false
+# as soon as any operand is -- no `!` other than the guard's own `!=`, so
+# nothing in it is negated, every operand carries balanced parentheses, so no
+# operand is a fragment of a group spanning the `&&` beside it, and the guard
+# is one of those operands, whole. A safe form this rule cannot read, such as
+# `(guard) && x`, fails here and is written in the accepted form instead.
 PR_GUARD="github.event_name != 'pull_request'"
 excludes_pull_requests() {
-    local condition
+    local condition operand opens closes found=0
     condition="$(tr -s '[:space:]' ' ' <<<"$1")"
     condition="${condition# }"
     condition="${condition% }"
+    condition="${condition#\$\{\{}"
+    condition="${condition%\}\}}"
+    condition="${condition# }"
+    condition="${condition% }"
     [[ -n "${condition}" && "${condition}" != *"||"* ]] || return 1
-    [[ " && ${condition} && " == *" && ${PR_GUARD} && "* ]]
+    [[ "${condition//!=/}" != *"!"* ]] || return 1
+    while IFS= read -r operand; do
+        opens="${operand//[^(]/}"
+        closes="${operand//[^)]/}"
+        [[ "${#opens}" -eq "${#closes}" ]] || return 1
+        [[ "${operand}" == "${PR_GUARD}" ]] && found=1
+    done <<<"${condition// && /$'\n'}"
+    [[ "${found}" -eq 1 ]]
 }
 
-# The rule is only as good as these cases.
+# The rules are only as good as these cases.
 assert_eq "excludes_pull_requests accepts the guard alone" "0" \
     "$(excludes_pull_requests "${PR_GUARD}"; echo $?)"
 assert_eq "excludes_pull_requests accepts the guard and a second operand" "0" \
-    "$(excludes_pull_requests "${PR_GUARD} && github.ref == 'refs/heads/main'"; echo $?)"
+    "$(excludes_pull_requests "${PR_GUARD} && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"; echo $?)"
 assert_eq "excludes_pull_requests accepts the guard as the second operand" "0" \
     "$(excludes_pull_requests "github.ref == 'refs/heads/main' && ${PR_GUARD}"; echo $?)"
+assert_eq "excludes_pull_requests accepts the guard inside \${{ }}" "0" \
+    "$(excludes_pull_requests "\${{ ${PR_GUARD} && x }}"; echo $?)"
 assert_eq "excludes_pull_requests rejects a guard undone by ||" "1" \
     "$(excludes_pull_requests "${PR_GUARD} && x || github.event_name == 'pull_request'"; echo $?)"
 assert_eq "excludes_pull_requests rejects a negated guard" "1" \
     "$(excludes_pull_requests "!(${PR_GUARD})"; echo $?)"
+assert_eq "excludes_pull_requests rejects a negation around the whole chain" "1" \
+    "$(excludes_pull_requests "\${{ !(false && ${PR_GUARD} && true) }}"; echo $?)"
+assert_eq "excludes_pull_requests rejects a guard regrouped by parentheses" "1" \
+    "$(excludes_pull_requests "(x && ${PR_GUARD}) == false"; echo $?)"
 assert_eq "excludes_pull_requests rejects no condition at all" "1" \
     "$(excludes_pull_requests ""; echo $?)"
+assert_eq "publishes sees a push action" "0" \
+    "$(publishes '{"uses":"redhat-actions/push-to-registry@v2","run":""}'; echo $?)"
+assert_eq "publishes sees a podman push inside a run body" "0" \
+    "$(publishes '{"uses":"","run":"set -e\npodman push localhost/x ghcr.io/x"}'; echo $?)"
+assert_eq "publishes sees a cosign sign" "0" \
+    "$(publishes '{"uses":"","run":"cosign sign -y x"}'; echo $?)"
+assert_eq "publishes does not mistake podman tag, load or inspect for a push" "1" \
+    "$(publishes '{"uses":"","run":"podman tag a b\npodman load -i x\npodman inspect --format x y\npodman image prune -af"}'; echo $?)"
+assert_eq "publishes does not mistake a build action for a push" "1" \
+    "$(publishes '{"uses":"redhat-actions/buildah-build@v2","run":""}'; echo $?)"
 
-for marker in \
-    'docker/login-action' \
-    'redhat-actions/push-to-registry' \
-    'skopeo copy --preserve-digests' \
-    "skopeo inspect --format '{{.Digest}}'" \
-    'sigstore/cosign-installer' \
-    'cosign sign -y --key env://COSIGN_PRIVATE_KEY'; do
-    # shellcheck disable=SC2016 # $file and $m are jq variables, bound by --arg
-    matching="$(steps_where '.file == $file and ((.uses | contains($m)) or (.run | contains($m)))' \
-        --arg file "${BUILD_WF_NAME}" --arg m "${marker}")"
-    if [[ -z "${matching}" ]]; then
-        _fail "build.yml still has a step containing '${marker}'" \
-            "if the publish band changed shape, this list must be updated with it"
+# shellcheck disable=SC2016 # $file is a jq variable, bound by --arg
+build_steps="$(steps_where '.file == $file' --arg file "${BUILD_WF_NAME}")"
+require_nonempty "steps in build.yml" "${build_steps}"
+
+# Every step has a decision, and every decision has a step.
+manifest_keys="$(cut -f1,2 <<<"${PUBLISH_MANIFEST}" | LC_ALL=C sort)"
+step_keys="$(jq -r '[.job, .name] | @tsv' <<<"${build_steps}" | LC_ALL=C sort)"
+assert_eq "no step in build.yml is unnamed, so each can be classified" \
+    "" "$(grep -F '<unnamed>' <<<"${step_keys}" || true)"
+assert_eq "no job in build.yml names two steps alike, so each classification is unambiguous" \
+    "" "$(uniq -d <<<"${step_keys}")"
+while IFS=$'\t' read -r job name; do
+    [[ -n "${job}" ]] || continue
+    if grep -qxF "${job}	${name}" <<<"${manifest_keys}"; then
+        _pass "build.yml: '${name}' in job '${job}' is classified"
+    else
+        _fail "build.yml: '${name}' in job '${job}' is classified" \
+            "add it to PUBLISH_MANIFEST in tests/test-pull-request-template.sh" \
+            "as PR_SAFE (it publishes and signs nothing) or GUARDED (it carries the pull_request guard)"
+    fi
+done <<<"${step_keys}"
+
+while IFS=$'\t' read -r job name classification; do
+    [[ -n "${job}" ]] || continue
+    # shellcheck disable=SC2016 # $file, $job and $name are jq variables, bound by --arg
+    step="$(steps_where '.file == $file and .job == $job and .name == $name' \
+        --arg file "${BUILD_WF_NAME}" --arg job "${job}" --arg name "${name}" | head -1)"
+    if [[ -z "${step}" ]]; then
+        _fail "build.yml still has '${name}' in job '${job}'" \
+            "no such step; remove the stale PUBLISH_MANIFEST row or update its name"
         continue
     fi
-    while IFS= read -r step; do
-        [[ -n "${step}" ]] || continue
+    case "${classification}" in
+    GUARDED)
         condition="$(field if "${step}")"
         if excludes_pull_requests "${condition}"; then
-            _pass "build.yml: '$(field name "${step}")' ('${marker}') does not run from a pull request"
+            _pass "build.yml: '${name}' does not run from a pull request"
         else
-            _fail "build.yml: '$(field name "${step}")' ('${marker}') does not run from a pull request" \
+            _fail "build.yml: '${name}' does not run from a pull request" \
                 "if: ${condition:-<none>}" \
-                "expected one && chain with '${PR_GUARD}' as a whole operand and no ||"
+                "expected one && chain with '${PR_GUARD}' as a whole operand, no || and no negation"
         fi
-    done <<<"${matching}"
-done
+        ;;
+    PR_SAFE)
+        if publishes "${step}"; then
+            _fail "build.yml: '${name}' publishes and signs nothing, as its PR_SAFE row says" \
+                "its action or body carries a push, copy, login or sign mechanism;" \
+                "reclassify it GUARDED and guard it, or take the publish out"
+        else
+            _pass "build.yml: '${name}' publishes and signs nothing, as its PR_SAFE row says"
+        fi
+        ;;
+    *)
+        _fail "PUBLISH_MANIFEST classifies '${name}' as PR_SAFE or GUARDED" \
+            "found: ${classification}"
+        ;;
+    esac
+done <<<"${PUBLISH_MANIFEST}"
 
 # --- 7. the diagnosis the template sends a reviewer to ----------------------
 
