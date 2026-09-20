@@ -235,7 +235,7 @@ steps_of() {
         | { file: $file, job: $job, position: ($index + 1),
             name: (if has("name") then (.name | tostring) else "<unnamed>" end),
             if: field("if"), continue_on_error: field("continue-on-error"),
-            uses: field("uses"),
+            shell: field("shell"), uses: field("uses"),
             run: (field("run") | sub("^\\s+"; "") | sub("\\s+$"; "")) }
     ' "${JSON_DIR}/$(basename "$1").json"
 }
@@ -253,9 +253,25 @@ steps_where() {
     jq -c "$@" "select(${filter})" <<<"${STEPS}"
 }
 
+# A step runs under GitHub's default shell, `bash -eo pipefail`, unless it
+# says otherwise, and the default is what makes a failing command a failing
+# step. `shell: bash` keeps that; anything else -- `sh`, a custom template
+# without -e, another language -- is not the path this test reasons about.
+runs_under_default_shell() {
+    local label=$1 step=$2 shell
+    shell="$(field shell "${step}")"
+    if [[ -z "${shell}" || "${shell}" == "bash" ]]; then
+        _pass "${label} runs under bash -e, so a failing command fails the step"
+    else
+        _fail "${label} runs under bash -e, so a failing command fails the step" \
+            "shell: ${shell}"
+    fi
+}
+
 # The extractor is only worth trusting if it sees the block form, counts a
-# step with no run: body so positions stay the job's, and keeps an `if:` and a
-# `continue-on-error:` as the text they carry. The fixture has all three.
+# step with no run: body so positions stay the job's, and keeps `if:`,
+# `continue-on-error:` and `shell:` as the text they carry. The fixture has
+# all of them.
 FIXTURE_WF="${TMP_ROOT}/fixture.yml"
 cat >"${FIXTURE_WF}" <<'YAML'
 name: fixture
@@ -277,20 +293,21 @@ jobs:
       - name: Softened install
         if: false
         continue-on-error: true
+        shell: bash
         run: sudo apt-get install -y shellcheck || true
       - name: Suite with a suffix
         run: ./tests/run-tests.sh || true
 YAML
 normalize "${FIXTURE_WF}"
-assert_eq "the step extractor sees block scalars, counts every step, and keeps if: and continue-on-error:" \
+assert_eq "the step extractor sees block scalars, counts every step, and keeps if:, continue-on-error: and shell:" \
     "$(printf '%s\n' \
-        $'block\t1\tInstall shellcheck\t\t\t\tsudo apt-get install -y shellcheck' \
-        $'block\t2\tSuite in a block scalar\t\t\t\t./tests/run-tests.sh' \
-        $'loose\t1\t<unnamed>\t\t\tactions/checkout@v4\t' \
-        $'loose\t2\tSoftened install\tfalse\ttrue\t\tsudo apt-get install -y shellcheck || true' \
-        $'loose\t3\tSuite with a suffix\t\t\t\t./tests/run-tests.sh || true')" \
+        $'block\t1\tInstall shellcheck\t\t\t\t\tsudo apt-get install -y shellcheck' \
+        $'block\t2\tSuite in a block scalar\t\t\t\t\t./tests/run-tests.sh' \
+        $'loose\t1\t<unnamed>\t\t\t\tactions/checkout@v4\t' \
+        $'loose\t2\tSoftened install\tfalse\ttrue\tbash\t\tsudo apt-get install -y shellcheck || true' \
+        $'loose\t3\tSuite with a suffix\t\t\t\t\t./tests/run-tests.sh || true')" \
     "$(steps_of "${FIXTURE_WF}" |
-        jq -r '[.job, .position, .name, .if, .continue_on_error, .uses, .run] | @tsv')"
+        jq -r '[.job, .position, .name, .if, .continue_on_error, .shell, .uses, .run] | @tsv')"
 
 # GitHub reads both extensions, so a suite step in a .yaml file is as much a
 # claim about CI as one in a .yml file, and a glob on one of them is a hole.
@@ -325,6 +342,7 @@ while IFS= read -r step; do
         "./tests/run-tests.sh" "$(field run "${step}")"
     assert_eq "${label} has no if: that could skip the suite" "" "$(field if "${step}")"
     assert_eq "${label} does not continue on error" "" "$(field continue_on_error "${step}")"
+    runs_under_default_shell "${label}" "${step}"
 done <<<"${suite_steps}"
 
 # --- 3. the shellcheck caveat -----------------------------------------------
@@ -341,14 +359,61 @@ assert_contains "and says so rather than failing when it is not" \
 # "CI installs it" is a claim about every job that runs the suite, and about
 # the step that does the installing: it has to come before the suite step in
 # the same job, it cannot carry an `if:` or a `continue-on-error:` that lets
-# it skip or fail quietly, and the install has to be the command itself in
-# command position -- `apt-get install -y shellcheck || true` and an echo of
-# the command both contain the text and install nothing. Any of those leaves
-# test-shell-syntax.sh's pass skipped in exactly the job whose green the
-# checkbox points at. test-ci-workflows.sh asserts this for the three workflows
-# it names; discovering the jobs here is what keeps the template's sentence
-# true when a fourth starts running the suite.
-INSTALL_LINE='^[[:space:]]*(sudo )?apt-get install -y shellcheck( [A-Za-z0-9._+-]+)*[[:space:]]*$'
+# it skip or fail quietly, and its body has to run the install on a straight
+# path. Any of those leaves test-shell-syntax.sh's pass skipped in exactly the
+# job whose green the checkbox points at. test-ci-workflows.sh asserts this for
+# the three workflows it names; discovering the jobs here is what keeps the
+# template's sentence true when a fourth starts running the suite.
+#
+# "A straight path" is decided by reading the body line by line: every line
+# has to be one of three shapes -- the index refresh, the install itself, the
+# version print -- and one of them has to be the install. Finding the install
+# on a line of its own is not enough: `if false; then` above it and `fi` below
+# leave it never run, `|| true` on it installs nothing on failure, and an echo
+# of it installs nothing at all. None of those lines has an accepted shape, so
+# each fails here. A step that needs another line changes this list in the
+# open. GitHub runs the step under bash -e (checked below), so a failing
+# install is a failing step.
+INSTALL_STEP_LINES=(
+    '^(sudo )?apt-get update$'
+    '^(sudo )?apt-get install -y shellcheck( [A-Za-z0-9._+-]+)*$'
+    '^shellcheck --version$'
+)
+install_is_straight() {
+    local body=$1 line shape matched installs=0
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -n "${line}" ]] || continue
+        matched=0
+        for shape in "${INSTALL_STEP_LINES[@]}"; do
+            if [[ "${line}" =~ ${shape} ]]; then
+                matched=1
+                break
+            fi
+        done
+        [[ "${matched}" -eq 1 ]] || return 1
+        if [[ "${line}" =~ ${INSTALL_STEP_LINES[1]} ]]; then
+            installs=1
+        fi
+    done <<<"${body}"
+    [[ "${installs}" -eq 1 ]]
+}
+
+# The rule is only as good as these cases.
+assert_eq "install_is_straight accepts the refresh, install and version print" "0" \
+    "$(install_is_straight $'sudo apt-get update\nsudo apt-get install -y shellcheck python3-yaml\nshellcheck --version'; echo $?)"
+assert_eq "install_is_straight accepts the bare install" "0" \
+    "$(install_is_straight 'apt-get install -y shellcheck'; echo $?)"
+assert_eq "install_is_straight rejects || true on the install" "1" \
+    "$(install_is_straight 'sudo apt-get install -y shellcheck || true'; echo $?)"
+assert_eq "install_is_straight rejects an install inside if false; then ... fi" "1" \
+    "$(install_is_straight $'if false; then\n  sudo apt-get install -y shellcheck\nfi'; echo $?)"
+assert_eq "install_is_straight rejects an echo of the install" "1" \
+    "$(install_is_straight 'echo sudo apt-get install -y shellcheck'; echo $?)"
+assert_eq "install_is_straight rejects a body with no install in it" "1" \
+    "$(install_is_straight $'sudo apt-get update\nshellcheck --version'; echo $?)"
+
 while IFS= read -r step; do
     [[ -n "${step}" ]] || continue
     wf="$(field file "${step}")"
@@ -376,12 +441,13 @@ while IFS= read -r step; do
         "" "$(field if "${install}")"
     assert_eq "${label}: '${install_name}' does not continue on error" \
         "" "$(field continue_on_error "${install}")"
-    if grep -qE "${INSTALL_LINE}" <<<"$(field run "${install}")"; then
-        _pass "${label}: '${install_name}' runs the install in command position, unsoftened"
+    runs_under_default_shell "${label}: '${install_name}'" "${install}"
+    if install_is_straight "$(field run "${install}")"; then
+        _pass "${label}: '${install_name}' runs the install on a straight path"
     else
-        _fail "${label}: '${install_name}' runs the install in command position, unsoftened" \
-            "no line of the step is the install command on its own;" \
-            "a suffix such as '|| true', or an echo of it, contains the text and installs nothing"
+        _fail "${label}: '${install_name}' runs the install on a straight path" \
+            "every line has to be apt-get update, the install, or shellcheck --version, and one the install;" \
+            "control flow, a '|| true', or an echo around the install leaves it not run"
     fi
 done <<<"${suite_steps}"
 
@@ -475,7 +541,38 @@ fi
 # validated by nothing if only the first match were read. The markers are the
 # actions and commands themselves, not the step names, so renaming a step does
 # not slip one past this list.
+#
+# The condition is judged whole, not searched for the guard's text: the guard
+# followed by `|| github.event_name == 'pull_request'` contains it and runs on
+# every pull request. A condition excludes pull requests when it has no `||`
+# at all -- so it is one `&&` chain, false as soon as any operand is -- and the
+# guard is one of its operands, whole and unnegated. A safe form this rule
+# cannot read, such as `(guard) && x`, fails here and is written in the
+# accepted form instead.
 PR_GUARD="github.event_name != 'pull_request'"
+excludes_pull_requests() {
+    local condition
+    condition="$(tr -s '[:space:]' ' ' <<<"$1")"
+    condition="${condition# }"
+    condition="${condition% }"
+    [[ -n "${condition}" && "${condition}" != *"||"* ]] || return 1
+    [[ " && ${condition} && " == *" && ${PR_GUARD} && "* ]]
+}
+
+# The rule is only as good as these cases.
+assert_eq "excludes_pull_requests accepts the guard alone" "0" \
+    "$(excludes_pull_requests "${PR_GUARD}"; echo $?)"
+assert_eq "excludes_pull_requests accepts the guard and a second operand" "0" \
+    "$(excludes_pull_requests "${PR_GUARD} && github.ref == 'refs/heads/main'"; echo $?)"
+assert_eq "excludes_pull_requests accepts the guard as the second operand" "0" \
+    "$(excludes_pull_requests "github.ref == 'refs/heads/main' && ${PR_GUARD}"; echo $?)"
+assert_eq "excludes_pull_requests rejects a guard undone by ||" "1" \
+    "$(excludes_pull_requests "${PR_GUARD} && x || github.event_name == 'pull_request'"; echo $?)"
+assert_eq "excludes_pull_requests rejects a negated guard" "1" \
+    "$(excludes_pull_requests "!(${PR_GUARD})"; echo $?)"
+assert_eq "excludes_pull_requests rejects no condition at all" "1" \
+    "$(excludes_pull_requests ""; echo $?)"
+
 for marker in \
     'docker/login-action' \
     'redhat-actions/push-to-registry' \
@@ -493,8 +590,14 @@ for marker in \
     fi
     while IFS= read -r step; do
         [[ -n "${step}" ]] || continue
-        assert_contains "build.yml: '$(field name "${step}")' ('${marker}') does not run from a pull request" \
-            "$(field if "${step}")" "${PR_GUARD}"
+        condition="$(field if "${step}")"
+        if excludes_pull_requests "${condition}"; then
+            _pass "build.yml: '$(field name "${step}")' ('${marker}') does not run from a pull request"
+        else
+            _fail "build.yml: '$(field name "${step}")' ('${marker}') does not run from a pull request" \
+                "if: ${condition:-<none>}" \
+                "expected one && chain with '${PR_GUARD}' as a whole operand and no ||"
+        fi
     done <<<"${matching}"
 done
 
