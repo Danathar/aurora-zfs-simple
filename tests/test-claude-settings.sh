@@ -937,6 +937,19 @@ for built in "git status; G=git; \$G diff /dev/null ./cosign.key" \
     assert_contains "and the refusal says to spell the name literally: ${built}" \
         "${PRE_ERR}" "Spell every command name literally"
 done
+# `env -S` is not an option but an interpreter: it splits its quoted string
+# into a command this scan never sees as words (review on
+# zfs-kinoite-complex#217). Any -S after env, clustered or long, is refused;
+# the other env options are not.
+for split in "git status; env -S 'git diff /dev/null ./cosign.key'" \
+    "env -iS 'git diff /dev/null ./cosign.key'" \
+    "git status; env --split-string='git diff x'" \
+    "git status; env --split-string 'git diff x'" \
+    "git status; env -u X -S 'git diff x'"; do
+    run_pre "$(pre_payload_for "${split}")"
+    assert_eq "env -S is refused: ${split}" "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names it: ${split}" "${PRE_ERR}" "env -S"
+done
 for literal in "git status; git diff HEAD@{1}" \
     "FOO=bar git diff HEAD" \
     "X=\$(date); git diff HEAD" \
@@ -948,7 +961,9 @@ for literal in "git status; git diff HEAD@{1}" \
     "[[ -n \"\$x\" ]] && git diff HEAD" \
     "git status; [ -f cosign.pub ]" \
     "env -i PATH=\$PATH git diff HEAD" \
+    "env -u X git diff HEAD" \
     "timeout 60 git diff HEAD" \
+    "git status; timeout -s KILL 5 git diff HEAD" \
     "xargs -I{} git diff {} < list" \
     "command -v shellcheck" \
     "find . -name '*.sh'"; do

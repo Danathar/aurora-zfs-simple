@@ -132,7 +132,7 @@ EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before
 REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside a git invocation makes the shell open its target for writing before git runs -- `git diff HEAD >cosign.pub` truncates the trust anchor, and `>> .claude/settings.json` or `2> .claude/hooks/gate-git-diff.sh` reach any file this uid can write -- and the allow rule for git diff, git log and git show sees none of it. These commands print to stdout; read that instead. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) are not affected, and a redirection on another command of the same string is that command'"'"'s own.'
 
 # shellcheck disable=SC2016 # the literal $G and $(...) are what the reader has to see
-CMD_MSG='blocked: the name of a command in this string is not spelled literally -- it is built by an expansion (`$G diff ...`, `$(printf git) diff ...`, a backtick in command position), by a brace (`{,git} diff ...`), or by a glob (`g?t`, `/usr/bin/g[i]t`) -- so neither this gate nor the allow rule that matched the string'"'"'s literal prefix can tell which command bash will run, and `G=git; $G diff /dev/null ./cosign.key` runs the plain-file read this gate exists to refuse. Spell every command name literally, and drop a variable assignment that only exists to build one. After a wrapper such as command, env, exec, timeout or xargs the same holds for every word of that command, since the wrapper'"'"'s own options are not modelled here. A literal name after an assignment (`FOO=bar git diff HEAD`) is fine, and a literal path to git (`/usr/bin/git diff`) is read as git.'
+CMD_MSG='blocked: the name of a command in this string is not spelled literally -- it is built by an expansion (`$G diff ...`, `$(printf git) diff ...`, a backtick in command position), by a brace (`{,git} diff ...`), or by a glob (`g?t`, `/usr/bin/g[i]t`) -- so neither this gate nor the allow rule that matched the string'"'"'s literal prefix can tell which command bash will run, and `G=git; $G diff /dev/null ./cosign.key` runs the plain-file read this gate exists to refuse. Spell every command name literally, and drop a variable assignment that only exists to build one. After a wrapper such as command, env, exec, timeout or xargs the same holds for every word of that command, since the wrapper'"'"'s own options are not modelled here. A literal name after an assignment (`FOO=bar git diff HEAD`) is fine, and a literal path to git (`/usr/bin/git diff`) is read as git. env -S (--split-string) splits a quoted string into a command this gate never sees and is refused outright.'
 
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
@@ -362,7 +362,12 @@ end_word
 # there, whose output would be the name. A literal name whose last path
 # component is `git` is rewritten to `git`, so `/usr/bin/git diff` opens
 # every scope that `git diff` does. A redirection's target is never the
-# name.
+# name. One wrapper option is modelled, because it is not an option but an
+# interpreter: `env -S 'git diff /dev/null ./cosign.key'` (GNU and uutils
+# `--split-string`) splits its quoted string into a command this scan never
+# sees as words, so any `-S`, clustered (`-iS`) or long, after `env` is
+# refused outright. `sh -c ...` and `eval` remain the interpreters the
+# header says this hook does not see behind.
 #
 # The cost is a backtick assignment (`X=\`date\``): the split ends the word
 # `X=` at the backtick, and the backtick then opens in command position. The
@@ -371,6 +376,7 @@ end_word
 # refused too; without the wrapper it is not.
 command_word_pending=1 # the next word of this command may be its name
 after_wrapper=0        # a wrapper ran: every remaining word may be the name
+wrapper_name=''
 in_backtick=0
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   case "${kinds[idx]}" in
@@ -381,6 +387,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
         in_backtick=0
         command_word_pending=0
         after_wrapper=0
+        wrapper_name=''
         continue
       fi
       ((command_word_pending)) && refuse "${CMD_MSG}"
@@ -388,6 +395,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     fi
     command_word_pending=1
     after_wrapper=0
+    wrapper_name=''
     continue
     ;;
   target) continue ;;
@@ -405,10 +413,15 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     ;;
   command | builtin | exec | env | nohup | nice | xargs | timeout | stdbuf | sudo | doas)
     after_wrapper=1
+    wrapper_name="${word}"
     continue
     ;;
   *) ;;
   esac
+  if [[ "${wrapper_name}" == env ]] &&
+    [[ "${raw_word}" =~ ^-[^-]*S || "${raw_word}" == --split-string* ]]; then
+    refuse "${CMD_MSG}"
+  fi
   if [[ "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ||
     "${raw_word}" == *'*'* || "${raw_word}" == *'?'* ]] ||
     brace_would_expand "${raw_word}" ||
