@@ -57,6 +57,10 @@ AGENTS="${REPO_ROOT}/AGENTS.md"
 README="${REPO_ROOT}/README.md"
 RISK_TIERS="${REPO_ROOT}/docs/risk-tiers.md"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
+WORKFLOW_PYTHON="${WORKFLOW_PYTHON:-python3}"
+
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TMP_ROOT}"' EXIT
 
 missing=0
 for required in \
@@ -177,20 +181,99 @@ else
         "the template tells a contributor to run ./tests/run-tests.sh directly"
 fi
 
-# Both directions: every workflow that runs the suite runs it under the name the
-# template gives, and at least one does, so a rename cannot pass vacuously.
-suite_workflows="$(cd "${WORKFLOW_DIR}" &&
-    grep -lE '^[[:space:]]+run:[[:space:]]*\./tests/run-tests\.sh[[:space:]]*$' ./*.yml |
-    sed 's|^\./||' | as_set)"
-require_nonempty "workflow steps that run the shell suite" "${suite_workflows}"
+# Every step, in every workflow, whose `run:` body reaches the suite. The bodies
+# are read through the YAML parser rather than grepped for a `run:` line: the
+# block form `run: |` puts the command on the line after the key, so a
+# line-anchored pattern never sees a workflow written that way, and a workflow
+# this discovery cannot see is one that can run the suite with no shellcheck
+# install and pass every check below. PyYAML is already a requirement of the
+# suite (CONTRIBUTING.md); a missing parser fails here rather than skips.
+if ! "${WORKFLOW_PYTHON}" -c 'import yaml' >/dev/null 2>&1; then
+    _fail "reading the workflows requires Python 3 with PyYAML" \
+        "install python3-yaml (Debian/Ubuntu) or python3-pyyaml (Fedora)," \
+        "or install PyYAML in the interpreter selected by WORKFLOW_PYTHON"
+    finish
+    exit 1
+fi
 
-# A `run:` step that reaches the suite by any other spelling -- an argument, a
-# `|| true`, a wrapper -- is a workflow whose green does not mean what the
-# checkbox says it means, so the loose match and the exact one have to agree.
-loose_suite_workflows="$(cd "${WORKFLOW_DIR}" &&
-    grep -lE '^[[:space:]]+run:.*run-tests\.sh' ./*.yml | sed 's|^\./||' | as_set)"
-assert_eq "every workflow step that reaches the suite runs it as the template writes it" \
-    "${loose_suite_workflows}" "${suite_workflows}"
+SUITE_STEPS="${TMP_ROOT}/suite-steps.py"
+cat >"${SUITE_STEPS}" <<'PY'
+"""Print one line per workflow step whose run: body mentions run-tests.sh.
+
+Four tab-separated fields: the workflow's file name, the job id, the step name,
+and the run: body with surrounding whitespace stripped and any inner newline or
+tab written out as \n or \t, so a multi-line body stays on one line.
+"""
+
+import os
+import sys
+
+import yaml
+
+for path in sys.argv[1:]:
+    with open(path, encoding="utf-8") as handle:
+        doc = yaml.safe_load(handle)
+    if not isinstance(doc, dict):
+        continue
+    for job_id, job in (doc.get("jobs") or {}).items():
+        for step in (job or {}).get("steps") or []:
+            run = step.get("run")
+            if not isinstance(run, str) or "run-tests.sh" not in run:
+                continue
+            body = run.strip().replace("\t", "\\t").replace("\n", "\\n")
+            name = str(step.get("name", "<unnamed>"))
+            print(f"{os.path.basename(path)}\t{job_id}\t{name}\t{body}")
+PY
+
+suite_steps_in() {
+    "${WORKFLOW_PYTHON}" -B "${SUITE_STEPS}" "$@"
+}
+
+# The extractor is only worth trusting if it sees the block form. A fixture
+# with the suite in a `run: |` block, the suite with a `|| true` suffix, and a
+# step that is not the suite has to yield exactly the two suite steps, suffix
+# kept, so the comparison below can refuse it.
+FIXTURE_WF="${TMP_ROOT}/fixture.yml"
+cat >"${FIXTURE_WF}" <<'YAML'
+name: fixture
+on: push
+jobs:
+  block:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Suite in a block scalar
+        run: |
+          ./tests/run-tests.sh
+  loose:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Not the suite
+        run: echo not the suite
+      - name: Suite with a suffix
+        run: ./tests/run-tests.sh || true
+YAML
+assert_eq "the step extractor sees a block-scalar run: body and keeps a suffix" \
+    $'fixture.yml\tblock\tSuite in a block scalar\t./tests/run-tests.sh\nfixture.yml\tloose\tSuite with a suffix\t./tests/run-tests.sh || true' \
+    "$(suite_steps_in "${FIXTURE_WF}")"
+
+suite_steps="$(suite_steps_in "${WORKFLOW_DIR}"/*.yml 2>"${TMP_ROOT}/suite-steps.err")" || {
+    _fail "every workflow under .github/workflows parses" "$(cat "${TMP_ROOT}/suite-steps.err")"
+    finish
+    exit 1
+}
+require_nonempty "workflow steps that run the shell suite" "${suite_steps}"
+
+# The value is compared, not searched for. `./tests/run-tests.sh || true`
+# contains the command and returns success from a failing suite; an argument
+# runs only part of it; a wrapper runs something else. Each is a workflow whose
+# green does not mean what the checkbox says it means.
+while IFS=$'\t' read -r wf job step body; do
+    [[ -n "${wf}" ]] || continue
+    assert_eq "${wf}: step '${step}' of job '${job}' runs the suite as the template writes it" \
+        "./tests/run-tests.sh" "${body}"
+done <<<"${suite_steps}"
+
+suite_workflows="$(cut -f1 <<<"${suite_steps}" | as_set)"
 
 # --- 3. the shellcheck caveat -----------------------------------------------
 
@@ -246,7 +329,10 @@ require_claim "that post-check.sh is the exception" \
 
 # The manifest in test-coverage.sh is where the decision is recorded: every
 # shipped script is either covered by a named test or UNCOVERED with a reason.
-manifest_uncovered="$(grep -P '\tUNCOVERED\t' "${COVERAGE_TEST}" | cut -f1 | as_set)"
+# Its fields are tab-separated and read with awk, whose -F takes a literal tab
+# everywhere; a `\t` in a grep pattern needs GNU grep's -P, which nothing else
+# in the suite requires.
+manifest_uncovered="$(awk -F'\t' '$2 == "UNCOVERED" { print $1 }' "${COVERAGE_TEST}" | as_set)"
 require_nonempty "UNCOVERED entries in test-coverage.sh's manifest" "${manifest_uncovered}"
 
 # shellcheck disable=SC2016
@@ -259,7 +345,7 @@ require_nonempty "build_files scripts named by ${TEMPLATE_REL}" "${template_buil
 assert_eq "the scripts the template calls unreachable are exactly the UNCOVERED ones" \
     "${manifest_uncovered}" "${template_build_scripts}"
 
-manifest_post_check="$(grep -P '^build_files/post-check\.sh\t' "${COVERAGE_TEST}" | cut -f2)"
+manifest_post_check="$(awk -F'\t' '$1 == "build_files/post-check.sh" { print $2 }' "${COVERAGE_TEST}")"
 assert_eq "post-check.sh is covered by the test the manifest names" \
     "tests/test-post-check.sh" "${manifest_post_check}"
 # shellcheck disable=SC2016 # the guard is matched as text, not expanded
