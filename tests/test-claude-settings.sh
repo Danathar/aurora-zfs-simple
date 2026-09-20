@@ -911,19 +911,25 @@ printf 'ORIGINAL-CONTENT\n' >"${PREFIX_REPO}/victim"
     'git status --short >/dev/null; >victim git diff HEAD HEAD' >/dev/null 2>&1 </dev/null || true)
 assert_not_contains "a redirection written before the git word truncates the file it names" \
     "$(cat "${PREFIX_REPO}/victim")" "ORIGINAL-CONTENT"
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
 for prefixed in ">cosign.pub git diff HEAD" \
     "git status; >cosign.pub git diff HEAD" \
     "2>err git log -1" \
     ">> out git show HEAD" \
     "FOO=bar >out git diff HEAD" \
     "git status; >cosign.pub /usr/bin/git diff HEAD" \
-    "> .claude/settings.json git diff HEAD"; do
+    "> .claude/settings.json git diff HEAD" \
+    "git status; {fd}>cosign.pub git diff HEAD" \
+    "git diff HEAD {fd}>cosign.pub" \
+    'git status; >$(printf cosign.pub) git diff HEAD' \
+    '>$(printf cosign.pub) git diff HEAD'; do
     run_pre "$(pre_payload_for "${prefixed}")"
     assert_eq "a redirection written before the git word is refused: ${prefixed}" \
         "2" "${PRE_STATUS}"
     assert_contains "and the refusal says to read stdout instead: ${prefixed}" \
         "${PRE_ERR}" "read that instead"
 done
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
 for harmless in "</dev/null git diff HEAD" \
     "2>&1 git diff HEAD" \
     ">&2 git diff HEAD" \
@@ -931,7 +937,12 @@ for harmless in "</dev/null git diff HEAD" \
     ">out cat f | git diff --stat" \
     "echo x > out; git diff HEAD" \
     "git status; >out printf %s git" \
-    ">out echo git; git diff HEAD"; do
+    ">out echo git; git diff HEAD" \
+    '>$(printf out) echo x; git diff HEAD' \
+    "{fd}>out echo x; git diff HEAD" \
+    'x=$(date); git diff HEAD' \
+    'echo $(date) *.sh; git status' \
+    'echo $(git log -1) | git diff HEAD'; do
     run_pre "$(pre_payload_for "${harmless}")"
     assert_eq "a prefix redirection that writes no path, or belongs to another command, is allowed: ${harmless}" \
         "0" "${PRE_STATUS}"

@@ -289,6 +289,7 @@ raw_escaped=0
 redirect_pending=0 # the next word is the target of a redirection
 redirect_op=''     # the operator of that redirection, as typed
 after_redirect=0   # the previous unquoted character was `<` or `>`
+subst_depth=0      # open `$(` substitutions, whose `)` is not a subshell's
 
 push_word() {
   raw_words+=("${raw_word}")
@@ -353,8 +354,9 @@ for ((i = 0; i < ${#command_string}; i++)); do
     end_word
     ;;
   '<' | '>')
-    # `2>` and `10<`: the digits are the descriptor, not a word.
-    if ((!redirect_pending)) && [[ "${raw_word}" =~ ^[0-9]+$ ]]; then
+    # `2>` and `10<`: the digits are the descriptor, not a word, and so is
+    # bash's `{name}>` form, which allocates a descriptor into the variable.
+    if ((!redirect_pending)) && [[ "${raw_word}" =~ ^([0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})$ ]]; then
       raw_word=''
     else
       end_word
@@ -394,7 +396,31 @@ for ((i = 0; i < ${#command_string}; i++)); do
     fi
     ;;
   $'\n') push_sep ';' ;;
-  ';' | '(' | ')' | '`') push_sep "${ch}" ;;
+  '(')
+    # `$(`: a command substitution, not a subshell. It is a nested command,
+    # so it is split as one, but the command around it goes on afterwards:
+    # `>$(printf cosign.pub) git diff HEAD` is git's redirection, and a
+    # scope that reset at the `(` had forgotten the target by the time it
+    # reached `git`. The `$(` and `$)` separators let the scans below save
+    # and restore the outer command's state instead of resetting it.
+    if [[ "${raw_word}" == *'$' && "${raw_word}" != *'\$' ]]; then
+      end_word
+      # shellcheck disable=SC2016 # the literal `$(` is the separator's name
+      push_sep '$('
+      ((subst_depth++))
+    else
+      push_sep '('
+    fi
+    ;;
+  ')')
+    if ((subst_depth > 0)); then
+      ((subst_depth--))
+      push_sep '$)'
+    else
+      push_sep ')'
+    fi
+    ;;
+  ';' | '`') push_sep "${ch}" ;;
   *) raw_word+="${ch}" ;;
   esac
 done
@@ -444,9 +470,27 @@ after_wrapper=0        # a wrapper ran: every remaining word may be the name
 command_names=()       # 1 at each index that names, or may name, a command
 wrapper_name=''
 in_backtick=0
+name_stack=() # the outer command's state, while a `$(...)` is being read
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   case "${kinds[idx]}" in
   sep)
+    # A `$(...)` substitution is a nested command: its own words are held
+    # to the rule, and the command around it resumes where it left off, so
+    # `>$(printf x) git diff HEAD` still finds its name at `git` and
+    # `echo $(date) *.sh` does not read `*.sh` as a name.
+    # shellcheck disable=SC2016 # the literal `$(` is the separator's name
+    if [[ "${words[idx]}" == '$(' ]]; then
+      name_stack+=("${command_word_pending} ${after_wrapper} ${wrapper_name}")
+      command_word_pending=1
+      after_wrapper=0
+      wrapper_name=''
+      continue
+    fi
+    if [[ "${words[idx]}" == '$)' ]] && ((${#name_stack[@]})); then
+      read -r command_word_pending after_wrapper wrapper_name <<<"${name_stack[-1]}"
+      unset 'name_stack[-1]'
+      continue
+    fi
     if [[ "${words[idx]}" == '`' ]]; then
       if ((in_backtick)); then
         # Closing: the command that contained the substitution has its name.
@@ -609,6 +653,7 @@ raw_in_git=0
 raw_in_shellcheck=0
 writing_redirect=0
 prefix_writing_redirect=0 # a writing target seen before this command's git word
+scope_stack=()            # the outer command's state, while a `$(...)` is being read
 for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
   if [[ "${kinds[idx]}" == sep ]]; then
     # A backtick is split as a separator rather than kept in its word, so the
@@ -618,6 +663,17 @@ for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
     # words too; this scope closes at the separator, so it is checked here.
     if ((raw_in_shellcheck)) && [[ "${words[idx]}" == '`' ]]; then
       refuse "${SHELLCHECK_EXPAND_MSG}"
+    fi
+    # A `$(...)` substitution is a nested command; the scope of the command
+    # around it, and a writing target waiting for that command's name, are
+    # saved at the `$(` and restored at its `)` rather than reset.
+    # shellcheck disable=SC2016 # the literal `$(` is the separator's name
+    if [[ "${words[idx]}" == '$(' ]]; then
+      scope_stack+=("${raw_in_git} ${raw_in_shellcheck} ${prefix_writing_redirect}")
+    elif [[ "${words[idx]}" == '$)' ]] && ((${#scope_stack[@]})); then
+      read -r raw_in_git raw_in_shellcheck prefix_writing_redirect <<<"${scope_stack[-1]}"
+      unset 'scope_stack[-1]'
+      continue
     fi
     raw_in_git=0
     raw_in_shellcheck=0
@@ -764,8 +820,10 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # need to be: the allow rules in .claude/settings.json match a literal
   # `git diff`/`git log` prefix, so an invocation assembled out of expansions
   # (`{git,:} diff ...`, `g{i,i}t diff ...`, `$GIT diff ...`) matches no allow
-  # rule and prompts on its own.
-  if ((in_git)); then
+  # rule and prompts on its own. The `$(` and `$)` separators are the
+  # split's own names for a substitution's edges, not words; the `$` word
+  # that opened the substitution was refused on its own.
+  if ((in_git)) && [[ "${kind}" != sep || "${word}" == '`' ]]; then
     case "${word}" in
     *['$`']*) refuse "${EXPAND_MSG}" ;;
     *) ;;
