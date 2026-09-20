@@ -157,6 +157,11 @@ brace_would_expand() {
 # every quote mark and backslash kept in place. Bash brace-expands exactly
 # these words, so `brace_would_expand` has to see them in this form; the
 # normalized words below have lost their quotes and been cut at operators.
+# An unquoted command separator -- `;`, `&`, `|`, `(`, `)`, a newline, a
+# backtick -- leaves an empty entry behind it as the boundary marker the
+# brace scan resets on; a redirection character (`<`, `>`) ends a word but
+# not a command. No real word is ever empty here: a typed `""` keeps its
+# quotes.
 raw_words=()
 raw_word=''
 raw_quote=''
@@ -186,21 +191,37 @@ for ((i = 0; i < ${#command_string}; i++)); do
     raw_quote="${ch}"
     raw_word+="${ch}"
     ;;
-  ' ' | $'\t' | $'\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`')
+  ' ' | $'\t' | '<' | '>')
     [[ -n "${raw_word}" ]] && raw_words+=("${raw_word}")
     raw_word=''
+    ;;
+  $'\n' | ';' | '&' | '|' | '(' | ')' | '`')
+    [[ -n "${raw_word}" ]] && raw_words+=("${raw_word}")
+    raw_word=''
+    raw_words+=('')
     ;;
   *) raw_word+="${ch}" ;;
   esac
 done
 [[ -n "${raw_word}" ]] && raw_words+=("${raw_word}")
 
-# From the first `git` word to the end of the string, the same latch `in_git`
-# uses below. The word is compared with its quotes removed so `'git'` latches
-# as `git` does; a `git` assembled from an expansion (`g{i,i}t`) matches no
-# allow rule and prompts on its own.
+# From a `git` word to the end of *that command*: the scope opens at `git`
+# and closes at the next unquoted separator, so `git diff HEAD | jq '{a,b}'`
+# leaves the jq program alone while `git log -1; git diff {a,b}` and
+# `echo x | git diff {a,b}` are each refused at their own `git`. This is
+# narrower than the `in_git` latch below, which holds to the end of the
+# string, and can be: that latch stays up because the normalized split cuts
+# a *quoted* operator inside an argument, and these words keep their quotes,
+# so the only separators here are the ones bash itself honours. The word is
+# compared with its quotes removed so `'git'` opens the scope as `git` does;
+# a `git` assembled from an expansion (`g{i,i}t`) matches no allow rule and
+# prompts on its own.
 raw_in_git=0
 for raw_word in "${raw_words[@]+"${raw_words[@]}"}"; do
+  if [[ -z "${raw_word}" ]]; then
+    raw_in_git=0
+    continue
+  fi
   if ((raw_in_git)) && brace_would_expand "${raw_word}"; then
     refuse "${EXPAND_MSG}"
   fi
@@ -295,8 +316,12 @@ for word in "${words[@]+"${words[@]}"}"; do
   # quotes that keep `{a';',b}` one word. `$` and a backtick stay refused as
   # typed here: neither has a literal form git relies on.
   #
-  # Scoped to `in_git`, the same latch `--output` uses, so `awk '{print $1}'`
-  # and `jq '{a:1}'` are untouched in a command string that never invokes git.
+  # The brace test is scoped to the git invocation's own words (see
+  # `raw_in_git` above), so `jq '{a:1}'` is untouched before, after, or
+  # without a git command in the same string. The `$` and backtick test here
+  # is scoped to `in_git`, the same latch `--output` uses, which holds to the
+  # end of the string: `awk '{print $1}'` is untouched in a command string
+  # that never invokes git, and refused after one that does.
   # A brace or a `$` *before* the first `git` word is not checked and does not
   # need to be: the allow rules in .claude/settings.json match a literal
   # `git diff`/`git log` prefix, so an invocation assembled out of expansions

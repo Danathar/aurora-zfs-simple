@@ -752,6 +752,41 @@ for unaffected in "awk '{print \$1}' a.txt" "jq '{a:1}' x.json" \
         "0" "${PRE_STATUS}"
 done
 
+# The git invocation ends where bash ends it: at an unquoted `;`, `&`, `|`,
+# `(`, `)`, newline or backtick. A jq or awk program in a later command of the
+# same string is not a word git receives, and a hook that kept the brace scope
+# open from the first `git` to the end of the string refused
+# `git diff ... | jq '{a: .x, b: .y}'`, which is the ordinary way to read a
+# diff into a filter. A brace before the git command is not in its scope
+# either. The scope reopens at the next `git` word, so a second git command in
+# the string is held to the same rule as the first, and one that is piped into
+# is not excused by the command in front of it.
+for later in "git diff HEAD -- docs/SECURITY-AI.md | jq '{a: .x, b: .y}'" \
+    "git diff HEAD@{1} | jq '{a,b}'" \
+    "git diff HEAD | awk '{print}'" \
+    "jq '{a,b}' < f | git diff --stat"; do
+    run_pre "$(pre_payload_for "${later}")"
+    assert_eq "a brace in another command of the string is untouched: ${later}" \
+        "0" "${PRE_STATUS}"
+done
+# shellcheck disable=SC2016 # the literal backtick is the separator under test
+for second in "git log -1; git diff {a,b}" "echo x | git diff {a,b}" \
+    "git log -1 && (git diff {a,b})" $'git log -1\ngit diff {a,b}' \
+    'git log -1 `git diff {a,b}`'; do
+    run_pre "$(pre_payload_for "${second}")"
+    assert_eq "a brace in a second git command is still refused: ${second}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says the shell rewrites it: ${second}" \
+        "${PRE_ERR}" "before git sees the words"
+done
+# The `$` test is the one refusal that still reads to the end of the string:
+# it runs on the normalized words, whose quotes are gone, and `in_git` holds
+# there so a quoted `|` inside an argument cannot end the invocation early.
+# `git diff HEAD | awk '{print $1}'` is refused for its `$`, not its brace.
+run_pre "$(pre_payload_for "git diff HEAD | awk '{print \$1}'")"
+assert_eq "a \$ in a later command of the string is still refused" \
+    "2" "${PRE_STATUS}"
+
 # 7b-corpus. The brace rule checked against bash itself rather than against a
 # hand-written label. Each word below is inserted verbatim into a bash script
 # -- the corpus is this file's, and the point is to hand bash the spelling an
