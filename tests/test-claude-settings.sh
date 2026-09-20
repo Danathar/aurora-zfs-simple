@@ -1132,4 +1132,157 @@ assert_eq "a host without jq gets a refusal, not an unchecked call" \
     "2" "${nojq_status}"
 assert_contains "and is told what is missing" "$(cat "${nojq_err}")" "jq"
 
+# --- 8. the other allow-listed command that opens a file it is pointed at ---
+#
+# `Bash(shellcheck:*)` is allowed with no prompt as well, and ShellCheck prints
+# the *source line* above every diagnostic it reports. So it prints back
+# whatever it is aimed at: `shellcheck ./.env` echoes every unexported
+# `NAME=value` line of a file `Read(./.env)` refuses, values included, and a
+# PEM-shaped file gives up its `-----BEGIN/END-----` lines and its trailing
+# base64 line. The shape is section 7's exactly -- those rules gate the *Read*
+# tool, this is Bash, and nothing consulted them.
+#
+# No permission pattern closes it either: patterns match by prefix, so
+# `Bash(shellcheck tests/:*)` still matches
+# `shellcheck tests/run-tests.sh /home/me/.aws/credentials`, and an exact rule
+# per tracked script stops `shellcheck a.sh b.sh` working at all. So the hook
+# checks the operands: inside the working tree, and not one of the
+# secret-shaped names.
+#
+# Demonstrated before it is asserted. The demonstration is skipped when
+# ShellCheck is absent, the way tests/test-shell-syntax.sh skips its own pass;
+# the assertions below do not need the tool, because they exercise the hook.
+SC_WORK="${WORK}/shellcheck-exposure"
+mkdir -p "${SC_WORK}"
+printf 'AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789\n' >"${SC_WORK}/dotenv"
+if command -v shellcheck >/dev/null 2>&1; then
+    sc_out="$(shellcheck "${SC_WORK}/dotenv" 2>&1 || true)"
+    assert_contains "shellcheck prints the source line of the file it is given" \
+        "${sc_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
+else
+    printf '  skip the shellcheck exposure demo (not installed)\n'
+fi
+
+# 8a. the read the finding is about, and the spellings around it. A path
+# outside the working tree, a `..` route that leaves and comes back, and a
+# secret-shaped name inside the tree are each refused; `path_inside_worktree`
+# decides the first two and `denied_read_shape` the third, because `cosign.key`
+# and a `.env` live in the tree and are the two files the deny rules exist for.
+sc_repo_name="${REPO_ROOT##*/}"
+for leak in "shellcheck ./.env" \
+    "shellcheck .env" \
+    "shellcheck ./cosign.key" \
+    "shellcheck ./.env.local" \
+    "shellcheck /etc/passwd" \
+    "shellcheck ${WORK}/outside.sh" \
+    "shellcheck ../${sc_repo_name}/cosign.key" \
+    "shellcheck -x tests/run-tests.sh /etc/shadow" \
+    "shellcheck -e SC2034 ./.env" \
+    "shellcheck -f gcc ./.env" \
+    "shellcheck -sbash ./.env" \
+    "shellcheck --format=gcc ./.env" \
+    "shellcheck keys/server.pem" \
+    "shellcheck ~/.ssh/id_ed25519" \
+    "shellcheck -- ./.env" \
+    "git status; shellcheck ./.env" \
+    "echo x | shellcheck ./.env"; do
+    run_pre "$(pre_payload_for "${leak}")"
+    assert_eq "an operand outside the tree or secret-shaped is refused: ${leak}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says what shellcheck prints: ${leak}" \
+        "${PRE_ERR}" "source line above every diagnostic"
+done
+
+# 8b. the same four characters that rebuild a git operand rebuild a shellcheck
+# one, and for the same reason: this scan reads the words as typed and bash
+# rewrites them first. `shellcheck {tests/run-tests.sh,/etc/shadow}` is one
+# word here and two files at shellcheck.
+for rebuilt in "shellcheck {tests/run-tests.sh,/etc/shadow}" \
+    "shellcheck tests/{run-tests.sh,../../etc/shadow}" \
+    "shellcheck \$f" \
+    "shellcheck \${SECRET}" \
+    "shellcheck \$(ls /etc/shadow)" \
+    "shellcheck \`ls\`" \
+    "shellcheck <(cat /etc/shadow)"; do
+    run_pre "$(pre_payload_for "${rebuilt}")"
+    assert_eq "an expansion in a shellcheck operand is refused: ${rebuilt}" \
+        "2" "${PRE_STATUS}"
+done
+
+# 8b'. the operands do not all arrive in the argv. SHELLCHECK_OPTS is split and
+# prepended to shellcheck's own arguments, operands included, so
+# `SHELLCHECK_OPTS=./.env shellcheck tests/run-tests.sh` lints the .env too and
+# prints its lines back while the argv this gate scans names no such path. The
+# assignment is written before the command name, so the refusal cannot be
+# scoped to a shellcheck invocation; nothing in this repository sets the
+# variable.
+if command -v shellcheck >/dev/null 2>&1; then
+    sc_env_out="$(SHELLCHECK_OPTS="${SC_WORK}/dotenv" shellcheck \
+        "${REPO_ROOT}/tests/run-tests.sh" 2>&1 || true)"
+    assert_contains "SHELLCHECK_OPTS adds an operand shellcheck prints back" \
+        "${sc_env_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
+fi
+for opts in "SHELLCHECK_OPTS=./.env shellcheck tests/run-tests.sh" \
+    "SHELLCHECK_OPTS='./.env' shellcheck tests/run-tests.sh" \
+    "SHELLCHECK_OPTS=-e2034 shellcheck ./.env" \
+    "export SHELLCHECK_OPTS=/etc/shadow" \
+    "SHELLCHECK_OPTS=/etc/shadow shellcheck -x tests/run-tests.sh"; do
+    run_pre "$(pre_payload_for "${opts}")"
+    assert_eq "a SHELLCHECK_OPTS assignment is refused: ${opts}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says why: ${opts}" \
+        "${PRE_ERR}" "prepends it to its own argv"
+done
+
+# 8c. and the lint runs this repository actually performs are untouched. These
+# are the invocations in tests/test-shell-syntax.sh and in the PostToolUse hook
+# in .claude/settings.json, plus the option spellings around them. A `-` is
+# stdin rather than a file. `-C always` is the one option whose argument is
+# optional and must be attached, so shellcheck reads `always` as a file name
+# and so does the hook -- it is inside the tree, so it passes either way.
+for lint in "shellcheck --version" \
+    "shellcheck -x tests/run-tests.sh" \
+    "shellcheck -x build_files/post-check.sh" \
+    "shellcheck ci/write-badges.sh tests/test-harness.sh" \
+    "shellcheck -e SC2034 -x ci/write-badges.sh" \
+    "shellcheck -f gcc -x tests/test-harness.sh" \
+    "shellcheck --format=gcc tests/test-harness.sh" \
+    "shellcheck --severity error tests/test-harness.sh" \
+    "shellcheck -o all tests/run-tests.sh" \
+    "shellcheck -s bash tests/run-tests.sh" \
+    "shellcheck -P SCRIPTDIR -x tests/run-tests.sh" \
+    "shellcheck -" \
+    "shellcheck -C always" \
+    "echo x; shellcheck tests/run-tests.sh" \
+    "shellcheck tests/run-tests.sh && git diff HEAD"; do
+    run_pre "$(pre_payload_for "${lint}")"
+    assert_eq "the repository's own lint run is unaffected: ${lint}" \
+        "0" "${PRE_STATUS}"
+    assert_eq "and silent: ${lint}" "" "${PRE_ERR}${PRE_OUT}"
+done
+
+# 8d. the scope does not leak in either direction. A path outside the tree
+# belonging to some *other* command of the string is not shellcheck's operand,
+# and a `git` invocation after a shellcheck one is still scanned as git's.
+for scoped in "shellcheck tests/run-tests.sh; wc -c /etc/shadow" \
+    "shellcheck tests/run-tests.sh && ls /etc" \
+    "cat /etc/hostname | shellcheck -"; do
+    run_pre "$(pre_payload_for "${scoped}")"
+    assert_eq "another command's path is not a shellcheck operand: ${scoped}" \
+        "0" "${PRE_STATUS}"
+done
+run_pre "$(pre_payload_for "shellcheck tests/run-tests.sh; git diff /dev/null ./cosign.key")"
+assert_eq "and a git invocation after one is still scanned as git's" \
+    "2" "${PRE_STATUS}"
+assert_contains "with git's own refusal" "${PRE_ERR}" "--no-index"
+
+# 8e. the settings file records the decision, next to the one for git diff.
+SHELLCHECK_NOTE="$(jq -r '._note_shellcheck // ""' "${SETTINGS}")"
+assert_contains "the note names what shellcheck prints" \
+    "${SHELLCHECK_NOTE}" "source line"
+assert_contains "and that no permission pattern closes it" \
+    "${SHELLCHECK_NOTE}" "match by prefix"
+assert_contains "and the residual it does not cover" \
+    "${SHELLCHECK_NOTE}" "external-sources"
+
 finish
