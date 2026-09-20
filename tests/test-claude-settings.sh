@@ -688,13 +688,144 @@ for expanded in "git diff {/dev/null,./cosign.key}" \
         "${PRE_ERR}" "before git sees the words"
 done
 
+# The brace half of that refusal is drawn where bash draws it. Bash expands a
+# brace only when a comma or a `..` range sits inside it; any other brace is
+# a literal, and git's own `@{...}` revision syntax is spelled with exactly
+# that. `git diff HEAD@{1}` is the ordinary diff against the previous commit
+# and touches neither primitive, so a gate that refused it was a false
+# positive with a real cost. Asserted against bash first, as above. One
+# operand each, so nothing here depends on the reflog this checkout happens
+# to have; the last case pins that a `{` which never closes is a literal too.
+# shellcheck disable=SC1083 # the literal brace is the fact being asserted
+literal_words=(HEAD@{1})
+assert_eq "bash leaves a brace with no comma and no range alone" \
+    "HEAD@{1}" "${literal_words[0]}"
+for literal in "git diff HEAD@{1}" \
+    "git diff HEAD@{1} -- README.md" \
+    "git log main@{upstream} -1" \
+    "git rev-parse @{-1}" \
+    "git log @{2.days.ago} -1" \
+    "git log HEAD@{1 -1"; do
+    run_pre "$(pre_payload_for "${literal}")"
+    assert_eq "a brace bash would not expand is left alone: ${literal}" \
+        "0" "${PRE_STATUS}"
+    assert_eq "and silent: ${literal}" "" "${PRE_ERR}${PRE_OUT}"
+done
+
+# And the line errs toward refusing. `@{1,2}` reads as revision syntax and is
+# two words to bash; `{x..x}` is a one-element sequence that rebuilds the
+# flag; a comma nested one level down still expands (`{{a,b}}` is `{a} {b}`);
+# and `${VAR}` is a runtime-built argument the hook cannot inspect, refused
+# as before. Then the two spellings found in review on #200: bash pairs a `{`
+# with the last `}` it can, so `{a},b}` expands to `a}` and `b}` and a depth
+# counter that closed at the first `}` never saw the comma; and a quoted `;`
+# inside the brace is part of the word bash expands, while the hook's
+# operator split cut the word in two before the brace test saw it. Last, a
+# `..` between two reflog entries has the refused shape and is refused,
+# though bash would leave it alone; the message names the spelling to use.
+for expanded in "git diff HEAD@{1,2}" \
+    "git diff --no-inde{x..x} /dev/null ./LICENSE" \
+    "git diff {{/dev/null,./cosign.key}}" \
+    "git diff \${SECRET} HEAD" \
+    "git diff {--src-prefix=x},--no-index} /dev/null ./cosign.key" \
+    "git log {--format=%h},--output=cosign.pub} -1" \
+    "git diff {/tmp/reference';',./cosign.key}" \
+    "git log -p --outpu{t,'t '}=cosign.pub -1" \
+    "git log HEAD@{2}..HEAD@{1}"; do
+    run_pre "$(pre_payload_for "${expanded}")"
+    assert_eq "a brace bash would expand is still refused: ${expanded}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says the shell rewrites it: ${expanded}" \
+        "${PRE_ERR}" "before git sees the words"
+done
+run_pre "$(pre_payload_for "git log HEAD@{2}..HEAD@{1}")"
+assert_contains "the reflog-range refusal names the spelling to use" \
+    "${PRE_ERR}" "HEAD~2..HEAD~1"
+
 # The refusal is scoped to a git invocation, so a brace or a `$` in some other
 # command is none of this gate's business.
 for unaffected in "awk '{print \$1}' a.txt" "jq '{a:1}' x.json" \
+    "jq '{a: .x, b: .y}' x.json" \
     "printf '%s\n' \${HOME}" "ls /tmp/{a,b}"; do
     run_pre "$(pre_payload_for "${unaffected}")"
     assert_eq "a brace outside a git invocation is untouched: ${unaffected}" \
         "0" "${PRE_STATUS}"
+done
+
+# 7b-corpus. The brace rule checked against bash itself rather than against a
+# hand-written label. Each word below is inserted verbatim into a bash script
+# -- the corpus is this file's, and the point is to hand bash the spelling an
+# agent would type -- and the NUL-separated results are counted. A word bash
+# turns into more than one is one the hook must refuse; the literal set,
+# git's `@{...}` revision syntax, must be allowed. Words in neither class are
+# only held to the first rule, so an over-refusal there is not a failure.
+# `OPERANDS` is set so `${OPERANDS}` splits into two words the way a
+# runtime-built argument would. The corpus: the literal set, the ordinary
+# expansions, the two review bypasses, quoted and escaped commas, nesting,
+# ranges, `${VAR}`, mismatched forms in both directions, braces after
+# --output, and quoted jq/awk programs that bash leaves alone.
+brace_literal_set=(
+    'HEAD@{1}'
+    'main@{upstream}'
+    '@{-1}'
+    '@{2.days.ago}'
+    'HEAD@{1'
+)
+# shellcheck disable=SC2016 # the unexpanded ${OPERANDS} is the corpus word
+brace_corpus=(
+    "${brace_literal_set[@]}"
+    'HEAD@{2}..HEAD@{1}'
+    '{a,b}'
+    '{1..3}'
+    'x{1..3}y'
+    'a{,b}'
+    '{{a,b}}'
+    '--no-inde{x,x}'
+    '--outpu{t,t}=FILE'
+    'HEAD@{1,2}'
+    '{--src-prefix=x},--no-index}'
+    '{a},b}'
+    "{/tmp/reference';',./cosign.key}"
+    '{a",",b}'
+    '{a\,b,c}'
+    '"{a,b}"'
+    "'{a,b}'"
+    '{a,b'
+    '{a,b}}'
+    '{{a,b}'
+    '${OPERANDS}'
+    '--output={a,b}'
+    '--output=x{,}'
+    "'{print \$1}'"
+    "'{a:1}'"
+    "'{a: .x, b: .y}'"
+)
+bash_word_count() {
+    OPERANDS='/dev/null ./cosign.key' bash --norc --noprofile -c \
+        'printf "%s\0" '"$1" 2>/dev/null | tr -cd '\0' | wc -c
+}
+assert_eq "the brace corpus holds at least 25 words" \
+    "0" "$(((${#brace_corpus[@]} >= 25) ? 0 : 1))"
+corpus_expanding=0
+for word in "${brace_corpus[@]}"; do
+    count="$(bash_word_count "${word}")"
+    if ((count > 1)); then
+        corpus_expanding=$((corpus_expanding + 1))
+        run_pre "$(pre_payload_for "git diff ${word}")"
+        assert_eq "bash expands it into ${count} words, so it is refused: ${word}" \
+            "2" "${PRE_STATUS}"
+        assert_contains "and the refusal says the shell rewrites it: ${word}" \
+            "${PRE_ERR}" "before git sees the words"
+    fi
+done
+assert_eq "bash expanded at least 15 corpus words, so the check was not vacuous" \
+    "0" "$(((corpus_expanding >= 15) ? 0 : 1))"
+for word in "${brace_literal_set[@]}"; do
+    assert_eq "bash leaves the literal word alone: ${word}" \
+        "1" "$(bash_word_count "${word}")"
+    run_pre "$(pre_payload_for "git log ${word} -1")"
+    assert_eq "and so does the hook: ${word}" "0" "${PRE_STATUS}"
+    assert_eq "silently: ${word}" "" "${PRE_ERR}${PRE_OUT}"
 done
 
 # 7c. the reads the allow rule exists for keep working. A hook that turned
