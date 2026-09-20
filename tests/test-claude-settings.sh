@@ -656,6 +656,47 @@ for writer in "git diff --output=cosign.pub HEAD" \
         "${PRE_ERR}" "--output=FILE"
 done
 
+# 7b''''. the same two primitives, spelled so that the words the gate reads are
+# not the words git receives. Bash expands braces, ANSI-C quotes and
+# substitutions first, so four characters rebuild both refusals above: a brace
+# makes one word into two operands, and it splits a flag name so no word here
+# matches `--output` while git still gets `--output=FILE`. These are asserted
+# against bash itself first, so the section is about what the shell does rather
+# than about a claim.
+brace_words=({/dev/null,./cosign.key})
+assert_eq "bash turns one braced word into two before git sees them" \
+    "2" "${#brace_words[@]}"
+brace_flag=(--outpu{t,t}"=FILE")
+assert_eq "and a brace inside a flag name rebuilds the flag" \
+    "--output=FILE" "${brace_flag[0]}"
+assert_eq "an ANSI-C quote rebuilds it too" "--output=FILE" \
+    --outpu$'\x74'=FILE
+
+for expanded in "git diff {/dev/null,./cosign.key}" \
+    "git diff -- {/dev/null,./cosign.key}" \
+    "git diff {,}/dev/null ./cosign.key" \
+    "git log -p --outpu{t,t}=cosign.pub -1" \
+    "git show --outpu{t,t}=.claude/settings.json HEAD" \
+    "git log -p --outpu\$'\x74'=cosign.pub -1" \
+    "git diff \$(printf '/dev/null ./cosign.key')" \
+    "git diff \`printf '/dev/null ./cosign.key'\`" \
+    "git diff \${OPERANDS}"; do
+    run_pre "$(pre_payload_for "${expanded}")"
+    assert_eq "a word the shell would rewrite is refused: ${expanded}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says the shell rewrites it: ${expanded}" \
+        "${PRE_ERR}" "before git sees the words"
+done
+
+# The refusal is scoped to a git invocation, so a brace or a `$` in some other
+# command is none of this gate's business.
+for unaffected in "awk '{print \$1}' a.txt" "jq '{a:1}' x.json" \
+    "printf '%s\n' \${HOME}" "ls /tmp/{a,b}"; do
+    run_pre "$(pre_payload_for "${unaffected}")"
+    assert_eq "a brace outside a git invocation is untouched: ${unaffected}" \
+        "0" "${PRE_STATUS}"
+done
+
 # 7c. the reads the allow rule exists for keep working. A hook that turned
 # `git diff` back into a prompt would be traded for the one it replaced.
 # Two operands are the plain-file form unless both resolve as revisions, so
