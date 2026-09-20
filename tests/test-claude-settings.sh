@@ -897,6 +897,47 @@ run_pre "$(pre_payload_for "git diff HEAD >cosign.{pub,key}")"
 assert_contains "an expansion in the target is reported before the redirection" \
     "${PRE_ERR}" "before git sees the words"
 
+# 7b''''''. the word that names a command has to be literal. Every scope
+# above opens at a literal `git` word, and the allow rule matched the string
+# on its literal prefix; `git status; G=git; $G diff /dev/null ./cosign.key`
+# was invisible to both in zfs-kinoite-complex#216 (the same hook). Here the
+# `$` latch to the end of the string already caught that spelling once a
+# `git` word had been seen, and left `$G diff ...` and `G=git; $G diff ...`
+# with no git word ahead of them to the permission layer. The name is the
+# first word after a separator (or of the string) that is not an assignment,
+# a keyword that takes a command, or a wrapper that runs its arguments; one
+# carrying a `$` or a backtick, or an unquoted backtick opening there, is
+# refused wherever it stands. An assignment before a literal name is fine.
+for built in "git status; G=git; \$G diff /dev/null ./cosign.key" \
+    "git status; \$(printf git) diff /dev/null ./cosign.key" \
+    "git status; \`echo git\` diff x" \
+    "\`echo git\` diff x" \
+    "\$G diff /dev/null ./cosign.key" \
+    "G=git; \$G diff /dev/null ./cosign.key" \
+    "git status && \"\$(printf git)\" diff x" \
+    "git status; { \$G diff x; }" \
+    "git status; exec \$G diff x" \
+    "git status; env G=git \$G diff x" \
+    "git status | \$G diff x"; do
+    run_pre "$(pre_payload_for "${built}")"
+    assert_eq "a command name built by an expansion is refused: ${built}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says to spell the name literally: ${built}" \
+        "${PRE_ERR}" "Spell every command name literally"
+done
+for literal in "git status; git diff HEAD@{1}" \
+    "FOO=bar git diff HEAD" \
+    "X=\$(date); git diff HEAD" \
+    "echo \$HOME; git diff HEAD" \
+    "echo \`date\`; git diff HEAD" \
+    "if [ -n \"\$x\" ]; then git diff HEAD; fi" \
+    "ls > out; git status" \
+    "env FOO=\$x git diff HEAD"; do
+    run_pre "$(pre_payload_for "${literal}")"
+    assert_eq "a literal command name is left alone: ${literal}" \
+        "0" "${PRE_STATUS}"
+done
+
 # The `$` test is the one refusal that still reads to the end of the string:
 # it runs on the normalized words, whose quotes are gone, and `in_git` holds
 # there so a quoted `|` inside an argument cannot end the invocation early.
