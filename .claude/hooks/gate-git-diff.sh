@@ -88,7 +88,9 @@
 # The shell has its own spelling of the same write, and it is the older one:
 # `git diff HEAD >cosign.pub` truncates the file before git starts, and
 # `>>`, `>|`, `&>`, `&>>`, `2>err`, `>&file` and `<>file` each open a path
-# for writing the same way. Nothing in the allow rule sees it -- the rule
+# for writing the same way, wherever in the command they are written --
+# `>cosign.pub git diff HEAD` is the same command as `git diff HEAD
+# >cosign.pub`. Nothing in the allow rule sees it -- the rule
 # matches a `git diff` prefix -- and the operand scan must not, because a
 # redirection's target is the shell's word, not git's (counting it refused
 # `git diff HEAD 2>&1`). So an output redirection inside a git invocation is
@@ -105,6 +107,21 @@
 # two or more words where any one lies outside the working tree. The write
 # primitive needs none of that machinery: `--output` anywhere in a git
 # invocation is refused outright.
+#
+# One more rewrite sits between the typed word and the path git opens: an
+# unquoted leading `~` is `$HOME` to bash and a literal `~` to a scan of the
+# typed words, and `realpath -m -s` resolved that literal to `<checkout>/~/...`,
+# an inside path. So `git diff -- ~/.aws/credentials ~/.bashrc` counted two
+# operands, found both inside the working tree, and exited 0, and bash then
+# handed git two files from the home directory, which it printed. The
+# ShellCheck operand scan below already refuses that word (see
+# `word_bash_would_rewrite`); the git scope now does the same. A word of a
+# git invocation that begins with an unquoted `~` (`~/...`, `~user/...`, `~`
+# alone) is refused rather than expanded (see `TILDE_MSG`), and
+# `path_inside_worktree` counts a leading `~` as outside as well, so neither
+# operand scan can be talked into the same answer by another route. A
+# quoted or escaped tilde (`'~/x'`, `\~/x`) is a literal to bash and is not
+# refused; nor is a tilde inside a word (`HEAD~1`).
 #
 # Git is not the only allow-listed command that opens a file it is pointed at.
 # `Bash(shellcheck:*)` is allowed with no prompt as well, and ShellCheck prints
@@ -163,6 +180,9 @@ EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside a git invocation makes the shell open its target for writing before git runs -- `git diff HEAD >cosign.pub` truncates the trust anchor, and `>> .claude/settings.json` or `2> .claude/hooks/gate-git-diff.sh` reach any file this uid can write -- and the allow rule for git diff, git log and git show sees none of it. These commands print to stdout; read that instead. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) are not affected, and a redirection on another command of the same string is that command'"'"'s own.'
+
+# shellcheck disable=SC2016 # the literal $HOME is what the reader has to see
+TILDE_MSG='blocked: an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to this gate, so the path checked here is not the path git would open: `git diff -- ~/.aws/credentials ~/.bashrc` resolved both operands inside the working tree and printed both files out of the home directory as a plain-file diff, past the Read(...) deny rules in .claude/settings.json. A word of a git invocation that begins with an unquoted ~ (~/..., ~user/..., or ~ alone) is refused rather than expanded. Spell the path out in full, relative to the checkout. A tilde inside a word (HEAD~1) and a quoted or escaped one are literals to bash and are not affected.'
 
 # shellcheck disable=SC2016 # the literal $G and $(...) are what the reader has to see
 CMD_MSG='blocked: the name of a command in this string is not spelled literally -- it is built by an expansion (`$G diff ...`, `$(printf git) diff ...`, a backtick in command position), by a brace (`{,git} diff ...`), or by a glob (`g?t`, `/usr/bin/g[i]t`) -- so neither this gate nor the allow rule that matched the string'"'"'s literal prefix can tell which command bash will run, and `G=git; $G diff /dev/null ./cosign.key` runs the plain-file read this gate exists to refuse. Spell every command name literally, and drop a variable assignment that only exists to build one. After a wrapper such as command, env, exec, timeout or xargs the same holds for every word of that command, since the wrapper'"'"'s own options are not modelled here. A literal name after an assignment (`FOO=bar git diff HEAD`) is fine, and a literal path to git (`/usr/bin/git diff`) is read as git. env -S (--split-string) splits a quoted string into a command this gate never sees and is refused outright.'
@@ -509,9 +529,25 @@ redirection_writes_a_path() {
 # to the simple command it is written in, so `git diff HEAD >cosign.pub` is
 # git's and `echo x >out; git diff HEAD` and `git diff HEAD | jq . >out` are
 # not -- those are decided by whatever rule covers `echo` and `jq`, the way
-# `git diff HEAD | tee cosign.pub` already is. A brace or expansion found
-# anywhere in the string wins the refusal: it means the words here are not
-# the words git would receive, and that message is the one to act on first.
+# `git diff HEAD | tee cosign.pub` already is. Bash also lets a redirection
+# *precede* the command name -- `>cosign.pub git diff HEAD` is the same
+# command as `git diff HEAD >cosign.pub`, and `git status; >cosign.pub git
+# diff HEAD` truncated the trust anchor while a scope that opened at the
+# `git` word had not yet seen the target (review on arch-bootc#317). So a
+# writing target seen before any `git` word of its command is carried until
+# the command's name is known, and refused if that name turns out to be git;
+# it is dropped at the next separator, so `>out echo x; git diff HEAD` is
+# still echo's own. A brace or expansion found anywhere in the string wins
+# the refusal: it means the words here are not the words git would receive,
+# and that message is the one to act on first.
+#
+# The git scope also refuses a word that begins with an unquoted `~`: bash
+# expands it to `$HOME` before git runs, and the operand scan below, which
+# reads the quote-stripped spelling, resolved the literal `~` inside the
+# checkout and let `git diff -- ~/.aws/credentials ~/.bashrc` through. The
+# test is on the word as typed, so `'~/x'` and `\~/x`, which bash leaves
+# alone, are not refused. A redirection's target is not a word of git's and
+# is decided above.
 #
 # A `shellcheck` invocation is scoped the same way and for the same reason:
 # its operands are checked below as the words they are typed as, and
@@ -564,6 +600,7 @@ word_bash_would_rewrite() {
 raw_in_git=0
 raw_in_shellcheck=0
 writing_redirect=0
+prefix_writing_redirect=0 # a writing target seen before this command's git word
 for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
   if [[ "${kinds[idx]}" == sep ]]; then
     # A backtick is split as a separator rather than kept in its word, so the
@@ -576,6 +613,7 @@ for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
     fi
     raw_in_git=0
     raw_in_shellcheck=0
+    prefix_writing_redirect=0
     continue
   fi
   # Refused wherever it stands, and not only inside a shellcheck scope: the
@@ -588,10 +626,16 @@ for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
       [[ "${raw_word}" == '<(' || "${raw_word}" == '>(' ]]; then
       refuse "${EXPAND_MSG}"
     fi
+    if [[ "${kinds[idx]}" == word && "${raw_word}" == '~'* ]]; then
+      refuse "${TILDE_MSG}"
+    fi
     if [[ "${kinds[idx]}" == target ]] &&
       redirection_writes_a_path "${redirects[idx]}" "${words[idx]}"; then
       writing_redirect=1
     fi
+  elif [[ "${kinds[idx]}" == target ]] &&
+    redirection_writes_a_path "${redirects[idx]}" "${words[idx]}"; then
+    prefix_writing_redirect=1
   fi
   if ((raw_in_shellcheck)) && [[ "${kinds[idx]}" == word ]]; then
     if brace_would_expand "${raw_word}" ||
@@ -601,7 +645,10 @@ for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
       refuse "${SHELLCHECK_EXPAND_MSG}"
     fi
   fi
-  [[ "${kinds[idx]}" == word && "${words[idx]}" == "git" ]] && raw_in_git=1
+  if [[ "${kinds[idx]}" == word && "${words[idx]}" == "git" ]]; then
+    raw_in_git=1
+    ((prefix_writing_redirect)) && writing_redirect=1
+  fi
   [[ "${kinds[idx]}" == word && "${words[idx]}" == "shellcheck" ]] && raw_in_shellcheck=1
 done
 ((writing_redirect)) && refuse "${REDIRECT_MSG}"
@@ -625,13 +672,15 @@ esac
 # plain-file mode, and a gate that resolved the path first saw a tidy in-tree
 # path and allowed it -- reading a denied path with two operands that both look
 # local. So an absolute path, any `..` component, and the stdin operand `-` each
-# count as outside here, and only a plain relative path is resolved at all.
-# Anything this cannot decide -- no working tree, no realpath on the host --
-# counts as outside too, so the gate refuses rather than guesses.
+# count as outside here, and only a plain relative path is resolved at all. So
+# does a leading `~`: to bash that is a home directory, never a path under
+# this checkout, and resolving the literal put `~/.aws/credentials` inside
+# the tree. Anything this cannot decide -- no working tree, no realpath on
+# the host -- counts as outside too, so the gate refuses rather than guesses.
 path_inside_worktree() {
   local candidate toplevel
   case "$1" in
-  - | /*) return 1 ;;
+  - | /* | '~'*) return 1 ;;
   ../* | */../* | */..) return 1 ;;
   ..) return 1 ;;
   *) ;;
