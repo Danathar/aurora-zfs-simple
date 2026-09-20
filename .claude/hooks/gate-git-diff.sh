@@ -49,7 +49,10 @@
 #      stripping below leaves `--outpu$'\x74'=FILE` as `--outpu$x74=FILE`
 #      while git receives `--output=FILE`. Command substitution supplies
 #      operands this scan never counted at all. Those characters are refused
-#      inside a git invocation rather than expanded; see `EXPAND_MSG`.
+#      inside a git invocation rather than expanded -- every `$` and
+#      backtick, and a brace bash would expand; one it would not, git's own
+#      `HEAD@{1}` or `main@{upstream}`, is left alone. See
+#      `brace_would_expand` and `EXPAND_MSG`.
 #
 # The write primitive: `--output=FILE` sends the diff git would have printed to
 # a path instead of stdout, so an allow-listed, unprompted call overwrites any
@@ -100,7 +103,7 @@ DIFF_MSG='blocked: this git diff would compare paths as plain files (git'"'"'s -
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal
 # text -- $'\x74' and $(...) are what the reader has to see, not what this
 # script should expand.
-EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before git sees the words, and this gate reads the words as typed, so four characters rebuild both spellings it refuses: `git diff {/dev/null,./cosign.key}` passes the operand scan as one word and reaches git as two operands (the plain-file read), `--outpu{t,t}=FILE` and `--outpu$'"'"'\x74'"'"'=FILE` match no word here and reach git as --output=FILE, and `git diff $(...)` supplies operands this scan never saw. Expanding them correctly means reimplementing bash inside a hook; refusing them costs nothing, because no git command in this repository is spelled with one. Write the command out in full. Only words of a git invocation are affected: awk and jq programs elsewhere in the string are not.'
+EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before git sees the words, and this gate reads the words as typed, so four characters rebuild both spellings it refuses: `git diff {/dev/null,./cosign.key}` passes the operand scan as one word and reaches git as two operands (the plain-file read), `--outpu{t,t}=FILE` and `--outpu$'"'"'\x74'"'"'=FILE` match no word here and reach git as --output=FILE, and `git diff $(...)` supplies operands this scan never saw. Expanding them correctly means reimplementing bash inside a hook, so a brace bash would expand -- one holding a comma or a .. range -- and every $ and backtick are refused instead. Write the command out in full. A brace with neither, such as HEAD@{1} or main@{upstream}, is a literal to bash and is not refused. Only words of a git invocation are affected: awk and jq programs elsewhere in the string are not.'
 
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
@@ -169,6 +172,32 @@ path_inside_worktree() {
   [[ "${candidate}" == "${toplevel}" || "${candidate}" == "${toplevel}"/* ]]
 }
 
+# Bash's own rule, and only the half of it that matters here: a brace is
+# expanded when a comma or a `..` sequence sits inside it -- `{a,b}`, `{1..9}`,
+# `a{,b}`, `{{a,b}}` -- and is a literal otherwise, which is what git's
+# `HEAD@{1}`, `main@{upstream}` and `@{-1}` rely on. This expands nothing; it
+# asks whether bash would, and it errs toward yes. The comma or `..` is looked
+# for at any depth, since `{{a,b}}` is `{a} {b}` to bash; a `{` that never
+# closes counts; a quoted brace bash would leave alone was unquoted by the
+# normalization above and counts too; and `${VAR}` counts, though the `$` in
+# it is refused on its own below. Every one of those over-counts is a refusal.
+# What it never does is call a word literal that bash would rewrite: every
+# expansion bash performs has a comma or `..` between a `{` and a `}`.
+brace_would_expand() {
+  local text="$1" depth=0 i
+  for ((i = 0; i < ${#text}; i++)); do
+    case "${text:i:1}" in
+    '{') depth=$((depth + 1)) ;;
+    '}') ((depth > 0)) && depth=$((depth - 1)) ;;
+    ',') ((depth > 0)) && return 0 ;;
+    '.') ((depth > 0)) && [[ "${text:i+1:1}" == "." ]] && return 0 ;;
+    '$') [[ "${text:i+1:1}" == "{" ]] && return 0 ;;
+    *) ;;
+    esac
+  done
+  return 1
+}
+
 seen_git=0
 in_git=0
 in_diff=0
@@ -191,14 +220,20 @@ for word in "${words[@]+"${words[@]}"}"; do
   # saw. Four characters rebuild both refusals.
   #
   # They are refused rather than expanded. Correct expansion means
-  # reimplementing bash in a hook -- nesting, `{1..9}` sequences, the rule
-  # that a brace with no comma and no range is a literal, word splitting on
-  # $IFS -- and a half-right expansion is a gate that disagrees with the shell
-  # in some other direction. A refusal cannot be half-right, and it costs
-  # nothing here: no git command in this repository is spelled with one of
-  # these, and a git argument built at runtime was already outside what this
-  # hook can vouch for, so refusing it turns a silent pass into a visible
-  # refusal.
+  # reimplementing bash in a hook -- nesting, `{1..9}` sequences, quoting,
+  # word splitting on $IFS -- and a half-right expansion is a gate that
+  # disagrees with the shell in some other direction. A refusal cannot be
+  # half-right, and a git argument built at runtime was already outside what
+  # this hook can vouch for, so refusing it turns a silent pass into a
+  # visible refusal. It is not every brace, though: bash leaves a brace alone
+  # unless a comma or a `..` range sits inside it, and git's own `@{...}`
+  # revision syntax -- `HEAD@{1}`, `main@{upstream}`, `@{-1}`,
+  # `@{2.days.ago}` -- is spelled with exactly that literal form. Refusing it
+  # blocks the ordinary diff against the previous commit for no gain, so the
+  # brace test is `brace_would_expand`: a comma or `..` somewhere inside a
+  # brace, which every expansion bash performs must have, and nothing bash
+  # would leave alone needs. `$` and a backtick stay refused as typed: neither
+  # has a literal form git relies on.
   #
   # Scoped to `in_git`, the same latch `--output` uses, so `awk '{print $1}'`
   # and `jq '{a:1}'` are untouched in a command string that never invokes git.
@@ -209,7 +244,12 @@ for word in "${words[@]+"${words[@]}"}"; do
   # rule and prompts on its own.
   if ((in_git)); then
     case "${word}" in
-    *['{}$`']*) refuse "${EXPAND_MSG}" ;;
+    *['$`']*) refuse "${EXPAND_MSG}" ;;
+    *[{}]*)
+      if brace_would_expand "${word}"; then
+        refuse "${EXPAND_MSG}"
+      fi
+      ;;
     *) ;;
     esac
   fi

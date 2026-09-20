@@ -688,6 +688,47 @@ for expanded in "git diff {/dev/null,./cosign.key}" \
         "${PRE_ERR}" "before git sees the words"
 done
 
+# The brace half of that refusal is drawn where bash draws it. Bash expands a
+# brace only when a comma or a `..` range sits inside it; any other brace is
+# a literal, and git's own `@{...}` revision syntax is spelled with exactly
+# that. `git diff HEAD@{1}` is the ordinary diff against the previous commit
+# and touches neither primitive, so a gate that refused it was a false
+# positive with a real cost. Asserted against bash first, as above. One
+# operand each, so nothing here depends on the reflog this checkout happens
+# to have; the last case pins that a `..` *between* two literal braces is not
+# a range inside one.
+# shellcheck disable=SC1083 # the literal brace is the fact being asserted
+literal_words=(HEAD@{1})
+assert_eq "bash leaves a brace with no comma and no range alone" \
+    "HEAD@{1}" "${literal_words[0]}"
+for literal in "git diff HEAD@{1}" \
+    "git diff HEAD@{1} -- README.md" \
+    "git log main@{upstream} -1" \
+    "git rev-parse @{-1}" \
+    "git log @{2.days.ago} -1" \
+    "git log HEAD@{2}..HEAD@{1}"; do
+    run_pre "$(pre_payload_for "${literal}")"
+    assert_eq "a brace bash would not expand is left alone: ${literal}" \
+        "0" "${PRE_STATUS}"
+    assert_eq "and silent: ${literal}" "" "${PRE_ERR}${PRE_OUT}"
+done
+
+# And the line errs toward refusing. `@{1,2}` reads as revision syntax and is
+# two words to bash; `{x..x}` is a one-element sequence that rebuilds the
+# flag; a comma nested one level down still expands (`{{a,b}}` is `{a} {b}`);
+# and `${VAR}` is a runtime-built argument the hook cannot inspect, refused
+# as before.
+for expanded in "git diff HEAD@{1,2}" \
+    "git diff --no-inde{x..x} /dev/null ./LICENSE" \
+    "git diff {{/dev/null,./cosign.key}}" \
+    "git diff \${SECRET} HEAD"; do
+    run_pre "$(pre_payload_for "${expanded}")"
+    assert_eq "a brace bash would expand is still refused: ${expanded}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says the shell rewrites it: ${expanded}" \
+        "${PRE_ERR}" "before git sees the words"
+done
+
 # The refusal is scoped to a git invocation, so a brace or a `$` in some other
 # command is none of this gate's business.
 for unaffected in "awk '{print \$1}' a.txt" "jq '{a:1}' x.json" \
