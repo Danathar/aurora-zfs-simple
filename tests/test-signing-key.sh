@@ -367,7 +367,12 @@ assert_contains "with the flag that makes the policy entry above load-bearing" \
 # still verifies against this file.
 
 nightly_text="$(cat "${NIGHTLY_YML}")"
-assert_contains "the nightly workflow still runs on a schedule" "${nightly_text}" "schedule:"
+# The trigger as a key of its own, not as a substring: `_schedule:` contains
+# `schedule:` and would satisfy a looser check while triggering nothing.
+assert_eq "the nightly workflow still runs on a schedule" "1" \
+    "$(grep -cE '^[[:space:]]+schedule:[[:space:]]*$' "${NIGHTLY_YML}")"
+assert_eq "with exactly one cron entry" "1" \
+    "$(grep -cE "^[[:space:]]+- cron: " "${NIGHTLY_YML}")"
 assert_contains "it still resolves the published :latest" "${nightly_text}" '${IMAGE_REF}:latest'
 assert_contains "and verifies it against the committed key" \
     "${nightly_text}" "cosign verify --key cosign.pub"
