@@ -1631,12 +1631,22 @@ for noexec in "bash -n +n -c 'cat ./cosign.key'" \
     assert_contains "and the refusal names the flag: ${noexec}" \
         "${PRE_ERR}" "+n"
 done
+# A glob is the third rebuild (review on #211): beside a file named `+n`,
+# `?n` reaches bash as `+n`. Shown first, in the throwaway directory.
+touch "${GATED_WORK}/+n"
+glob_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    "bash -n ?n -c 'printf RAN-VIA-GLOB'" 2>/dev/null </dev/null || true)"
+assert_eq "bash -n ?n -c COMMAND runs the command when a file named +n exists" \
+    "RAN-VIA-GLOB" "${glob_out}"
 # shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
 for rebuilt in "bash -n {+,+}n -c id" \
     'bash -n $X tests/run-tests.sh' \
     'bash -n $(printf +n) -c id' \
     'bash -n `printf +n` -c id' \
-    "bash -n --norc {+,+}n -c id"; do
+    "bash -n --norc {+,+}n -c id" \
+    "bash -n ?n -c id" \
+    "bash -n [+]n -c id" \
+    "bash -n tests/*.sh"; do
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "an expansion in a bash -n invocation is refused: ${rebuilt}" \
         "2" "${PRE_STATUS}"
@@ -1647,6 +1657,7 @@ done
 for plain in "bash -n tests/run-tests.sh" \
     "bash -n build_files/post-check.sh tests/run-tests.sh" \
     "bash -n -- tests/run-tests.sh" \
+    "bash -n '?n'" \
     "bash +n -c id" \
     'echo $x; bash -n tests/run-tests.sh'; do
     run_pre "$(pre_payload_for "${plain}")"

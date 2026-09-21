@@ -173,8 +173,9 @@
 # script without running it, and a later `+n` or `+o noexec` on the same
 # command line turns that back off, so `bash -n +n -c 'cat ./cosign.key'`
 # ran the command under the linter's allow rule. A word beginning with `+`
-# in a `bash -n` invocation is refused, and so is a brace, a `$` or a
-# backtick in one of its words, since `{+,+}n` reaches bash as `+n`.
+# in a `bash -n` invocation is refused, and so is a brace, a glob, a `$` or
+# a backtick in one of its words, since `{+,+}n` reaches bash as `+n` and so
+# does `?n` beside a file of that name.
 #
 # What it still cannot see, stated rather than implied: a command that hides a
 # git invocation behind another interpreter (`sh -c ...`), one that changes
@@ -226,7 +227,7 @@ GATED_REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FI
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
 # shellcheck disable=SC2016 # the literal ${VAR} and $(...) are what the reader has to see
-BASH_EXPAND_MSG='blocked: a brace bash could expand, a $ or a backtick in a word of a bash -n invocation is refused rather than expanded, for the reason EXPAND_MSG gives for git: bash rewrites the words before the inner bash sees them, so `{+,+}n` matches no spelling here and reaches bash as +n, which turns noexec off, and $(...), ${VAR} and a backtick supply a word this gate never saw. Write the command out in full.'
+BASH_EXPAND_MSG='blocked: a brace bash could expand, an unquoted glob character (*, ? or a bracket), an unquoted leading ~, a $ or a backtick in a word of a bash -n invocation is refused rather than expanded, for the reason EXPAND_MSG gives for git: bash rewrites the words before the inner bash sees them, so `{+,+}n` matches no spelling here and reaches bash as +n, which turns noexec off, `?n` does the same when a file named +n exists in the working directory, and $(...), ${VAR} and a backtick supply a word this gate never saw. Write the command out in full.'
 
 # Fail closed. This gate stands in front of the pre-approved commands that can
 # read a denied path, so a missing dependency must not quietly disable it:
@@ -764,8 +765,9 @@ done
 # option back off, so `bash -n +n -c 'cat ./cosign.key'` ran the command --
 # the allow rule matches the `bash -n` prefix and the `+n` is the rest of the
 # string. A word beginning with `+` in a `bash -n` invocation is refused, and
-# so is a brace, a `$` or a backtick in one of its words, because `{+,+}n` is
-# the rebuild that reopened the git half of this gate twice.
+# so is a brace, a glob, a `$` or a backtick in one of its words, because
+# `{+,+}n` is the rebuild that reopened the git half of this gate twice and
+# `?n` beside a file named `+n` is the same rebuild by pathname expansion.
 #
 # The prefixes below are the allow rows with a trailing `:*` other than git's,
 # which the scan above already covers (an output redirection is refused in
@@ -875,7 +877,12 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   fi
   ((cmd_bash && cmd_gated)) || continue
   [[ "${words[idx]}" == '+'* ]] && refuse "${BASH_NOEXEC_MSG}"
-  if brace_would_expand "${raw_words[idx]}" || [[ "${raw_words[idx]}" == *'$'* ]]; then
+  # A glob is the third rebuild: with a file named `+n` in the working
+  # directory, `?n` and `[+]n` reach bash as `+n` (review on
+  # aurora-zfs-simple#211), so the rewrite test the shellcheck operands are
+  # held to applies here as well.
+  if brace_would_expand "${raw_words[idx]}" || [[ "${raw_words[idx]}" == *'$'* ]] ||
+    word_bash_would_rewrite "${raw_words[idx]}"; then
     refuse "${BASH_EXPAND_MSG}"
   fi
 done
