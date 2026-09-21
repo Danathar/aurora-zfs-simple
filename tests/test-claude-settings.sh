@@ -1547,6 +1547,33 @@ printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim4"
     'bash -n ./no-such-script.sh $(printf x >victim4)' >/dev/null 2>&1 </dev/null || true)
 assert_not_contains "a command substitution argument writes the file its body names" \
     "$(cat "${GATED_WORK}/victim4")" "ORIGINAL-CONTENT"
+# A here-document with an unquoted delimiter is expanded before the command
+# runs, so a substitution on a body line runs under the prefix (review on
+# arch-bootc#322 and #211).
+printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim5"
+(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    $'bash -n <<EOF\n$(printf x >victim5)\nEOF' >/dev/null 2>&1 </dev/null || true)
+assert_not_contains "a substitution on the body line of an unquoted heredoc writes the file it names" \
+    "$(cat "${GATED_WORK}/victim5")" "ORIGINAL-CONTENT"
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
+for heredoc in $'podman images <<EOF\necho $(printf x >cosign.pub)\nEOF' \
+    $'gh pr list <<EOF\nplain text\nEOF' \
+    $'bash -n <<-EOF\n\tx\nEOF' \
+    $'git status; skopeo inspect docker://x <<EOF\nx\nEOF'; do
+    run_pre "$(pre_payload_for "${heredoc}")"
+    assert_eq "an unquoted here-document on an allow-listed command is refused: ${heredoc//$'\n'/ | }" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says to quote the delimiter: ${heredoc//$'\n'/ | }" \
+        "${PRE_ERR}" "Quote the delimiter"
+done
+for heredoc in $'bash -n <<\'EOF\'\necho hi\nEOF' \
+    $'bash -n <<"EOF"\necho $(id)\nEOF' \
+    $'cat <<EOF\nplain\nEOF; gh pr list' \
+    "podman images <in"; do
+    run_pre "$(pre_payload_for "${heredoc}")"
+    assert_eq "a quoted here-document, or one on another command, is left alone: ${heredoc//$'\n'/ | }" \
+        "0" "${PRE_STATUS}"
+done
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
 for substituted in "podman images >(cat >cosign.pub)" \
     ">(cat >cosign.pub) podman images" \
@@ -1558,7 +1585,10 @@ for substituted in "podman images >(cat >cosign.pub)" \
     'podman images $(printf x >cosign.pub)' \
     'podman images `printf x >cosign.pub`' \
     'gh run view 1 --log $(date) >cosign.pub' \
-    'podman images < <(printf x >cosign.pub)'; do
+    'podman images < <(printf x >cosign.pub)' \
+    'podman images <"$(printf x >cosign.pub)"' \
+    'gh pr list <<<"$(printf x >cosign.pub)"' \
+    'podman images <`printf in`'; do
     run_pre "$(pre_payload_for "${substituted}")"
     assert_eq "a substitution in an allow-listed command is refused: ${substituted}" \
         "2" "${PRE_STATUS}"

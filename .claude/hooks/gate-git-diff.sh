@@ -226,6 +226,9 @@ GATED_REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FI
 # shellcheck disable=SC2016 # the literal $(...) and <( are what the reader has to see
 GATED_SUBST_MSG='blocked: a substitution -- `$(...)`, a backtick, `<(...)` or `>(...)` -- in an allow-listed command runs the command inside it as part of a string the allow rule approved on its prefix alone, and that inner command is not held to any rule: `df -T >(cat >cosign.pub)` and `podman images $(printf x >cosign.pub)` truncate the trust anchor from inside the substitution while the command prints as usual. It is refused in these commands the way it is in a git or shellcheck invocation. Write the inner command as a command of its own.'
 
+# shellcheck disable=SC2016 # the literal $(...) and <<EOF are what the reader has to see
+GATED_HEREDOC_MSG='blocked: a here-document with an unquoted delimiter (`<<EOF`) on an allow-listed command is expanded by bash before the command runs, so a `$(...)` or a backtick on any line of its body runs as part of the string the allow rule approved on its prefix, and this gate reads those lines as commands of their own: `df -T <<EOF` followed by a `$(printf x >cosign.pub)` line writes the file while df prints as usual. Quote the delimiter (`<<'"'"'EOF'"'"'`) so the body is literal, or pass the input another way.'
+
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
@@ -863,6 +866,7 @@ check_gated_command() {
   # A shellcheck invocation has its own scan for this, with the message that
   # names the operand; that one is left to say it.
   ((cmd_gated && cmd_subst)) && [[ "${cmd_prefix}" != shellcheck* ]] && refuse "${GATED_SUBST_MSG}"
+  ((cmd_gated && cmd_heredoc)) && refuse "${GATED_HEREDOC_MSG}"
   return 0
 }
 
@@ -870,6 +874,7 @@ reset_command() {
   cmd_prefix=''
   cmd_writes=0
   cmd_subst=0
+  cmd_heredoc=0
   cmd_bash=0
   cmd_named=0
   cmd_gated=0
@@ -882,7 +887,8 @@ reset_command() {
 # after it belongs to the same command until a separator.
 cmd_prefix='' # the words so far, space-joined, while a prefix is still possible
 cmd_writes=0  # a redirection in this command opens a path for writing
-cmd_subst=0   # a process substitution stands in this command
+cmd_subst=0   # a substitution stands in this command, or in a target of it
+cmd_heredoc=0 # this command reads a here-document bash expands
 cmd_bash=0    # its name is bash, so the +n and expansion rules apply once gated
 cmd_named=0   # the name has been seen; every later word belongs to it
 cmd_gated=0   # its leading words matched one of GATED_PREFIXES
@@ -916,13 +922,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     if [[ "${words[idx]}" == '$(' ]] ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
-      cmd_stack+=("${cmd_writes} ${cmd_subst} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_prefix}")
+      cmd_stack+=("${cmd_writes} ${cmd_subst} ${cmd_heredoc} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_prefix}")
       reset_command
       continue
     fi
     if [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#cmd_stack[@]})); then
       check_gated_command
-      read -r cmd_writes cmd_subst cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
+      read -r cmd_writes cmd_subst cmd_heredoc cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
@@ -936,8 +942,20 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   target)
     redirection_writes_a_path "${redirects[idx]}" "${words[idx]}" && cmd_writes=1
     # `df -T < <(printf x >cosign.pub)`: the substitution is a target, and
-    # its body still runs (review on arch-bootc#322).
+    # its body still runs (review on arch-bootc#322). So does one quoted
+    # into the target of an input redirection or a here-string
+    # (`gh pr list <"$(printf x >cosign.pub)"`, review on
+    # aurora-zfs-simple#211): bash expands the target before the command.
     [[ "${words[idx]}" == '<(' || "${words[idx]}" == '>(' ]] && cmd_subst=1
+    [[ "${raw_words[idx]}" == *'$'* || "${raw_words[idx]}" == *'`'* ]] && cmd_subst=1
+    # A here-document with an unquoted delimiter is expanded before the
+    # command runs, and its body lies on the lines after this one, which
+    # the scan reads as commands of their own: `df -T <<EOF` followed by a
+    # `$(printf x >cosign.pub)` line writes the file (review on
+    # arch-bootc#322). One with a quoted delimiter (`<<'EOF'`) is literal.
+    if [[ "${redirects[idx]}" == '<<' && "${raw_words[idx]}" != *[\'\"\\]* ]]; then
+      cmd_heredoc=1
+    fi
     continue
     ;;
   *) ;;
