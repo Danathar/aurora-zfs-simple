@@ -1525,6 +1525,33 @@ printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim2"
     'bash -n ./no-such-script.sh 2> >(cat >victim2); wait' >/dev/null 2>&1 </dev/null || true)
 assert_not_contains "a redirection onto a process substitution writes the file the substitution names" \
     "$(cat "${GATED_WORK}/victim2")" "ORIGINAL-CONTENT"
+# A process substitution as an ordinary argument runs its body as part of the
+# approved string, and the body is held to no rule; and a wrapper's option
+# before the name (`command -p bash -n +n ...`) is still that command
+# (review on arch-bootc#322, the same hook).
+printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim3"
+(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    'bash -n ./no-such-script.sh >(cat >victim3); wait' >/dev/null 2>&1 </dev/null || true)
+assert_not_contains "a process substitution argument writes the file its body names" \
+    "$(cat "${GATED_WORK}/victim3")" "ORIGINAL-CONTENT"
+wrapper_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    "command -p bash -n +n -c 'printf RAN-BEHIND-WRAPPER'" 2>/dev/null </dev/null || true)"
+assert_eq "command -p bash -n +n -c COMMAND runs the command behind the wrapper's option" \
+    "RAN-BEHIND-WRAPPER" "${wrapper_out}"
+# shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
+for substituted in "podman images >(cat >cosign.pub)" \
+    ">(cat >cosign.pub) podman images" \
+    "gh pr list <(true)" \
+    "bash -n <(printf x >written)" \
+    "bash -n >(cat) tests/run-tests.sh" \
+    "git status; skopeo inspect docker://x >(tee cosign.pub)" \
+    'echo $(podman images >(cat >cosign.pub))'; do
+    run_pre "$(pre_payload_for "${substituted}")"
+    assert_eq "a process substitution in an allow-listed command is refused: ${substituted}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the substitution: ${substituted}" \
+        "${PRE_ERR}" "process substitution"
+done
 
 # 9b. the list of gated commands lives in the hook; this is what keeps it from
 # drifting. The commands are derived from the settings file rather than
@@ -1580,7 +1607,10 @@ for writer in "shellcheck tests/run-tests.sh >cosign.pub" \
     "shellcheck tests/run-tests.sh 2>&1 | tee x; gh pr list >out" \
     "shellcheck tests/run-tests.sh > >(cat >cosign.pub)" \
     "podman images >>(tee cosign.pub)" \
-    "gh pr list 2> >(cat >cosign.pub)"; do
+    "gh pr list 2> >(cat >cosign.pub)" \
+    "shellcheck tests/run-tests.sh >cosign.pub # a comment after the write" \
+    "shellcheck tests/run-tests.sh '#' >cosign.pub" \
+    "command -p shellcheck tests/run-tests.sh >cosign.pub"; do
     run_pre "$(pre_payload_for "${writer}")"
     assert_eq "an output redirection inside an allow-listed command is refused: ${writer}" \
         "2" "${PRE_STATUS}"
@@ -1627,7 +1657,12 @@ for unlisted in "echo x >cosign.pub" \
     "bash -n tests/run-tests.sh; { bash -n missing.sh; } >cosign.pub" \
     "(shellcheck tests/run-tests.sh) >cosign.pub" \
     "echo x > >(cat >cosign.pub)" \
-    "cat < <(gh pr list)"; do
+    "cat < <(gh pr list)" \
+    "cat <(podman images)" \
+    "command -v shellcheck" \
+    "shellcheck tests/run-tests.sh # output > file" \
+    "bash -n tests/run-tests.sh # +n" \
+    "git diff HEAD # > cosign.pub"; do
     run_pre "$(pre_payload_for "${unlisted}")"
     assert_eq "a redirection on a command no allow rule covers is left alone: ${unlisted}" \
         "0" "${PRE_STATUS}"
@@ -1643,7 +1678,9 @@ for noexec in "bash -n +n -c 'cat ./cosign.key'" \
     "bash -n tests/run-tests.sh +n" \
     "bash -n +nv -c 'id'" \
     'bash -n "+n" -c id' \
-    "git status; bash -n +n -c id"; do
+    "git status; bash -n +n -c id" \
+    "git status; command -p bash -n +n -c id" \
+    "command -- bash -n +n -c id"; do
     run_pre "$(pre_payload_for "${noexec}")"
     assert_eq "a + word in a bash -n invocation is refused: ${noexec}" \
         "2" "${PRE_STATUS}"
@@ -1665,9 +1702,7 @@ for rebuilt in "bash -n {+,+}n -c id" \
     "bash -n --norc {+,+}n -c id" \
     "bash -n ?n -c id" \
     "bash -n [+]n -c id" \
-    "bash -n tests/*.sh" \
-    "bash -n <(printf x >written)" \
-    "bash -n >(cat) tests/run-tests.sh"; do
+    "bash -n tests/*.sh"; do
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "an expansion in a bash -n invocation is refused: ${rebuilt}" \
         "2" "${PRE_STATUS}"
