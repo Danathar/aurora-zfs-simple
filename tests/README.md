@@ -21,8 +21,10 @@ when present and skipped when not.
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
 | `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
 | `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database |
+| `test-containerfile.sh`     | the `Containerfile`'s build-stage wiring: the `--mount` destinations on each `RUN` against the absolute paths the `build_files/` scripts read, extracted from the scripts rather than restated, plus the order the four are invoked in and their place inside one `RUN` |
 | `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed; and that no tracked file is a shell script under some other name |
 | `test-coverage.sh`          | every shipped `*.sh` is declared covered by a named test or UNCOVERED with a reason        |
+| `test-coverage-map.sh`      | this file: the coverage table's first column against the `tests/test-*.sh` glob in both directions, and the "Not covered" list against `test-coverage.sh`'s `UNCOVERED` column in both directions |
 | `test-docs-paths.sh`        | every repo path README.md and AGENTS.md name actually exists                               |
 | `test-ci-workflows.sh`      | CI still runs this suite with its dependencies, neither workflow's path filter leaves a gap, workflow run/shell values contain no Actions expressions, and every action any workflow uses is pinned to immutable code |
 | `test-auto-qa-tuning.sh`    | every workflow job is bounded by a timeout, and declared to the auto-QA manifest at the number the YAML actually says |
@@ -43,6 +45,7 @@ when present and skipped when not.
 | `test-memory-corrections.sh` | `.claude/memory/corrections.md`: the entry shape `.claude/memory/README.md` asks for, every repository path the entries cite, and each correction's claims against the machine that settles it — the `Containerfile`'s final two `RUN` steps and the rechunk's place after them in `.github/workflows/build.yml`, that step's `.Config` read and incident numbers, AGENTS.md's `--state all` query, diagnosis block and pin example, and `test-shell-syntax.sh`'s shellcheck skip against CI's `Install shellcheck` step |
 | `test-cursorrules.sh`       | `.cursorrules`: every rule that names something in this repository, held against it — the three artifacts the `Containerfile` assembles and the two `ci/write-badges.sh` compares, the `kmod-zfs` glob and the fatal install in `build_files/zfs.sh`, the kernel erase in `build_files/kernel-akmods.sh`, the indent exceptions against `.editorconfig`, the shebang, executable-bit and `shellcheck` bars against `test-shell-syntax.sh` and `.shellcheckrc`, and the scripts it calls unreachable from the host against `test-coverage.sh`'s `UNCOVERED` set |
 | `test-copilot-instructions.sh` | `.github/copilot-instructions.md`: every instruction that names something in this repository — the three artifacts and the two compared kernels out of the `Containerfile` and `ci/write-badges.sh`, the kernel erase held against the `Containerfile` mount that supplies the replacement, the `kmod-zfs` glob and fatal install in `build_files/zfs.sh`, the `shellcheck` bar and its skip against `test-shell-syntax.sh` and `.shellcheckrc`, the shebang exemption and the two-space exception list against the tree and `.editorconfig` in both directions and against the same rules in `.cursorrules` and CONTRIBUTING.md, the three incident comments it tells an agent not to strip against `.github/workflows/build.yml` and `ci/write-badges.sh`, and the unreachable-from-the-host set against `test-coverage.sh`'s `UNCOVERED` column |
+| `test-agent-prompts.sh`     | `.github/prompts/*.prompt.md` and `.claude/commands/*.md`: every claim that names something here — the two akmods references and the `ARG FEDORA_VERSION` `sed` run against the `Containerfile` rather than matched as text, the seven OpenZFS RPM families against `build_files/zfs.sh`'s `ZFS_RPMS`, the `kmod-zfs` glob asymmetry and the kernel erase that makes a newer `aurora-dx` kernel not skew, the badge and its `blocked` state against `ci/write-badges.sh` and README.md, and each `.claude/commands/` file against the prompt it wraps |
 | `test-editorconfig.sh`      | `.editorconfig`: every section resolved the way EditorConfig resolves them and measured against the tree — line endings, final newlines, charset and the two trailing-whitespace exemptions over every tracked file, `indent_size` against the indentation each shell, YAML, JSON and `Containerfile` actually uses, and the header note's claims about Prettier and `.shellcheckrc` |
 | `test-session-summary.sh`   | `.claude/session-summary.md`: every claim that names something here — the retired branch and tag against README.md, `ARG FEDORA_VERSION` and both unpinned akmods `FROM` lines against the `Containerfile`, `docs/**` against every path filter in `.github/workflows/build.yml`, the unchecked-after-Chunkah ordering against the `Containerfile`'s last two `RUN` steps and the workflow's step order, the `--rechunk` remedy against `tests/e2e/run-e2e.sh`, the Chunkah pin against the workflow and `renovate.json`'s own exclusion, the badge name and its leave-alone branch against `ci/write-badges.sh`, and the label-comparison snippet executed against the `Containerfile` it reads |
 | `test-reflections.sh`       | `docs/reflections/**`: every entry against the format spec its `README.md` states — filename shape, a date stamp equal to the filename date, the three headings in order — and each entry's checkable claims against the file the claim is about: the tag set, single push, `skopeo copy --preserve-digests`, verify-before-sign order and digest-targeted `cosign sign` recomputed from `.github/workflows/build.yml` plus the nightly re-check in `nightly-compliance.yml`; the Chunkah field names and numbers held equal across the entry, AGENTS.md's diagnosis and the rechunk step's comment, with the cap's arithmetic checked; the corrected `README.md` → `AGENTS.md` direction both ways, the historical `renovate.json5` path's absence, the coverage-gate trigger as the complement of `build.yml`'s ignore list, and `docs/risk-tiers.md`'s tier order; and every `docs/reflections/<file>` cited from a non-Markdown file resolving to a tracked file |
@@ -793,6 +796,44 @@ made once, in the open. It is checked in both directions — a stale entry left
 behind by a deleted script fails too, as does a "covered by" claim naming a test
 file that does not exist or never mentions the script.
 
+## The map itself
+
+`test-coverage-map.sh` applies the same idiom one level up, to the document you
+are reading. The table above and the "Not covered" list are how a contributor
+decides whether something is already tested and, if it is not, whether that was
+a decision or an oversight — and until this test existed nothing joined either
+to the tree. `test-quality-docs.sh` was the only file here that opened it, and
+only to confirm one sentence about the covered-or-`UNCOVERED` decision; every
+other mention of the path in `tests/` is a comment, a labeler fixture, or
+`test-editorconfig.sh` reading it as bytes.
+
+Both halves had already drifted, in the two directions that matter. The table
+had no row for `test-agent-prompts.sh` or `test-containerfile.sh`, so neither
+was reachable from the map; both rows are added with this test. And the "Not
+covered" section said `.github/copilot-instructions.md` was unchecked while
+`test-copilot-instructions.sh` sat in the table twenty lines above it. That
+second one is the failure a gaps document has: a reader trusts it to say where
+the holes are and stops looking, so understating coverage sends somebody to
+write a test that exists and overstating it leaves a hole nobody checks.
+
+So the table's first column is compared with `git ls-files 'tests/test-*.sh'` in
+both directions, and the list is compared with `test-coverage.sh`'s `UNCOVERED`
+column in both directions. The second comparison is deliberately made against
+that manifest rather than against a `grep` of the suite: being *named* by a test
+is not being *covered* by one. Nine test files name `build_files/zfs.sh` — to
+record it as `UNCOVERED`, to check its mount contract, to read its `kmod-zfs`
+glob, to classify its path — and not one of them executes a line of it, so a
+name-based rule would fail on the entry the list most needs to keep. The
+manifest is where this repository already records that difference, so the list
+is held to it rather than to a second copy of it.
+
+Both extractors are run against a fixture with known answers first, for the
+reason `test-ci-workflows.sh` and `test-containerfile.sh` do the same: a parser
+that silently matched nothing would report a clean map of an empty set. The
+reasoning paragraphs are left alone — a sentence about why a pinned third-party
+action has no shell of this repository's to run is judgement, not a claim the
+tree can settle.
+
 ## post-check.sh
 
 The script guards its entry point with
@@ -856,9 +897,11 @@ are pinned third-party actions with no shell of this repository's own. Nothing h
 `metadata-action` produces is only observable through the `run:` bodies on
 either side of it, which is where the tests supply it themselves.
 
-What is left unchecked under `.github/` is `copilot-instructions.md`. Its
-relative links are resolved by `test-docs-paths.sh`'s third pass, and what
-remains is advice to a reader rather than a claim about the tree.
+Nothing under `.github/` is on the list below any more.
+`copilot-instructions.md` was the last entry on it, on the reasoning that what
+it holds is advice to a reader rather than a claim about the tree;
+`test-copilot-instructions.sh` now recomputes every instruction in it that
+names something here, on the distinction the paragraph below draws.
 
 That list used to include `.github/prompts/**` and `pull_request_template.md`,
 on the reasoning that prose read by a human or an agent is not parsed and so is
@@ -879,10 +922,29 @@ does, the sentence can be recomputed and drift fails the suite; where it is
 advice, judgement or an instruction to a reader, there is nothing to compare it
 against and these tests leave it alone.
 
-The other `build_files/*.sh` scripts still run their work at the top level, so
-`source` executes the whole file. Their happy path is exercised by the `Build
-container image` workflow — a failure there blocks the push — and their failure
-branches remain untested.
+The repository paths this section claims are unreached are listed here rather
+than left in its prose, because a list can be joined to the tree and a sentence
+cannot. `test-coverage-map.sh` reads it, and reads nothing else in this section:
+every entry has to be a tracked file that `test-coverage.sh` still records as
+`UNCOVERED`, and every `UNCOVERED` entry there has to appear below. A path that
+acquires a covering test fails here instead of sitting on the list, which is how
+the `copilot-instructions.md` sentence above went wrong.
+
+- `build_files/build.sh`
+- `build_files/kernel-akmods.sh`
+- `build_files/zfs.sh`
+
+Those three still run their work at the top level, so `source` executes the
+whole file. Their happy path is exercised by the `Build container image`
+workflow — a failure there blocks the push — and their failure branches remain
+untested. Their contract with the `Containerfile` is a different claim and is
+checked: `test-containerfile.sh` holds each mount destination against the
+absolute paths the script reads.
+
+The gaps above this list are not paths. `check_zfs_modules`,
+`check_zfs_userspace` and `check_initramfs` are functions inside a covered file,
+and the `uses:` steps of `build_push` are third-party actions with no path in
+this repository, so neither can be listed or joined that way.
 
 ## The agent settings file
 
