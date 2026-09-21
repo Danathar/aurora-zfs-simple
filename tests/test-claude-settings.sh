@@ -1611,7 +1611,13 @@ for substituted in "podman images >(cat >cosign.pub)" \
     'podman images < <(printf x >cosign.pub)' \
     'podman images <"$(printf x >cosign.pub)"' \
     'gh pr list <<<"$(printf x >cosign.pub)"' \
-    'podman images <`printf in`'; do
+    'podman images <`printf in`' \
+    'shellcheck tests/run-tests.sh <"$(printf x >cosign.pub)"' \
+    'shellcheck tests/run-tests.sh < <(printf x >cosign.pub)' \
+    'podman images "$(printf x >cosign.pub)"' \
+    'podman images $X' \
+    'gh pr list "$FLAGS"' \
+    "podman images 'a \$b'"; do
     run_pre "$(pre_payload_for "${substituted}")"
     assert_eq "a substitution in an allow-listed command is refused: ${substituted}" \
         "2" "${PRE_STATUS}"
@@ -1729,6 +1735,8 @@ for unlisted in "echo x >cosign.pub" \
     "time -p ls" \
     'x=$(podman images); echo $x' \
     'echo $(podman images)' \
+    'podman images --format "{{.ID}}"' \
+    'gh pr list --json title -q ".[].title"' \
     "shellcheck tests/run-tests.sh # output > file" \
     "bash -n tests/run-tests.sh # +n" \
     "git diff HEAD # > cosign.pub"; do

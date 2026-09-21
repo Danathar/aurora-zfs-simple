@@ -224,7 +224,7 @@ OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log
 GATED_REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside an allow-listed command makes the shell open its target for writing before the command runs, and the allow rule matches a command prefix while the redirection is the rest of the string, so nothing prompts: `shellcheck tests/run-tests.sh >cosign.pub` truncates the trust anchor before a line is linted, and `gh run view 1 --log >.claude/settings.json` overwrites the file holding these rules. It is the same write .claude/hooks/gate-git-diff.sh already refuses for `git diff HEAD >cosign.pub`. These commands print to stdout; read that, or pipe it. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) are not affected, and a command no allow rule covers is left alone -- that one prompts on its own.'
 
 # shellcheck disable=SC2016 # the literal $(...) and <( are what the reader has to see
-GATED_SUBST_MSG='blocked: a substitution -- `$(...)`, a backtick, `<(...)` or `>(...)` -- in an allow-listed command runs the command inside it as part of a string the allow rule approved on its prefix alone, and that inner command is not held to any rule: `df -T >(cat >cosign.pub)` and `podman images $(printf x >cosign.pub)` truncate the trust anchor from inside the substitution while the command prints as usual. It is refused in these commands the way it is in a git or shellcheck invocation. Write the inner command as a command of its own.'
+GATED_SUBST_MSG='blocked: a substitution or an expansion -- `$(...)`, a backtick, `$VAR`, `<(...)` or `>(...)`, quoted or not, in a word or a redirection target -- in an allow-listed command runs a command or supplies a word as part of a string the allow rule approved on its prefix alone, and neither is held to any rule: `df -T >(cat >cosign.pub)` and `podman images $(printf x >cosign.pub)` truncate the trust anchor from inside the substitution while the command prints as usual. It is refused in these commands the way it is in a git or shellcheck invocation. Write the inner command as a command of its own.'
 
 # shellcheck disable=SC2016 # the literal $(...) and <<EOF are what the reader has to see
 GATED_HEREDOC_MSG='blocked: a here-document with an unquoted delimiter (`<<EOF`) on an allow-listed command is expanded by bash before the command runs, so a `$(...)` or a backtick on any line of its body runs as part of the string the allow rule approved on its prefix, and this gate reads those lines as commands of their own: `df -T <<EOF` followed by a `$(printf x >cosign.pub)` line writes the file while df prints as usual. Quote the delimiter (`<<'"'"'EOF'"'"'`) so the body is literal, or pass the input another way.'
@@ -868,7 +868,7 @@ check_gated_command() {
   ((cmd_gated && cmd_writes)) && refuse "${GATED_REDIRECT_MSG}"
   # A shellcheck invocation has its own scan for this, with the message that
   # names the operand; that one is left to say it.
-  ((cmd_gated && cmd_subst)) && [[ "${cmd_prefix}" != shellcheck* ]] && refuse "${GATED_SUBST_MSG}"
+  ((cmd_gated && cmd_subst)) && { [[ "${cmd_prefix}" != shellcheck* ]] || ((cmd_subst == 2)); } && refuse "${GATED_SUBST_MSG}"
   ((cmd_gated && cmd_heredoc)) && refuse "${GATED_HEREDOC_MSG}"
   # A `SHELLCHECK_OPTS=` assignment has a refusal of its own, which names what
   # the linter reads out of it; that one is left to say it.
@@ -942,7 +942,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
-      cmd_subst=1
+      ((cmd_subst)) || cmd_subst=1
       continue
     fi
     check_gated_command
@@ -956,8 +956,10 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # into the target of an input redirection or a here-string
     # (`gh pr list <"$(printf x >cosign.pub)"`, review on
     # aurora-zfs-simple#211): bash expands the target before the command.
-    [[ "${words[idx]}" == '<(' || "${words[idx]}" == '>(' ]] && cmd_subst=1
-    [[ "${raw_words[idx]}" == *'$'* || "${raw_words[idx]}" == *'`'* ]] && cmd_subst=1
+    # (Recorded as 2: a shellcheck invocation's own scan covers its operand
+    # words, never its targets, so the exemption below does not apply.)
+    [[ "${words[idx]}" == '<(' || "${words[idx]}" == '>(' ]] && cmd_subst=2
+    [[ "${raw_words[idx]}" == *'$'* || "${raw_words[idx]}" == *'`'* ]] && cmd_subst=2
     # A here-document with an unquoted delimiter is expanded before the
     # command runs, and its body lies on the lines after this one, which
     # the scan reads as commands of their own: `df -T <<EOF` followed by a
@@ -998,6 +1000,12 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     [[ -z "${cmd_prefix}" && "${words[idx]}" == "bash" ]] && cmd_bash=1
     cmd_prefix="${cmd_prefix:+${cmd_prefix} }${words[idx]}"
     command_is_gated "${cmd_prefix}" && cmd_gated=1
+  fi
+  # A substitution or an expansion quoted into a word (`df -T "$(printf x
+  # >cosign.pub)"`, `podman images $X`) is one the split above never opened,
+  # and bash performs it all the same (review on arch-bootc#322).
+  if ((cmd_gated)) && [[ "${raw_words[idx]}" == *'$'* || "${raw_words[idx]}" == *'`'* ]]; then
+    ((cmd_subst)) || cmd_subst=1
   fi
   ((cmd_bash && cmd_gated)) || continue
   [[ "${words[idx]}" == '+'* ]] && refuse "${BASH_NOEXEC_MSG}"
