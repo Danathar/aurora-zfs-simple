@@ -1566,6 +1566,29 @@ for heredoc in $'podman images <<EOF\necho $(printf x >cosign.pub)\nEOF' \
     assert_contains "and the refusal says to quote the delimiter: ${heredoc//$'\n'/ | }" \
         "${PRE_ERR}" "Quote the delimiter"
 done
+# An assignment before the name is an environment the command runs under,
+# and for these commands that changes what runs or where it goes (review on
+# sensi#244, the Python twin of this hook); git keeps `FOO=bar git diff`.
+for assigned in "LD_PRELOAD=x.so shellcheck tests/run-tests.sh" \
+    "BASH_ENV=f bash -n tests/run-tests.sh" \
+    "GH_HOST=other gh pr list" \
+    "CONTAINERS_CONF=f podman ps" \
+    "FOO=1 ./tests/run-tests.sh test-harness" \
+    "git status; FOO=1 skopeo inspect docker://x"; do
+    run_pre "$(pre_payload_for "${assigned}")"
+    assert_eq "an assignment before an allow-listed command is refused: ${assigned}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the assignment: ${assigned}" \
+        "${PRE_ERR}" "assignment before"
+done
+for assigned in "FOO=bar git diff HEAD" \
+    "PAGER=cat git log -1" \
+    "FOO=1 echo x; podman images" \
+    "x=1; podman images"; do
+    run_pre "$(pre_payload_for "${assigned}")"
+    assert_eq "an assignment before git, or on another command, is left alone: ${assigned}" \
+        "0" "${PRE_STATUS}"
+done
 for heredoc in $'bash -n <<\'EOF\'\necho hi\nEOF' \
     $'bash -n <<"EOF"\necho $(id)\nEOF' \
     $'cat <<EOF\nplain\nEOF; gh pr list' \

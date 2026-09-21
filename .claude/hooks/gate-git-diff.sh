@@ -229,6 +229,9 @@ GATED_SUBST_MSG='blocked: a substitution -- `$(...)`, a backtick, `<(...)` or `>
 # shellcheck disable=SC2016 # the literal $(...) and <<EOF are what the reader has to see
 GATED_HEREDOC_MSG='blocked: a here-document with an unquoted delimiter (`<<EOF`) on an allow-listed command is expanded by bash before the command runs, so a `$(...)` or a backtick on any line of its body runs as part of the string the allow rule approved on its prefix, and this gate reads those lines as commands of their own: `df -T <<EOF` followed by a `$(printf x >cosign.pub)` line writes the file while df prints as usual. Quote the delimiter (`<<'"'"'EOF'"'"'`) so the body is literal, or pass the input another way.'
 
+# shellcheck disable=SC2016 # the literal NAME=value spellings are what the reader has to see
+GATED_ENV_MSG='blocked: an assignment before an allow-listed command (`NAME=value cmd ...`) is an environment the command runs under, and for these commands that changes what runs or where it goes: `LD_PRELOAD=x.so shellcheck f` loads code before a line is linted, `BASH_ENV=f bash -n x` names a file for bash to read, `GH_HOST=other gh pr list` sends the token elsewhere, `CONTAINERS_CONF=f podman ps` re-points podman. Run the command without the assignment; a git invocation is not affected by this rule.'
+
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
@@ -867,6 +870,9 @@ check_gated_command() {
   # names the operand; that one is left to say it.
   ((cmd_gated && cmd_subst)) && [[ "${cmd_prefix}" != shellcheck* ]] && refuse "${GATED_SUBST_MSG}"
   ((cmd_gated && cmd_heredoc)) && refuse "${GATED_HEREDOC_MSG}"
+  # A `SHELLCHECK_OPTS=` assignment has a refusal of its own, which names what
+  # the linter reads out of it; that one is left to say it.
+  ((cmd_gated && cmd_assign)) && [[ "${cmd_prefix}" != shellcheck* || "${cmd_assign_name}" != SHELLCHECK_OPTS ]] && refuse "${GATED_ENV_MSG}"
   return 0
 }
 
@@ -875,6 +881,8 @@ reset_command() {
   cmd_writes=0
   cmd_subst=0
   cmd_heredoc=0
+  cmd_assign=0
+  cmd_assign_name=''
   cmd_bash=0
   cmd_named=0
   cmd_gated=0
@@ -889,6 +897,8 @@ cmd_prefix='' # the words so far, space-joined, while a prefix is still possible
 cmd_writes=0  # a redirection in this command opens a path for writing
 cmd_subst=0   # a substitution stands in this command, or in a target of it
 cmd_heredoc=0 # this command reads a here-document bash expands
+cmd_assign=0  # an assignment stands before this command's name
+cmd_assign_name='' # the variable that assignment sets
 cmd_bash=0    # its name is bash, so the +n and expansion rules apply once gated
 cmd_named=0   # the name has been seen; every later word belongs to it
 cmd_gated=0   # its leading words matched one of GATED_PREFIXES
@@ -922,13 +932,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     if [[ "${words[idx]}" == '$(' ]] ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
-      cmd_stack+=("${cmd_writes} ${cmd_subst} ${cmd_heredoc} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_prefix}")
+      cmd_stack+=("${cmd_writes} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_prefix}")
       reset_command
       continue
     fi
     if [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#cmd_stack[@]})); then
       check_gated_command
-      read -r cmd_writes cmd_subst cmd_heredoc cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
+      read -r cmd_writes cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
@@ -964,6 +974,16 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # it is remembered for the command and its body follows behind a `(`.
   if [[ "${words[idx]}" == '<(' || "${words[idx]}" == '>(' ]]; then
     cmd_subst=1
+    continue
+  fi
+  # An assignment before the name is an environment the command runs under,
+  # and for these commands that is a way in: `PYTEST_ADDOPTS`, `PYTHONPATH`,
+  # `GH_HOST`, `LD_PRELOAD` each change what the command does or where it
+  # sends what it has (review on sensi#244). The git scan above leaves
+  # `FOO=bar git diff HEAD` alone; these commands are refused the assignment.
+  if ((cmd_named == 0)) && [[ "${raw_words[idx]}" =~ ^([A-Za-z_][A-Za-z0-9_]*)(\[[^]]*\])?\+?= ]]; then
+    cmd_assign=1
+    cmd_assign_name="${BASH_REMATCH[1]}"
     continue
   fi
   ((cmd_named)) || ((${command_names[idx]:-0})) || continue
