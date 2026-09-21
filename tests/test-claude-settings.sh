@@ -1487,4 +1487,181 @@ assert_contains "and that no permission pattern closes it" \
 assert_contains "and the residual it does not cover" \
     "${SHELLCHECK_NOTE}" "external-sources"
 
+# --- 9. the same write, in the allow-listed commands that are not git -------
+#
+# Sections 7 and 8 gate two commands by name. The write half of section 7 is
+# not git's alone: a rule ending in `:*` means "this command with any
+# arguments", and a shell output redirection is part of the string that rule
+# matches, so `shellcheck tests/run-tests.sh >cosign.pub` truncated the trust
+# anchor before a line was linted and `gh run view 1 --log
+# >.claude/settings.json` overwrote the file holding these rules -- neither
+# prompted (review on zfs-kinoite-complex#224, the same hook). The hook now
+# decides every simple command in the string against the allow rows that
+# carry a `:*`, other than git's, which section 7 already covers.
+#
+# 9a. the exposure, shown rather than asserted, against a stand-in in a
+# throwaway directory of this test's own: bash opens the target before the
+# command runs, so the file is emptied even when the command then fails.
+# `bash -n` is used because it is always present; shellcheck may not be.
+GATED_WORK="${WORK}/gated-redirect"
+mkdir -p "${GATED_WORK}"
+printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim"
+(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    'bash -n ./no-such-script.sh >victim' >/dev/null 2>&1 </dev/null || true)
+assert_not_contains "an output redirection on an allow-listed non-git command truncates the file it names" \
+    "$(cat "${GATED_WORK}/victim")" "ORIGINAL-CONTENT"
+# And the flag form: `-n` reads a script without running it, and a later `+n`
+# on the same command line turns that back off, so the linter's allow rule
+# runs whatever follows.
+noexec_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    "bash -n +n -c 'printf RAN-UNDER-BASH-N'" 2>/dev/null </dev/null || true)"
+assert_eq "bash -n +n -c COMMAND runs the command the -n was meant to keep from running" \
+    "RAN-UNDER-BASH-N" "${noexec_out}"
+
+# 9b. the list of gated commands lives in the hook; this is what keeps it from
+# drifting. The commands are derived from the settings file rather than
+# restated, so an allow rule added there with a trailing `:*` fails here until
+# the hook lists it. The exact `Bash(./tests/run-tests.sh)` row carries no
+# `:*`, so a redirection makes the string match only the `:*` row beside it.
+gated_rows=0
+while IFS= read -r allow_rule; do
+    [[ "${allow_rule}" == "Bash("*":*)" ]] || continue
+    allow_cmd="$(bash_prefix "${allow_rule}")"
+    [[ "${allow_cmd}" == "git "* ]] && continue
+    gated_rows=$((gated_rows + 1))
+    run_pre "$(pre_payload_for "${allow_cmd} >cosign.pub")"
+    assert_eq "every allow rule with arguments is refused a writing redirection: ${allow_cmd} >cosign.pub" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the allow-listed command: ${allow_cmd}" \
+        "${PRE_ERR}" "allow-listed command"
+done <<<"${ALLOW}"
+if ((gated_rows >= 11)); then
+    _pass "the settings file still carries the allow rows this section gates (${gated_rows})"
+else
+    _fail "the settings file still carries the allow rows this section gates" \
+        "found ${gated_rows} Bash(...:*) rows other than git's; expected at least 11"
+fi
+
+# 9c. every operator that opens a path, in every position bash accepts it: after
+# the command, before its name, after an assignment or `time`, and carried
+# across a `$(...)` in the same command, which is a command of its own.
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
+for writer in "shellcheck tests/run-tests.sh >cosign.pub" \
+    "shellcheck tests/run-tests.sh >> out" \
+    "shellcheck tests/run-tests.sh 2>.claude/settings.json" \
+    "./tests/run-tests.sh >| cosign.pub" \
+    "./tests/run-tests.sh test-harness &>cosign.pub" \
+    "bash -n tests/run-tests.sh &>>cosign.pub" \
+    "gh run view 1 --log >.claude/settings.json" \
+    "gh run list --limit 5 >&cosign.pub" \
+    "gh pr view 1 <>cosign.pub" \
+    "gh pr list {fd}>cosign.pub" \
+    "skopeo inspect docker://ghcr.io/x:latest >/dev/null" \
+    "podman images >cosign.pub" \
+    "podman ps -a > .claude/hooks/gate-git-diff.sh" \
+    "podman inspect x 2>&1 >cosign.pub" \
+    ">cosign.pub shellcheck tests/run-tests.sh" \
+    "git status; >cosign.pub gh run view 1 --log" \
+    "FOO=bar shellcheck tests/run-tests.sh >cosign.pub" \
+    "FOO=bar >cosign.pub shellcheck tests/run-tests.sh" \
+    "time shellcheck tests/run-tests.sh >cosign.pub" \
+    "command podman images >cosign.pub" \
+    'gh run view 1 --log $(date) >cosign.pub' \
+    'echo $(gh run view 1 --log >cosign.pub)' \
+    "ls | podman images >cosign.pub" \
+    "shellcheck tests/run-tests.sh 2>&1 | tee x; gh pr list >out"; do
+    run_pre "$(pre_payload_for "${writer}")"
+    assert_eq "an output redirection inside an allow-listed command is refused: ${writer}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says to read stdout instead: ${writer}" \
+        "${PRE_ERR}" "read that"
+done
+
+# 9d. the refusal is the operator that opens a path for writing. A pipe, a
+# descriptor form and an input redirection open none, and AGENTS.md tells a
+# session to run the second of these.
+for harmless in "shellcheck tests/run-tests.sh 2>&1 | tail -5" \
+    "gh run view 123 --log-failed | grep -E 'KERNEL=|Failed to access RPM|Error: building'" \
+    "gh run view 123 --log-failed 2>&1 | sed 's/x/y/'" \
+    "skopeo inspect docker://ghcr.io/x:latest | jq .Digest" \
+    "shellcheck tests/run-tests.sh <tests/run-tests.sh" \
+    "gh pr view 1 >&2" \
+    "podman images 2>&-" \
+    "./tests/run-tests.sh test-harness </dev/null" \
+    "shellcheck -x tests/run-tests.sh" \
+    "bash -n tests/run-tests.sh" \
+    "gh pr view 1 --json title -q .title" \
+    "podman ps --sync" \
+    "skopeo inspect --format '{{.Digest}}' docker://ghcr.io/ublue-os/akmods:coreos-stable-45-x86_64"; do
+    run_pre "$(pre_payload_for "${harmless}")"
+    assert_eq "reading the output of an allow-listed command still works: ${harmless}" \
+        "0" "${PRE_STATUS}"
+    assert_eq "and silently: ${harmless}" "" "${PRE_ERR}${PRE_OUT}"
+done
+
+# 9e. the hook re-gates what the permission rules wave through. A command no
+# allow rule covers prompts on its own, and refusing it here would be the hook
+# deciding a question the settings file already decides; a redirection on
+# another command of the same string is that command's own.
+for unlisted in "echo x >cosign.pub" \
+    "cat tests/run-tests.sh >cosign.pub" \
+    "python3 tests/some_script.py >cosign.pub" \
+    "echo x >out; shellcheck tests/run-tests.sh" \
+    "shellcheck tests/run-tests.sh | tee out" \
+    ">out echo x; gh pr list"; do
+    run_pre "$(pre_payload_for "${unlisted}")"
+    assert_eq "a redirection on a command no allow rule covers is left alone: ${unlisted}" \
+        "0" "${PRE_STATUS}"
+done
+
+# 9f. the flag that undoes `bash -n`. `+n` and `+o noexec` turn execution back
+# on for the rest of the command line, so a word beginning with `+` in a
+# `bash -n` invocation is refused, along with the spellings bash rebuilds --
+# a brace, a `$` or a backtick -- since `{+,+}n` reaches bash as `+n`.
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
+for noexec in "bash -n +n -c 'cat ./cosign.key'" \
+    "bash -n +o noexec tests/run-tests.sh" \
+    "bash -n tests/run-tests.sh +n" \
+    "bash -n +nv -c 'id'" \
+    'bash -n "+n" -c id' \
+    "git status; bash -n +n -c id"; do
+    run_pre "$(pre_payload_for "${noexec}")"
+    assert_eq "a + word in a bash -n invocation is refused: ${noexec}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the flag: ${noexec}" \
+        "${PRE_ERR}" "+n"
+done
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
+for rebuilt in "bash -n {+,+}n -c id" \
+    'bash -n $X tests/run-tests.sh' \
+    'bash -n $(printf +n) -c id' \
+    'bash -n `printf +n` -c id' \
+    "bash -n --norc {+,+}n -c id"; do
+    run_pre "$(pre_payload_for "${rebuilt}")"
+    assert_eq "an expansion in a bash -n invocation is refused: ${rebuilt}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the rebuild: ${rebuilt}" \
+        "${PRE_ERR}" "+n"
+done
+# shellcheck disable=SC2016 # the $x is a spelling handed to the hook, not expanded here
+for plain in "bash -n tests/run-tests.sh" \
+    "bash -n build_files/post-check.sh tests/run-tests.sh" \
+    "bash -n -- tests/run-tests.sh" \
+    "bash +n -c id" \
+    'echo $x; bash -n tests/run-tests.sh'; do
+    run_pre "$(pre_payload_for "${plain}")"
+    assert_eq "a syntax check, and a bash no allow rule covers, are left alone: ${plain}" \
+        "0" "${PRE_STATUS}"
+done
+
+# 9g. the settings file records the decision, next to the ones for git diff
+# and shellcheck, and says where the list is checked.
+GATED_NOTE="$(jq -r '._note_gated_writes // ""' "${SETTINGS}")"
+assert_contains "the note names the redirection the allow rules cannot see" \
+    "${GATED_NOTE}" ">cosign.pub"
+assert_contains "and the bash -n flag that undoes the read" \
+    "${GATED_NOTE}" "+n"
+assert_contains "and the test that derives the gated list from this file" \
+    "${GATED_NOTE}" "tests/test-claude-settings.sh"
+
 finish
