@@ -1603,12 +1603,18 @@ done
 # allow rule covers prompts on its own, and refusing it here would be the hook
 # deciding a question the settings file already decides; a redirection on
 # another command of the same string is that command's own.
+# The last two are decided by Claude Code itself: a redirection on a brace
+# group or a subshell is refused by the Bash tool before any rule or hook
+# sees it ("does not accept compound statements with redirection", 2.1.267),
+# so the hook does not restate that refusal.
 for unlisted in "echo x >cosign.pub" \
     "cat tests/run-tests.sh >cosign.pub" \
     "python3 tests/some_script.py >cosign.pub" \
     "echo x >out; shellcheck tests/run-tests.sh" \
     "shellcheck tests/run-tests.sh | tee out" \
-    ">out echo x; gh pr list"; do
+    ">out echo x; gh pr list" \
+    "bash -n tests/run-tests.sh; { bash -n missing.sh; } >cosign.pub" \
+    "(shellcheck tests/run-tests.sh) >cosign.pub"; do
     run_pre "$(pre_payload_for "${unlisted}")"
     assert_eq "a redirection on a command no allow rule covers is left alone: ${unlisted}" \
         "0" "${PRE_STATUS}"
@@ -1646,7 +1652,9 @@ for rebuilt in "bash -n {+,+}n -c id" \
     "bash -n --norc {+,+}n -c id" \
     "bash -n ?n -c id" \
     "bash -n [+]n -c id" \
-    "bash -n tests/*.sh"; do
+    "bash -n tests/*.sh" \
+    "bash -n <(printf x >written)" \
+    "bash -n >(cat) tests/run-tests.sh"; do
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "an expansion in a bash -n invocation is refused: ${rebuilt}" \
         "2" "${PRE_STATUS}"
