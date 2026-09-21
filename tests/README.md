@@ -51,6 +51,7 @@ when present and skipped when not.
 | `test-reflections.sh`       | `docs/reflections/**`: every entry against the format spec its `README.md` states — filename shape, a date stamp equal to the filename date, the three headings in order — and each entry's checkable claims against the file the claim is about: the tag set, single push, `skopeo copy --preserve-digests`, verify-before-sign order and digest-targeted `cosign sign` recomputed from `.github/workflows/build.yml` plus the nightly re-check in `nightly-compliance.yml`; the Chunkah field names and numbers held equal across the entry, AGENTS.md's diagnosis and the rechunk step's comment, with the cap's arithmetic checked; the corrected `README.md` → `AGENTS.md` direction both ways, the historical `renovate.json5` path's absence, the coverage-gate trigger as the complement of `build.yml`'s ignore list, and `docs/risk-tiers.md`'s tier order; and every `docs/reflections/<file>` cited from a non-Markdown file resolving to a tracked file |
 | `test-pull-request-template.sh` | `.github/pull_request_template.md`: every claim in the checklist against the thing it restates — the suite command against the `run:` steps that invoke it, the shellcheck caveat against `test-shell-syntax.sh`'s skip and a straight-line `apt-get install -y shellcheck` step earlier in every job that runs the suite, with no `if:` or `continue-on-error:` on the step or its job, no effective shell other than bash, and no control flow around it, the scripts it calls unreachable against `test-coverage.sh`'s `UNCOVERED` set and the `Containerfile`'s `/ctx/` invocations, `post-check.sh`'s exception against its `BASH_SOURCE` guard, the `Build container image` name and `pull_request` trigger against `build.yml` with every step of `build.yml` classified in a manifest as safe on a pull request (its action and body free of push, copy, login and sign mechanisms) or guarded (its `if:` one unnegated `&&` chain carrying `github.event_name != 'pull_request'` whole) and every job classified as one that runs steps of its own or as a guarded reusable-workflow call, an unclassified step or job failing, the load-bearing-prose status of README.md and AGENTS.md against `docs/risk-tiers.md`'s tier 1 row, and the skew diagnosis headings a reviewer is sent to against AGENTS.md — plus the structure GitHub renders: one template at the path it reads, its five sections, and no pre-ticked box |
 | `test-risk-tiers.sh`        | `docs/risk-tiers.md`: the tier table parsed and replayed rather than restated — every glob in the Paths column resolved against `git ls-files`, the "highest tier it touches" rule applied to the worked example the document states, the merge-on-green column agreed with `docs/SECURITY-AI.md`'s unattended lists, the push/verify/sign steps the tier 3 row names found in `build.yml` and each one carrying the `github.event_name != 'pull_request'` guard, the tier 3 evidence bullets against the `Containerfile`'s `post-check.sh` and `bootc container lint` `RUN` steps and against the absence of either after the rechunk step, `--rechunk` as a real mode of `tests/e2e/run-e2e.sh`, the `paths-ignore` claim replayed so a docs-only pull request starts no build and a `Containerfile` one does, and the "no bot stamps a tier" claim as an absence in `.github/labeler.yml`'s labels, in the labels those rules return for a file from each tier, and in every workflow — plus every `/`-bearing path the prose names, with `.github/renovate.json5` asserted still absent because the paragraph about issue #70 depends on it |
+| `test-signing-key.sh`       | `cosign.pub`: the committed half decoded and checked as a P-256 public key rather than described, the private half hunted for across every tracked file, and every instruction that names the key — README.md's install command, `policy.json` entry, verification command and rebase example, and `docs/SECURITY-AI.md`'s claims about where `SIGNING_SECRET` lives — held against `.github/workflows/build.yml`, `.github/workflows/nightly-compliance.yml`, the `Containerfile`, `.gitignore` and `.claude/settings.json` |
 | `test-harness.sh`           | the harness itself: `lib/assert.sh`'s tally and every assertion's failing branch, and `run-tests.sh`'s dependency preflight, discovery, failure reporting, and selection — including that a selection argument resolves to a `test-*.sh` in the runner's own directory and to nothing else |
 
 `ci/write-badges.sh` is run as a real subprocess. Its only two inputs are a
@@ -439,6 +440,51 @@ registry token or `--creds` on their command line, and must fail before calling
 skopeo if that file is absent. The last guard prevents a missing login artifact
 from silently turning a successful check of a public package into an anonymous
 one.
+
+## The signing key
+
+`test-signing-key.sh` covers the file that nightly check verifies against.
+`cosign.pub` is the trust anchor: `docs/risk-tiers.md` puts it in tier 3 and
+`docs/SECURITY-AI.md` ranks its private half above every other secret here, and
+before this test a dozen `grep -rF cosign.pub tests/` hits all used the path as
+a payload or a classification target. Not one of them opened it.
+
+Nothing in this repository notices if the key is wrong. `build.yml` signs with
+`env://COSIGN_PRIVATE_KEY` and never reads the committed file; the only things
+that do are the nightly re-verification — stubbed, correctly, in
+`test-nightly-compliance.sh` — and a consumer's host. So the bytes are decoded
+here rather than described: one PEM block and nothing outside it, a 91-byte
+SubjectPublicKeyInfo, the `id-ecPublicKey` and `prime256v1` OIDs and an
+uncompressed point, each asserted by name so a failure says which part moved.
+The same pass hunts the private half: no tracked file carries a private-key PEM
+marker, `.gitignore` still ignores `cosign.key`, and nothing tracked matches any
+path the `Read(...)` deny rules in `.claude/settings.json` name — read out of
+that file rather than restated, so a name added there is swept too.
+
+The other half is the instructions. README.md tells a user to install the key
+into `/etc/pki/containers/` and to add a `sigstoreSigned` entry to
+`/etc/containers/policy.json`, and that entry fails *open* if it drifts: a host
+whose `signedIdentity` pins a repository the workflow no longer publishes to
+rejects everything, or accepts the wrong thing, and finds out at
+`bootc upgrade`. So the published reference is derived once — from the slug
+README.md's own build badge links to, with the derivation grounded in
+`build.yml`'s `IMAGE_REGISTRY` and `IMAGE_NAME` expressions and its lowercasing
+step — and the install command, the policy entry (parsed with `jq`, not matched
+as text), the `cosign verify` command and the `--enforce-container-sigpolicy`
+rebase are all held against it. Every concrete `ghcr.io` reference in README.md
+has to be that image or one the `Containerfile` actually pulls, in both
+directions, so a typo in the policy key fails rather than instructing a reader
+to pin nothing.
+
+`docs/SECURITY-AI.md` is joined the same way. Its claim that
+`COSIGN_PRIVATE_KEY` "exists only in the signing step of `build.yml`" is
+recomputed — exactly one workflow is handed `secrets.SIGNING_SECRET`, exactly
+one step in it holds the value — and its secret-inventory row is parsed for the
+step it names rather than read. The `gh secret set` example is checked to name
+this repository and to pass the key by redirection, and the
+`cosign public-key --key cosign.key` recipe to name the same private path
+`.gitignore` and the permission table do: a rename on one side and not the
+others is how a private key becomes trackable.
 
 ## The labeler
 
@@ -897,11 +943,11 @@ are pinned third-party actions with no shell of this repository's own. Nothing h
 `metadata-action` produces is only observable through the `run:` bodies on
 either side of it, which is where the tests supply it themselves.
 
-Nothing under `.github/` is on the list below any more.
-`copilot-instructions.md` was the last entry on it, on the reasoning that what
-it holds is advice to a reader rather than a claim about the tree;
-`test-copilot-instructions.sh` now recomputes every instruction in it that
-names something here, on the distinction the paragraph below draws.
+Nothing under `.github/` is left unopened. `copilot-instructions.md` was the
+last entry on this list, on the reasoning that what it holds is advice to a
+reader rather than a claim about the tree; `test-copilot-instructions.sh` now
+recomputes every instruction in it that names something here, and the reasoning
+that retired it is the one the paragraph below states.
 
 That list used to include `.github/prompts/**` and `pull_request_template.md`,
 on the reasoning that prose read by a human or an agent is not parsed and so is
