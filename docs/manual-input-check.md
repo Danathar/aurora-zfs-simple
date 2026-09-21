@@ -39,8 +39,8 @@ AKMODS_TAG="coreos-stable-${FEDORA_VERSION}-x86_64"
 Check that the expected artifact tags exist:
 
 ```bash
-skopeo inspect "docker://ghcr.io/ublue-os/akmods:${AKMODS_TAG}" >/dev/null
-skopeo inspect "docker://ghcr.io/ublue-os/akmods-zfs:${AKMODS_TAG}" >/dev/null
+skopeo inspect --format '{{.Digest}}' "docker://ghcr.io/ublue-os/akmods:${AKMODS_TAG}"
+skopeo inspect --format '{{.Digest}}' "docker://ghcr.io/ublue-os/akmods-zfs:${AKMODS_TAG}"
 ```
 
 Copy the RPM payloads to a temporary directory:
