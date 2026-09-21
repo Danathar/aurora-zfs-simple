@@ -223,8 +223,8 @@ OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal text
 GATED_REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside an allow-listed command makes the shell open its target for writing before the command runs, and the allow rule matches a command prefix while the redirection is the rest of the string, so nothing prompts: `shellcheck tests/run-tests.sh >cosign.pub` truncates the trust anchor before a line is linted, and `gh run view 1 --log >.claude/settings.json` overwrites the file holding these rules. It is the same write .claude/hooks/gate-git-diff.sh already refuses for `git diff HEAD >cosign.pub`. These commands print to stdout; read that, or pipe it. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) are not affected, and a command no allow rule covers is left alone -- that one prompts on its own.'
 
-# shellcheck disable=SC2016 # the literal <( is what the reader has to see
-GATED_SUBST_MSG='blocked: a process substitution (`<(...)` or `>(...)`) in an allow-listed command runs the command inside it as part of a string the allow rule approved on its prefix alone, and that inner command is not held to any rule: `df -T >(cat >cosign.pub)` truncates the trust anchor from inside the substitution while df prints as usual. It is refused in these commands the way it is in a git or shellcheck invocation. Write the inner command as a command of its own.'
+# shellcheck disable=SC2016 # the literal $(...) and <( are what the reader has to see
+GATED_SUBST_MSG='blocked: a substitution -- `$(...)`, a backtick, `<(...)` or `>(...)` -- in an allow-listed command runs the command inside it as part of a string the allow rule approved on its prefix alone, and that inner command is not held to any rule: `df -T >(cat >cosign.pub)` and `podman images $(printf x >cosign.pub)` truncate the trust anchor from inside the substitution while the command prints as usual. It is refused in these commands the way it is in a git or shellcheck invocation. Write the inner command as a command of its own.'
 
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
@@ -523,6 +523,7 @@ end_word
 # in an argument after a wrapper (`timeout 60 find . -name '*.sh'`) is
 # refused too; without the wrapper it is not.
 command_word_pending=1 # the next word of this command may be its name
+after_time=0           # the last name-position word was `time`, whose -p may follow
 after_wrapper=0        # a wrapper ran: every remaining word may be the name
 command_names=()       # 1 at each index that names, or may name, a command
 wrapper_name=''
@@ -562,6 +563,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     fi
     command_word_pending=1
     after_wrapper=0
+    after_time=0
     wrapper_name=''
     continue
     ;;
@@ -571,11 +573,19 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   ((command_word_pending)) || continue
   raw_word="${raw_words[idx]}"
   word="${words[idx]}"
+  if ((after_time)) && [[ "${word}" == '-p' || "${word}" == '--' ]]; then
+    continue # time's own option (review on arch-bootc#322); the name is still to come
+  fi
+  after_time=0
   if [[ "${raw_word}" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]]; then
     continue # an assignment; the name is still to come
   fi
   case "${word}" in
-  '{' | '}' | '!' | if | then | else | elif | fi | do | done | while | until | time | coproc)
+  time)
+    after_time=1 # `time -p CMD`: the option is time's, not the name
+    continue
+    ;;
+  '{' | '}' | '!' | if | then | else | elif | fi | do | done | while | until | coproc)
     continue # a keyword; the name is still to come
     ;;
   command | builtin | exec | env | nohup | nice | xargs | timeout | stdbuf | sudo | doas)
@@ -881,11 +891,17 @@ reset_command
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   case "${kinds[idx]}" in
   sep)
-    # A `$(...)` or a backtick inside a gated bash invocation builds a word
-    # this gate never saw, the way one inside a git invocation does.
+    # A `$(...)` or a backtick inside a gated command runs the command
+    # inside it as part of the approved string, with no rule on that inner
+    # command (`df -T $(touch cosign.pub)`, review on arch-bootc#322), the
+    # way a process substitution does; a gated bash invocation says so in
+    # its own words, since there the substitution also rebuilds `+n`.
     # shellcheck disable=SC2016 # the literal `$(` is the separator's name
-    if ((cmd_bash && cmd_gated)) && [[ "${words[idx]}" == '$(' || "${words[idx]}" == *'`'* ]]; then
-      refuse "${BASH_EXPAND_MSG}"
+    if ((cmd_gated)) && [[ "${words[idx]}" == '$(' || "${words[idx]}" == *'`'* ]]; then
+      ((cmd_bash)) && refuse "${BASH_EXPAND_MSG}"
+      # A shellcheck invocation has its own scan for this, whose message
+      # names the operand; that one is left to say it.
+      [[ "${cmd_prefix}" == shellcheck* ]] || refuse "${GATED_SUBST_MSG}"
     fi
     # A `$(...)` substitution is a nested command: it is decided on its own,
     # and the command around it -- including a redirection of its own already
@@ -908,6 +924,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       check_gated_command
       read -r cmd_writes cmd_subst cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
       unset 'cmd_stack[-1]'
+      # The command that resumes here contains a substitution, whether or
+      # not its name has been seen yet (`$(touch cosign.pub) df -T`).
+      cmd_subst=1
       continue
     fi
     check_gated_command
@@ -916,6 +935,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     ;;
   target)
     redirection_writes_a_path "${redirects[idx]}" "${words[idx]}" && cmd_writes=1
+    # `df -T < <(printf x >cosign.pub)`: the substitution is a target, and
+    # its body still runs (review on arch-bootc#322).
+    [[ "${words[idx]}" == '<(' || "${words[idx]}" == '>(' ]] && cmd_subst=1
     continue
     ;;
   *) ;;

@@ -1538,6 +1538,15 @@ wrapper_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
     "command -p bash -n +n -c 'printf RAN-BEHIND-WRAPPER'" 2>/dev/null </dev/null || true)"
 assert_eq "command -p bash -n +n -c COMMAND runs the command behind the wrapper's option" \
     "RAN-BEHIND-WRAPPER" "${wrapper_out}"
+time_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    "time -p bash -n +n -c 'printf RAN-BEHIND-TIME'" 2>/dev/null </dev/null || true)"
+assert_eq "time -p bash -n +n -c COMMAND runs the command behind time's option" \
+    "RAN-BEHIND-TIME" "${time_out}"
+printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim4"
+(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    'bash -n ./no-such-script.sh $(printf x >victim4)' >/dev/null 2>&1 </dev/null || true)
+assert_not_contains "a command substitution argument writes the file its body names" \
+    "$(cat "${GATED_WORK}/victim4")" "ORIGINAL-CONTENT"
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
 for substituted in "podman images >(cat >cosign.pub)" \
     ">(cat >cosign.pub) podman images" \
@@ -1545,12 +1554,16 @@ for substituted in "podman images >(cat >cosign.pub)" \
     "bash -n <(printf x >written)" \
     "bash -n >(cat) tests/run-tests.sh" \
     "git status; skopeo inspect docker://x >(tee cosign.pub)" \
-    'echo $(podman images >(cat >cosign.pub))'; do
+    'echo $(podman images >(cat >cosign.pub))' \
+    'podman images $(printf x >cosign.pub)' \
+    'podman images `printf x >cosign.pub`' \
+    'gh run view 1 --log $(date) >cosign.pub' \
+    'podman images < <(printf x >cosign.pub)'; do
     run_pre "$(pre_payload_for "${substituted}")"
-    assert_eq "a process substitution in an allow-listed command is refused: ${substituted}" \
+    assert_eq "a substitution in an allow-listed command is refused: ${substituted}" \
         "2" "${PRE_STATUS}"
     assert_contains "and the refusal names the substitution: ${substituted}" \
-        "${PRE_ERR}" "process substitution"
+        "${PRE_ERR}" "substitution"
 done
 
 # 9b. the list of gated commands lives in the hook; this is what keeps it from
@@ -1601,7 +1614,6 @@ for writer in "shellcheck tests/run-tests.sh >cosign.pub" \
     "FOO=bar >cosign.pub shellcheck tests/run-tests.sh" \
     "time shellcheck tests/run-tests.sh >cosign.pub" \
     "command podman images >cosign.pub" \
-    'gh run view 1 --log $(date) >cosign.pub' \
     'echo $(gh run view 1 --log >cosign.pub)' \
     "ls | podman images >cosign.pub" \
     "shellcheck tests/run-tests.sh 2>&1 | tee x; gh pr list >out" \
@@ -1648,6 +1660,7 @@ done
 # group or a subshell is refused by the Bash tool before any rule or hook
 # sees it ("does not accept compound statements with redirection", 2.1.267),
 # so the hook does not restate that refusal.
+# shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
 for unlisted in "echo x >cosign.pub" \
     "cat tests/run-tests.sh >cosign.pub" \
     "python3 tests/some_script.py >cosign.pub" \
@@ -1660,6 +1673,9 @@ for unlisted in "echo x >cosign.pub" \
     "cat < <(gh pr list)" \
     "cat <(podman images)" \
     "command -v shellcheck" \
+    "time -p ls" \
+    'x=$(podman images); echo $x' \
+    'echo $(podman images)' \
     "shellcheck tests/run-tests.sh # output > file" \
     "bash -n tests/run-tests.sh # +n" \
     "git diff HEAD # > cosign.pub"; do
@@ -1680,7 +1696,8 @@ for noexec in "bash -n +n -c 'cat ./cosign.key'" \
     'bash -n "+n" -c id' \
     "git status; bash -n +n -c id" \
     "git status; command -p bash -n +n -c id" \
-    "command -- bash -n +n -c id"; do
+    "command -- bash -n +n -c id" \
+    "git status; time -p bash -n +n -c id"; do
     run_pre "$(pre_payload_for "${noexec}")"
     assert_eq "a + word in a bash -n invocation is refused: ${noexec}" \
         "2" "${PRE_STATUS}"
