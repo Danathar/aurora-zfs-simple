@@ -1478,6 +1478,66 @@ assert_eq "and a git invocation after one is still scanned as git's" \
     "2" "${PRE_STATUS}"
 assert_contains "with git's own refusal" "${PRE_ERR}" "--no-index"
 
+# 8d'. the operand is not the only way in. ShellCheck reads standard input when
+# its operand is `-`, and it prints the source line above every diagnostic
+# either way, so `shellcheck - < .env` printed the file back exactly as
+# `shellcheck ./.env` did in 8a -- and the operand scan never saw the path,
+# because 8a's scan skips a redirection's target (#212). The target of a bare
+# `<` is now held to the operand test: inside the tree, no deny shape, and
+# spelled out. Shown first, the way the operand exposure is shown above.
+if command -v shellcheck >/dev/null 2>&1; then
+    sc_stdin_out="$(shellcheck - <"${SC_WORK}/dotenv" 2>&1 || true)"
+    assert_contains "shellcheck - prints back the file on its standard input" \
+        "${sc_stdin_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
+fi
+# The descriptor, the attached operator, the prefix form bash allows before the
+# command name, and the four rewrites 8b and 8b'' cover, each on the target.
+for fed in "shellcheck - < .env" \
+    "shellcheck - <.env" \
+    "shellcheck -s bash - <./cosign.key" \
+    "shellcheck - 0< ./.env.local" \
+    "shellcheck - < keys/server.pem" \
+    "shellcheck - < /etc/shadow" \
+    "shellcheck - < ${WORK}/outside.sh" \
+    "shellcheck - < ../${sc_repo_name}/cosign.key" \
+    "shellcheck - < ~/.aws/credentials" \
+    "shellcheck - < {tests/run-tests.sh,.env}" \
+    "shellcheck - < .env*" \
+    "shellcheck -x tests/run-tests.sh < ./.env" \
+    "shellcheck - < './.env'" \
+    "< .env shellcheck -" \
+    "command -p shellcheck - < .env" \
+    "git status; shellcheck - < .env"; do
+    run_pre "$(pre_payload_for "${fed}")"
+    assert_eq "a file fed to shellcheck on stdin is refused: ${fed}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the redirection: ${fed}" \
+        "${PRE_ERR}" "reads standard input"
+done
+# `/dev/null` has nothing to print back, a script inside the checkout is the
+# ordinary lint run, and the operators that carry no path are untouched: `<<`
+# takes a delimiter, `<<<` takes content, and `<&` duplicates a descriptor.
+# A redirection on some *other* command of the string is that command's own.
+for fedok in "shellcheck - < tests/run-tests.sh" \
+    "shellcheck -s bash - <tests/run-tests.sh" \
+    "shellcheck tests/run-tests.sh < /dev/null" \
+    "shellcheck - </dev/null" \
+    "shellcheck - <<< 'echo hi'" \
+    "shellcheck - <&3" \
+    "shellcheck - < 'tests/*.sh'" \
+    "cat .env | shellcheck -" \
+    "gh pr list < .env" \
+    "echo x < .env; shellcheck tests/run-tests.sh"; do
+    run_pre "$(pre_payload_for "${fedok}")"
+    assert_eq "a harmless input redirection is left alone: ${fedok}" \
+        "0" "${PRE_STATUS}"
+done
+# A here-document's delimiter is not a path, and the rule above must not read
+# it as one. The quoted spelling is the one section 9 leaves alone; the
+# unquoted one is refused there for its body, not for this.
+run_pre "$(pre_payload_for "$(printf "shellcheck - <<'EOF'\necho hi\nEOF\n")")"
+assert_eq "a here-document delimiter is not a path" "0" "${PRE_STATUS}"
+
 # 8e. the settings file records the decision, next to the one for git diff.
 SHELLCHECK_NOTE="$(jq -r '._note_shellcheck // ""' "${SETTINGS}")"
 assert_contains "the note names what shellcheck prints" \
@@ -1486,6 +1546,8 @@ assert_contains "and that no permission pattern closes it" \
     "${SHELLCHECK_NOTE}" "match by prefix"
 assert_contains "and the residual it does not cover" \
     "${SHELLCHECK_NOTE}" "external-sources"
+assert_contains "and the redirection that feeds it a file the operands do not name" \
+    "${SHELLCHECK_NOTE}" "standard input"
 
 # --- 9. the same write, in the allow-listed commands that are not git -------
 #

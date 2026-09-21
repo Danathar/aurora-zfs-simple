@@ -150,6 +150,19 @@
 # echoes at most the one line of a syntax error, and the key and `.env` shapes
 # parse cleanly and print nothing.
 #
+# An operand is not the only way to aim it at a file. ShellCheck reads standard
+# input when its operand is `-`, so `shellcheck - < .env` printed the file back
+# exactly as `shellcheck ./.env` did, and the operand scan never saw the path
+# because it sat behind the `<` (#212). The target of every bare `<` in such an
+# invocation -- with or without a descriptor (`<f`, `0<f`), and in the form
+# written before the command name (`< .env shellcheck -`) -- is therefore held
+# to what an operand is held to: inside the working tree, none of the deny
+# shapes, and spelled out with no brace, leading `~` or glob.
+# `/dev/null` stays allowed, since there is nothing to print back and
+# `</dev/null` is how a session says "no stdin". `<<` and `<<<` carry a
+# delimiter or content rather than a path and need no check, and `<&` and `<>`
+# are already decided by the redirection rules.
+#
 # Not every operand arrives in the argv, either. `SHELLCHECK_OPTS` is not a
 # list of options despite the name: shellcheck splits it and prepends it to its
 # own arguments, operands included, so `SHELLCHECK_OPTS=./.env shellcheck
@@ -218,10 +231,13 @@ SHELLCHECK_OPTS_MSG='blocked: SHELLCHECK_OPTS is not a list of options -- shellc
 # shellcheck disable=SC2016 # the literal $HOME is what the reader has to see
 SHELLCHECK_EXPAND_MSG='blocked: bash rewrites this word before shellcheck sees it, and this gate reads the words as typed, so the path checked here is not the path shellcheck would open: shellcheck {tests/run-tests.sh,/etc/shadow} is one word to the operand scan here and two files to shellcheck -- the second of which it would print back; an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to the gate (shellcheck ~/.aws/credentials); an unquoted glob character (*, ? or a bracket) is what bash expands into files this gate never saw (shellcheck .env*); and a $, a backtick or a process substitution supplies operands at runtime. Expanding them correctly means reimplementing bash inside a hook, so they are refused instead. Spell every path out in full, relative to the checkout.'
 
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+SHELLCHECK_READ_MSG='blocked: shellcheck reads standard input when its operand is `-`, and it prints the source line above every diagnostic it reports, so `shellcheck - < .env` prints the file back exactly as `shellcheck ./.env` does -- and the operand scan says nothing, because the path sits behind the `<` rather than in the argv. The target of a bare `<` on a shellcheck invocation is checked the way an operand is: it must be inside the working tree, must not be one of the secret-shaped names the Read(...) deny rules in .claude/settings.json list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519), and must be spelled out -- no brace, no leading ~, no glob, since those are words bash rewrites before shellcheck opens anything. Redirecting from a script inside the checkout is unaffected, and so is </dev/null. Describe such a file with ls -l or wc -c instead.'
+
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal text
-GATED_REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside an allow-listed command makes the shell open its target for writing before the command runs, and the allow rule matches a command prefix while the redirection is the rest of the string, so nothing prompts: `shellcheck tests/run-tests.sh >cosign.pub` truncates the trust anchor before a line is linted, and `gh run view 1 --log >.claude/settings.json` overwrites the file holding these rules. It is the same write .claude/hooks/gate-git-diff.sh already refuses for `git diff HEAD >cosign.pub`. These commands print to stdout; read that, or pipe it. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) are not affected, and a command no allow rule covers is left alone -- that one prompts on its own.'
+GATED_REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside an allow-listed command makes the shell open its target for writing before the command runs, and the allow rule matches a command prefix while the redirection is the rest of the string, so nothing prompts: `shellcheck tests/run-tests.sh >cosign.pub` truncates the trust anchor before a line is linted, and `gh run view 1 --log >.claude/settings.json` overwrites the file holding these rules. It is the same write .claude/hooks/gate-git-diff.sh already refuses for `git diff HEAD >cosign.pub`. These commands print to stdout; read that, or pipe it. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) open nothing for writing and are not refused by this rule -- the target of a bare < on a shellcheck run is checked by a rule of its own, because that command prints back what it reads -- and a command no allow rule covers is left alone: that one prompts on its own.'
 
 # shellcheck disable=SC2016 # the literal $(...) and <( are what the reader has to see
 GATED_SUBST_MSG='blocked: a substitution or an expansion -- `$(...)`, a backtick, `$VAR`, `<(...)` or `>(...)`, quoted or not, in a word or a redirection target -- in an allow-listed command runs a command or supplies a word as part of a string the allow rule approved on its prefix alone, and neither is held to any rule: `df -T >(cat >cosign.pub)` and `podman images $(printf x >cosign.pub)` truncate the trust anchor from inside the substitution while the command prints as usual. It is refused in these commands the way it is in a git or shellcheck invocation. Write the inner command as a command of its own.'
@@ -722,6 +738,71 @@ word_bash_would_rewrite() {
   return 1
 }
 
+# Git's path_inside_repo, which decides on the *spelling* rather than on where
+# the path ends up. That distinction is the whole of this function, and folding
+# `..` before the comparison gets it backwards: `git diff --
+# ../<checkout>/cosign.key -` names a file inside this repository by a route
+# that leaves it and comes back, git's test calls that outside and enters the
+# plain-file mode, and a gate that resolved the path first saw a tidy in-tree
+# path and allowed it -- reading a denied path with two operands that both look
+# local. So an absolute path, any `..` component, and the stdin operand `-` each
+# count as outside here, and only a plain relative path is resolved at all. So
+# does a leading `~`: to bash that is a home directory, never a path under
+# this checkout, and resolving the literal put `~/.aws/credentials` inside
+# the tree. Anything this cannot decide -- no working tree, no realpath on
+# the host -- counts as outside too, so the gate refuses rather than guesses.
+#
+# Defined here rather than beside the operand scan that was its first caller:
+# the redirection scan below reaches it too, and a bash function has to exist
+# before the line that calls it runs.
+path_inside_worktree() {
+  local candidate toplevel
+  case "$1" in
+  - | /* | '~'*) return 1 ;;
+  ../* | */../* | */..) return 1 ;;
+  ..) return 1 ;;
+  *) ;;
+  esac
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  candidate="$(realpath -m -s -- "$1" 2>/dev/null)" || return 1
+  [[ "${candidate}" == "${toplevel}" || "${candidate}" == "${toplevel}"/* ]]
+}
+
+# The shapes `.claude/settings.json` denies the Read tool. Inside the working
+# tree is not enough on its own: `cosign.key` and a `.env` live there, and they
+# are the two files those rules exist for. The key and certificate suffixes are
+# not in the deny list today; they are here because a rule that only listed
+# what is checked in would go quiet the moment someone dropped a `.pem` beside
+# it.
+denied_read_shape() {
+  case "${1##*/}" in
+  cosign.key | .env | .env.* | *.pem | *.p12 | id_rsa | id_ed25519) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+# Whether this redirection hands shellcheck a file it would print back. Only a
+# bare `<` opens a path for reading -- the descriptor in `0<f` is dropped by
+# the split above, so the operator arrives as `<` either way. `<<` reads a
+# here-document and `<<<` a here-string, whose word is content rather than a
+# path and cannot name a file without a substitution, which is refused before
+# this runs; `<&` duplicates a descriptor and `<>` is decided by
+# `redirection_writes_a_path`. `/dev/null` is exempt: there is nothing to
+# print back, and `</dev/null` is how a session says "no stdin".
+#
+# The target is judged on both spellings, as an operand is: the word as typed
+# for the rewrites bash performs before shellcheck opens anything, and the
+# quote-stripped word for where the path lands.
+redirection_reads_a_denied_path() {
+  local op="$1" word="$2" raw="$3"
+  [[ "${op}" == '<' ]] || return 1
+  [[ "${word}" == '/dev/null' ]] && return 1
+  brace_would_expand "${raw}" && return 0
+  word_bash_would_rewrite "${raw}" && return 0
+  path_inside_worktree "${word}" || return 0
+  denied_read_shape "${word}"
+}
+
 raw_in_git=0
 raw_in_shellcheck=0
 writing_redirect=0
@@ -873,12 +954,20 @@ check_gated_command() {
   # A `SHELLCHECK_OPTS=` assignment has a refusal of its own, which names what
   # the linter reads out of it; that one is left to say it.
   ((cmd_gated && cmd_assign)) && [[ "${cmd_prefix}" != shellcheck* || "${cmd_assign_name}" != SHELLCHECK_OPTS ]] && refuse "${GATED_ENV_MSG}"
+  # Scoped to shellcheck rather than to every gated prefix, and decided here
+  # rather than at the redirection, because bash lets the redirection precede
+  # the command name -- `< .env shellcheck -` is the same command as
+  # `shellcheck - < .env`, and the name is not known until the command ends.
+  # The other gated commands print their own output rather than what they are
+  # fed, so a file on their stdin is not read back out.
+  ((cmd_gated && cmd_reads)) && [[ "${cmd_prefix}" == shellcheck* ]] && refuse "${SHELLCHECK_READ_MSG}"
   return 0
 }
 
 reset_command() {
   cmd_prefix=''
   cmd_writes=0
+  cmd_reads=0
   cmd_subst=0
   cmd_heredoc=0
   cmd_assign=0
@@ -895,6 +984,7 @@ reset_command() {
 # after it belongs to the same command until a separator.
 cmd_prefix='' # the words so far, space-joined, while a prefix is still possible
 cmd_writes=0  # a redirection in this command opens a path for writing
+cmd_reads=0   # a bare `<` in it feeds shellcheck a file it would print back
 cmd_subst=0   # a substitution stands in this command, or in a target of it
 cmd_heredoc=0 # this command reads a here-document bash expands
 cmd_assign=0  # an assignment stands before this command's name
@@ -932,13 +1022,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     if [[ "${words[idx]}" == '$(' ]] ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
-      cmd_stack+=("${cmd_writes} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_prefix}")
+      cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_prefix}")
       reset_command
       continue
     fi
     if [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#cmd_stack[@]})); then
       check_gated_command
-      read -r cmd_writes cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
+      read -r cmd_writes cmd_reads cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_prefix <<<"${cmd_stack[-1]}"
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
@@ -951,6 +1041,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     ;;
   target)
     redirection_writes_a_path "${redirects[idx]}" "${words[idx]}" && cmd_writes=1
+    # ShellCheck reads standard input when its operand is `-` and prints the
+    # source line above every diagnostic, so `shellcheck - < .env` printed the
+    # file back exactly as `shellcheck ./.env` did while the operand scan --
+    # which skips a redirection's target -- saw nothing (#212). Recorded for
+    # the command rather than refused here, because the redirection may be
+    # written before the name.
+    redirection_reads_a_denied_path "${redirects[idx]}" "${words[idx]}" "${raw_words[idx]}" && cmd_reads=1
     # `df -T < <(printf x >cosign.pub)`: the substitution is a target, and
     # its body still runs (review on arch-bootc#322). So does one quoted
     # into the target of an input redirection or a here-string
@@ -1030,45 +1127,6 @@ case "${normalized}" in
 *--no-index*) refuse "${DIFF_MSG}" ;;
 *) ;;
 esac
-
-# Git's path_inside_repo, which decides on the *spelling* rather than on where
-# the path ends up. That distinction is the whole of this function, and folding
-# `..` before the comparison gets it backwards: `git diff --
-# ../<checkout>/cosign.key -` names a file inside this repository by a route
-# that leaves it and comes back, git's test calls that outside and enters the
-# plain-file mode, and a gate that resolved the path first saw a tidy in-tree
-# path and allowed it -- reading a denied path with two operands that both look
-# local. So an absolute path, any `..` component, and the stdin operand `-` each
-# count as outside here, and only a plain relative path is resolved at all. So
-# does a leading `~`: to bash that is a home directory, never a path under
-# this checkout, and resolving the literal put `~/.aws/credentials` inside
-# the tree. Anything this cannot decide -- no working tree, no realpath on
-# the host -- counts as outside too, so the gate refuses rather than guesses.
-path_inside_worktree() {
-  local candidate toplevel
-  case "$1" in
-  - | /* | '~'*) return 1 ;;
-  ../* | */../* | */..) return 1 ;;
-  ..) return 1 ;;
-  *) ;;
-  esac
-  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
-  candidate="$(realpath -m -s -- "$1" 2>/dev/null)" || return 1
-  [[ "${candidate}" == "${toplevel}" || "${candidate}" == "${toplevel}"/* ]]
-}
-
-# The shapes `.claude/settings.json` denies the Read tool. Inside the working
-# tree is not enough on its own: `cosign.key` and a `.env` live there, and they
-# are the two files those rules exist for. The key and certificate suffixes are
-# not in the deny list today; they are here because a rule that only listed
-# what is checked in would go quiet the moment someone dropped a `.pem` beside
-# it.
-denied_read_shape() {
-  case "${1##*/}" in
-  cosign.key | .env | .env.* | *.pem | *.p12 | id_rsa | id_ed25519) return 0 ;;
-  *) return 1 ;;
-  esac
-}
 
 seen_git=0
 in_git=0
