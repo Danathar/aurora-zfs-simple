@@ -44,9 +44,11 @@ boot, where it is much worse.
   step. Do not introduce one.
 - `shellcheck -x` must produce **zero** output, informational findings included.
   The test suite enforces this.
-- Every `*.sh` needs a shebang and the executable bit; the `Containerfile` and
-  the workflows run these scripts by path.
-- Four-space indentation, except `ci/write-badges.sh`, which is two.
+- Shebang and executable bit on anything run by path; the `Containerfile` and
+  the workflows run these scripts that way. The exception is `tests/lib/`,
+  which is only ever sourced and deliberately carries neither.
+- Four-space indentation, except `ci/write-badges.sh` and
+  `.claude/hooks/gate-git-diff.sh`, which are two.
 - `./tests/run-tests.sh` is the suite. Install `shellcheck` before trusting a
   green run — the suite skips that pass when the tool is absent.
 

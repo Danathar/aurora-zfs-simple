@@ -42,6 +42,7 @@ when present and skipped when not.
 | `test-quality-docs.sh`      | `docs/quality.md`, `docs/metrics.md` and `docs/review-rubric.md`: the badge and gate tables against `.github/workflows/build.yml`, `.github/workflows/status-badges.yml`, the `Containerfile` and `ci/write-badges.sh`; the metrics commands parsed and their `jq` filters compiled; and the rubric's checks, incident comments, shell bar, evidence table and signing claim against the code each one names |
 | `test-memory-corrections.sh` | `.claude/memory/corrections.md`: the entry shape `.claude/memory/README.md` asks for, every repository path the entries cite, and each correction's claims against the machine that settles it — the `Containerfile`'s final two `RUN` steps and the rechunk's place after them in `.github/workflows/build.yml`, that step's `.Config` read and incident numbers, AGENTS.md's `--state all` query, diagnosis block and pin example, and `test-shell-syntax.sh`'s shellcheck skip against CI's `Install shellcheck` step |
 | `test-cursorrules.sh`       | `.cursorrules`: every rule that names something in this repository, held against it — the three artifacts the `Containerfile` assembles and the two `ci/write-badges.sh` compares, the `kmod-zfs` glob and the fatal install in `build_files/zfs.sh`, the kernel erase in `build_files/kernel-akmods.sh`, the indent exceptions against `.editorconfig`, the shebang, executable-bit and `shellcheck` bars against `test-shell-syntax.sh` and `.shellcheckrc`, and the scripts it calls unreachable from the host against `test-coverage.sh`'s `UNCOVERED` set |
+| `test-copilot-instructions.sh` | `.github/copilot-instructions.md`: every instruction that names something in this repository — the three artifacts and the two compared kernels out of the `Containerfile` and `ci/write-badges.sh`, the kernel erase held against the `Containerfile` mount that supplies the replacement, the `kmod-zfs` glob and fatal install in `build_files/zfs.sh`, the `shellcheck` bar and its skip against `test-shell-syntax.sh` and `.shellcheckrc`, the shebang exemption and the two-space exception list against the tree and `.editorconfig` in both directions and against the same rules in `.cursorrules` and CONTRIBUTING.md, the three incident comments it tells an agent not to strip against `.github/workflows/build.yml` and `ci/write-badges.sh`, and the unreachable-from-the-host set against `test-coverage.sh`'s `UNCOVERED` column |
 | `test-editorconfig.sh`      | `.editorconfig`: every section resolved the way EditorConfig resolves them and measured against the tree — line endings, final newlines, charset and the two trailing-whitespace exemptions over every tracked file, `indent_size` against the indentation each shell, YAML, JSON and `Containerfile` actually uses, and the header note's claims about Prettier and `.shellcheckrc` |
 | `test-session-summary.sh`   | `.claude/session-summary.md`: every claim that names something here — the retired branch and tag against README.md, `ARG FEDORA_VERSION` and both unpinned akmods `FROM` lines against the `Containerfile`, `docs/**` against every path filter in `.github/workflows/build.yml`, the unchecked-after-Chunkah ordering against the `Containerfile`'s last two `RUN` steps and the workflow's step order, the `--rechunk` remedy against `tests/e2e/run-e2e.sh`, the Chunkah pin against the workflow and `renovate.json`'s own exclusion, the badge name and its leave-alone branch against `ci/write-badges.sh`, and the label-comparison snippet executed against the `Containerfile` it reads |
 | `test-reflections.sh`       | `docs/reflections/**`: every entry against the format spec its `README.md` states — filename shape, a date stamp equal to the filename date, the three headings in order — and each entry's checkable claims against the file the claim is about: the tag set, single push, `skopeo copy --preserve-digests`, verify-before-sign order and digest-targeted `cosign sign` recomputed from `.github/workflows/build.yml` plus the nightly re-check in `nightly-compliance.yml`; the Chunkah field names and numbers held equal across the entry, AGENTS.md's diagnosis and the rechunk step's comment, with the cap's arithmetic checked; the corrected `README.md` → `AGENTS.md` direction both ways, the historical `renovate.json5` path's absence, the coverage-gate trigger as the complement of `build.yml`'s ignore list, and `docs/risk-tiers.md`'s tier order; and every `docs/reflections/<file>` cited from a non-Markdown file resolving to a tracked file |
@@ -656,6 +657,37 @@ alone.
 `docs/review-rubric.md` states it, and `test-editorconfig.sh` measures the
 indentation itself. This file asks the other question: whether `.cursorrules`
 still describes the sets those two enforce.
+
+## The Copilot instructions
+
+`.github/copilot-instructions.md` is the same surface again, for a third
+reader: GitHub loads it automatically before every Copilot suggestion in this
+repository, and `grep -rF .github/copilot-instructions.md tests/` returned one
+hit that does not read it — `test-labeler.sh` asserting the path matches the
+`area/agents` glob.
+
+It had drifted in exactly the pair of places `.cursorrules` had, and the pair
+survived the correction: when `test-cursorrules.sh` fixed the short two-space
+list and the overstated shebang rule in `.cursorrules`, the same two sentences
+in `.github/copilot-instructions.md` were left as they were. So an agent taking
+its instructions from GitHub rather than Cursor would still have written a
+four-space diff into `.claude/hooks/gate-git-diff.sh` and `chmod +x`'d
+`lib/assert.sh` and `lib/markdown.sh`. That is the argument for the test rather
+than the edit: correcting prose nothing reads postpones the next copy instead of
+stopping it. Both sentences are corrected here, and `test-copilot-instructions.sh`
+now holds them — with the two-space list and the `tests/lib/` exemption compared
+across all three documents that state them, `.cursorrules` and CONTRIBUTING.md
+included, so a correction applied to one document alone fails.
+
+Two of its sections are checked in ways the Cursor rules did not need. Its link
+to AGENTS.md is relative and resolved from `.github/`, which is where GitHub
+resolves it, so a move of either file fails rather than rendering a dead link
+in the document Copilot reads first. And its "When writing comments" section
+names three specific comments — the `.Config`-only `podman inspect`, the badge
+script's refusal to guess, the push-once-then-copy tag propagation — and tells
+an agent not to remove them; each is held against the code that carries it, and
+the first one also as an absence, because an unformatted `podman inspect` added
+beside it is the `MAX_ARG_STRLEN` failure the comment exists to record.
 
 ## The session summary
 
