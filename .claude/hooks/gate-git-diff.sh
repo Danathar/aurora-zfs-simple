@@ -392,9 +392,20 @@ for ((i = 0; i < ${#command_string}; i++)); do
     if [[ "${next}" == '(' ]]; then
       # Process substitution. Kept as a word spelled `<(` or `>(` so the
       # brace scan can refuse it inside a git invocation; its body is a
-      # command of its own and is split as one.
+      # command of its own and is split as one. Written where a
+      # redirection's target goes (`df -T > >(cat >victim)`), it is that
+      # target: bash connects the command's output to the substitution,
+      # which writes wherever it likes, so it is kept as a `target` of that
+      # operator and `redirection_writes_a_path` reads it as the write it
+      # is (review on arch-bootc#322).
       raw_word="${ch}("
-      push_word word
+      if ((redirect_pending)); then
+        push_word target "${redirect_op}"
+        redirect_pending=0
+        redirect_op=''
+      else
+        push_word word
+      fi
       push_sep '('
       ((i++))
       continue

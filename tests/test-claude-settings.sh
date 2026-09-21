@@ -1517,6 +1517,14 @@ noexec_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
     "bash -n +n -c 'printf RAN-UNDER-BASH-N'" 2>/dev/null </dev/null || true)"
 assert_eq "bash -n +n -c COMMAND runs the command the -n was meant to keep from running" \
     "RAN-UNDER-BASH-N" "${noexec_out}"
+# And a process substitution as the redirection's target: bash connects the
+# command's output to a command of its own, which writes wherever it likes
+# (review on arch-bootc#322, the same hook).
+printf 'ORIGINAL-CONTENT\n' >"${GATED_WORK}/victim2"
+(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
+    'bash -n ./no-such-script.sh 2> >(cat >victim2); wait' >/dev/null 2>&1 </dev/null || true)
+assert_not_contains "a redirection onto a process substitution writes the file the substitution names" \
+    "$(cat "${GATED_WORK}/victim2")" "ORIGINAL-CONTENT"
 
 # 9b. the list of gated commands lives in the hook; this is what keeps it from
 # drifting. The commands are derived from the settings file rather than
@@ -1569,7 +1577,10 @@ for writer in "shellcheck tests/run-tests.sh >cosign.pub" \
     'gh run view 1 --log $(date) >cosign.pub' \
     'echo $(gh run view 1 --log >cosign.pub)' \
     "ls | podman images >cosign.pub" \
-    "shellcheck tests/run-tests.sh 2>&1 | tee x; gh pr list >out"; do
+    "shellcheck tests/run-tests.sh 2>&1 | tee x; gh pr list >out" \
+    "shellcheck tests/run-tests.sh > >(cat >cosign.pub)" \
+    "podman images >>(tee cosign.pub)" \
+    "gh pr list 2> >(cat >cosign.pub)"; do
     run_pre "$(pre_payload_for "${writer}")"
     assert_eq "an output redirection inside an allow-listed command is refused: ${writer}" \
         "2" "${PRE_STATUS}"
@@ -1614,7 +1625,9 @@ for unlisted in "echo x >cosign.pub" \
     "shellcheck tests/run-tests.sh | tee out" \
     ">out echo x; gh pr list" \
     "bash -n tests/run-tests.sh; { bash -n missing.sh; } >cosign.pub" \
-    "(shellcheck tests/run-tests.sh) >cosign.pub"; do
+    "(shellcheck tests/run-tests.sh) >cosign.pub" \
+    "echo x > >(cat >cosign.pub)" \
+    "cat < <(gh pr list)"; do
     run_pre "$(pre_payload_for "${unlisted}")"
     assert_eq "a redirection on a command no allow rule covers is left alone: ${unlisted}" \
         "0" "${PRE_STATUS}"
