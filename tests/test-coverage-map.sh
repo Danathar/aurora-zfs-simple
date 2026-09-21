@@ -178,7 +178,18 @@ assert_eq "the not-covered extractor reads only the bare path entries" \
 
 # --- the coverage table against the tests/test-*.sh glob ---------------------
 
-TRACKED_TESTS=$(cd "${REPO_ROOT}" && git ls-files 'tests/test-*.sh' | sed 's#^tests/##' | sort)
+# The set has to be the runner's set, which tests/run-tests.sh builds with
+# `find "${TEST_DIR}" -maxdepth 1 -name 'test-*.sh' -type f`: immediate children
+# of tests/ only. A git pathspec is not a shell glob -- its `*` matches `/` as
+# well, so `tests/test-*.sh` also lists a tracked tests/test-fixtures/helper.sh
+# (see the pathspec entry in gitglossary(7)). Left as-is, a helper parked under
+# such a directory is not a test the runner ever executes, yet this gate would
+# demand a coverage-table row for it. `NF == 2` keeps the two-component paths,
+# which is the same set `-maxdepth 1` reaches.
+TRACKED_TESTS=$(
+    cd "${REPO_ROOT}" && git ls-files 'tests/test-*.sh' |
+        awk -F/ 'NF == 2' | sed 's#^tests/##' | sort
+)
 if ! require_nonempty "a tracked tests/test-*.sh set to compare the table with" "${TRACKED_TESTS}"; then
     finish
     exit
