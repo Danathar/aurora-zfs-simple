@@ -2258,6 +2258,21 @@ corpus_row refuse "4 name: a path to timeout before shellcheck" \
     "/usr/bin/timeout 5 shellcheck tests/run-tests.sh >out"
 # shellcheck disable=SC2016 # the variable is a spelling handed to the hook
 corpus_row refuse "4 name: a wrapper path built at runtime" 'git status; $D/env git diff HEAD'
+# The command xargs runs is the first word after xargs's own options, read
+# the way GNU findutils and uutils read them; an option the two read
+# differently, or one neither has, leaves every later word a possible name.
+corpus_row refuse "4 name: an xargs option's value in the next word" \
+    "xargs -n 1 git diff <list.txt"
+corpus_row refuse "4 name: an xargs long option's value in the next word" \
+    "xargs --max-args 1 git diff <list.txt"
+corpus_row refuse "4 name: -- ends xargs's options" "xargs -- git diff <list.txt"
+corpus_row refuse "4 name: an xargs option's value spelled as a keyword" \
+    "xargs -I if git diff <list.txt"
+corpus_row refuse "4 name: xargs running a wrapper" "xargs timeout 5 git diff <list.txt"
+corpus_row refuse "4 name: an xargs option read two ways" \
+    "xargs --max-lines 1 git diff <list.txt"
+corpus_row refuse "4 name: an xargs option this does not read" \
+    "xargs -J % git diff <list.txt"
 # Allowed, with the reason: a literal name, with or without the quoting bash
 # strips off it, is the name the allow rule matched and the name this gate
 # reads.
@@ -2273,6 +2288,14 @@ corpus_row allow "4 name: xargs as a word of git's" "git log --grep=xargs -1"
 corpus_row allow "4 name: xargs as an argument after a gated prefix" \
     "timeout 5 podman ps xargs"
 corpus_row allow "4 name: noglob before an ordinary diff" "noglob git diff HEAD"
+# The words after the command xargs runs are that command's arguments, not
+# names (review on #224).
+corpus_row allow "4 name: xargs runs rg, and shellcheck is its argument" \
+    "git ls-files | xargs rg shellcheck"
+corpus_row allow "4 name: xargs runs grep, and git is its argument" \
+    "git ls-files | xargs grep -l git"
+corpus_row allow "4 name: an xargs option's attached value" \
+    "git ls-files | xargs -n1 rg shellcheck"
 
 # 10e. shape 5: an option that loads or writes. Git's config layer runs
 # programs -- `diff.external` is `GIT_EXTERNAL_DIFF` by another name -- and its
@@ -2489,6 +2512,12 @@ mutation "refusing xargs in front of git or an allow-listed command" \
 mutation "a literal path to a wrapper read as that wrapper" \
     'case "${word##*/}" in' 'case "${word}" in' \
     "git status; /usr/bin/xargs git diff"
+mutation "reading the next word as the value of an xargs option" \
+    'xargs_optarg=1' 'xargs_optarg=0' \
+    "xargs -n 1 git diff <list.txt"
+mutation "every later word a possible name after an xargs option this does not read" \
+    'xargs_state=0 # not an option this reads' 'continue # not an option this reads' \
+    "xargs -J % git diff <list.txt"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"

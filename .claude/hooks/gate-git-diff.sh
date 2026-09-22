@@ -231,7 +231,10 @@
 # diff`, so nothing prompted. An `xargs` in front of git or an allow-listed
 # command is refused outright, wherever it stands among the other wrappers
 # (see `XARGS_MSG`); in front of any other command it is left alone, since
-# that command matches no allow row and prompts on its own.
+# that command matches no allow row and prompts on its own. The command xargs
+# runs is the first word after xargs's own options, so `git ls-files | xargs
+# rg shellcheck` runs rg and is left alone. A literal path to a wrapper
+# (`/usr/bin/xargs`, `/usr/bin/nohup`) is read as that wrapper.
 #
 # What it still cannot see, stated rather than implied: a command that hides a
 # git invocation behind another interpreter (`sh -c ...`), one that changes
@@ -613,7 +616,44 @@ end_word
 # from the gated-prefix scan below, which decides the write from the name.
 # `xargs` is recorded as well as stepped over, in `xargs_names`: it is the
 # one wrapper that adds words to the command it runs, so that scan refuses
-# it in front of git or an allow-listed command (see `XARGS_MSG`).
+# it in front of git or an allow-listed command (see `XARGS_MSG`). Its own
+# options are read, too, so that the command it runs is known and the words
+# after that command are its arguments rather than names (see below).
+#
+# Whether a word in a name position is spelled literally: no `$`, backtick,
+# `*` or `?`, no `[` other than the `[` and `[[` commands themselves, and no
+# brace bash would expand.
+name_is_literal() {
+  local raw="$1" word="$2"
+  [[ "${raw}" == *'$'* || "${raw}" == *'`'* || "${raw}" == *'*'* || "${raw}" == *'?'* ]] && return 1
+  brace_would_expand "${raw}" && return 1
+  [[ "${raw}" == *'['* && "${word}" != '[' && "${word}" != '[[' ]] && return 1
+  return 0
+}
+
+# GNU findutils' and uutils' xargs short options, clustered the way getopt
+# allows (`-0rn1`). Returns non-zero at a letter it does not know, and at an
+# optional-value letter (`-e`, `-i`, `-l`) with no value attached, which the
+# two implementations read differently. Sets `xargs_optarg` when a letter
+# that takes a value ends the word, so the value is the next word.
+xargs_short_options() {
+  local cluster="${1#-}" i
+  for ((i = 0; i < ${#cluster}; i++)); do
+    case "${cluster:i:1}" in
+    0 | o | p | r | t | x) ;;
+    a | d | E | I | L | n | P | s)
+      ((i + 1 < ${#cluster})) || xargs_optarg=1
+      return 0
+      ;;
+    e | i | l)
+      ((i + 1 < ${#cluster}))
+      return
+      ;;
+    *) return 1 ;;
+    esac
+  done
+  return 0
+}
 command_word_pending=1 # the next word of this command may be its name
 after_time=0           # the last name-position word was `time`, whose -p may follow
 after_wrapper=0        # a wrapper ran: every remaining word may be the name
@@ -621,6 +661,9 @@ command_names=()       # 1 at each index that names, or may name, a command
 name_assignments=()    # 1 at each assignment this scan skipped before a name
 moves_dir=()           # 1 at each name that moves the shell's working directory
 xargs_names=()         # 1 at each `xargs` in a position a command's name may take
+xargs_state=0          # 1: xargs's own options are being read; 2: after its `--`
+xargs_optarg=0         # the next word is the value of an xargs option
+xargs_command_idx=-1   # the word xargs runs, once its options are read
 worktree_moved=0       # a name above has moved it, for the scans that follow
 wrapper_name=''
 in_backtick=0
@@ -634,14 +677,16 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # `echo $(date) *.sh` does not read `*.sh` as a name.
     # shellcheck disable=SC2016 # the literal `$(` is the separator's name
     if [[ "${words[idx]}" == '$(' ]]; then
-      name_stack+=("${command_word_pending} ${after_wrapper} ${wrapper_name}")
+      name_stack+=("${command_word_pending} ${after_wrapper} ${xargs_state} ${xargs_optarg} ${wrapper_name}")
       command_word_pending=1
       after_wrapper=0
       wrapper_name=''
+      xargs_state=0
+      xargs_optarg=0
       continue
     fi
     if [[ "${words[idx]}" == '$)' ]] && ((${#name_stack[@]})); then
-      read -r command_word_pending after_wrapper wrapper_name <<<"${name_stack[-1]}"
+      read -r command_word_pending after_wrapper xargs_state xargs_optarg wrapper_name <<<"${name_stack[-1]}"
       unset 'name_stack[-1]'
       continue
     fi
@@ -652,6 +697,8 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
         command_word_pending=0
         after_wrapper=0
         wrapper_name=''
+        xargs_state=0
+        xargs_optarg=0
         continue
       fi
       ((command_word_pending)) && refuse "${CMD_MSG}"
@@ -661,6 +708,8 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     after_wrapper=0
     after_time=0
     wrapper_name=''
+    xargs_state=0
+    xargs_optarg=0
     continue
     ;;
   target) continue ;;
@@ -669,6 +718,48 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   ((command_word_pending)) || continue
   raw_word="${raw_words[idx]}"
   word="${words[idx]}"
+  # xargs's own options and their values, read so that the command xargs
+  # runs is known: it is the first word after them, and the words after it
+  # are that command's arguments rather than names -- `git ls-files | xargs
+  # rg shellcheck` runs rg with `shellcheck` as its pattern, and read as a
+  # chain of name candidates it was refused as a shellcheck run (review on
+  # #224). Read here, before the assignment and keyword tests below, which
+  # would take the value in `-I if` or `-I A=1` for a word of their own and
+  # hand the value's slot to the command after it. Held to the literal test
+  # all the same: bash splits an unquoted `$X` in `-n$X` into more words. An
+  # option GNU findutils and uutils do not both read the same way, or that
+  # neither has (`-J`), or an abbreviated long option, leaves the older
+  # reading in place: every later word may be the name.
+  if ((xargs_optarg)); then
+    name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
+    xargs_optarg=0
+    continue
+  fi
+  if ((xargs_state == 1)) && [[ "${word}" == -?* ]]; then
+    name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
+    case "${word}" in
+    --)
+      xargs_state=2
+      continue
+      ;;
+    --arg-file | --delimiter | --max-args | --max-procs | --max-chars | --process-slot-var)
+      xargs_optarg=1
+      continue
+      ;;
+    --arg-file=* | --delimiter=* | --max-args=* | --max-procs=* | --max-chars=* | \
+      --process-slot-var=* | --eof=* | --replace=* | --max-lines=* | --null | \
+      --open-tty | --interactive | --no-run-if-empty | --verbose | --exit | --show-limits)
+      continue
+      ;;
+    --*) ;;
+    *) xargs_short_options "${word}" && continue ;;
+    esac
+    xargs_state=0 # not an option this reads: every later word may be the name
+  fi
+  if ((xargs_state)); then
+    xargs_state=0
+    xargs_command_idx=${idx}
+  fi
   if ((after_time)) && [[ "${word}" == '-p' || "${word}" == '--' ]]; then
     continue # time's own option (review on arch-bootc#322); the name is still to come
   fi
@@ -728,12 +819,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     [[ "${raw_word}" =~ ^-[^-]*c || "${raw_word}" == --command* ]]; then
     refuse "${WRAPPER_SHELL_MSG}"
   fi
-  if [[ "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ||
-    "${raw_word}" == *'*'* || "${raw_word}" == *'?'* ]] ||
-    brace_would_expand "${raw_word}" ||
-    { [[ "${raw_word}" == *'['* ]] && [[ "${word}" != '[' && "${word}" != '[[' ]]; }; then
-    refuse "${CMD_MSG}"
-  fi
+  name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
   # A wrapper, matched on its last path component once the word is known to
   # be literal: a literal path to a wrapper is that wrapper, as a literal path
   # to git is git below. Read as the name, `git status; /usr/bin/xargs git
@@ -747,7 +833,10 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     setsid | ionice | chrt | taskset | unshare | flock)
     after_wrapper=1
     wrapper_name="${word##*/}"
-    [[ "${wrapper_name}" == xargs ]] && xargs_names[idx]=1
+    if [[ "${wrapper_name}" == xargs ]]; then
+      xargs_names[idx]=1
+      xargs_state=1
+    fi
     continue
     ;;
   *) ;;
@@ -777,6 +866,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   *) ;;
   esac
   command_names[idx]=1
+  # The command xargs runs, when it is not a wrapper, keyword or assignment
+  # (each of which went on above): the words after it are its arguments.
+  ((idx == xargs_command_idx)) && after_wrapper=0
   ((after_wrapper)) || command_word_pending=0
 done
 
