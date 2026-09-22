@@ -144,8 +144,9 @@ floating tags to agree.
 
 ### Symptom
 
-The `Build and push image` step fails in `zfs.sh` with a glob that matched
-nothing:
+The `Build Image` step fails in `zfs.sh` with a glob that matched nothing.
+(`Build and push image` is the *job* that step belongs to; `gh run view
+--log-failed` groups the log by step, so search for the step name.)
 
 ```
 + KERNEL=<new-kernel>
