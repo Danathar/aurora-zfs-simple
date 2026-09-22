@@ -60,6 +60,13 @@
 # step`` is split across two lines in the source and only matches once the
 # prose is flattened.
 
+# Most of what this file matches is shell source and Markdown code spans:
+# `${KERNEL}` as zfs.sh writes it, a backtick class for a code span, `${img}`
+# as the document's own loop writes it. Every one of those has to reach the
+# matcher unexpanded, so the single quotes are the point rather than an
+# oversight, and SC2016 is off for the file rather than repeated above each.
+# shellcheck disable=SC2016
+
 set -uo pipefail
 
 TEST_NAME="test-agents-doc"
