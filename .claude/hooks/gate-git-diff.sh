@@ -285,6 +285,9 @@ GIT_GLOB_MSG='blocked: an unquoted glob character (*, ? or a bracket) in a word 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 MOVED_MSG='blocked: this string changes the directory the paths in it are resolved against -- a `cd` or `pushd` before the command, `env -C DIR`, or git'"'"'s own -C, --git-dir, --work-tree, --namespace, --super-prefix or --attr-source -- and the containment test here runs against this checkout while the command opens paths under the new directory. So every operand looked local and none was: `git -C /home/dev diff -- .bashrc .profile` printed two files out of the home directory as a plain-file diff, and `cd /home/dev && shellcheck .bashrc` printed one back through the source line it echoes. Operands are undecidable once the directory moves, so the two-operand diff, a shellcheck operand and a file on shellcheck'"'"'s stdin are refused there. Run the command from the checkout with its paths spelled relative to it.'
 
+# shellcheck disable=SC2016 # the option spellings are what the reader has to see
+WRAPPER_SHELL_MSG='blocked: `flock -c COMMAND` (and `--command=COMMAND`) hands the string to a shell rather than passing it as an ordinary command word -- `flock --help` documents `-c, --command <command>` as running a single command string through the shell -- so `git status; flock /tmp/l -c '"'"'cat ./cosign.key'"'"'` runs the read past the Read(./cosign.key) deny rule with `git status` alone matching the allow row this string is judged against. This scan reads words, not a nested shell program inside one, so that string is never re-parsed for a gated name hiding in it; the option is refused outright, the way env -S is. Run the command flock would run as a command of its own.'
+
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
@@ -688,6 +691,17 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   if [[ "${wrapper_name}" == env ]] &&
     [[ "${raw_word}" =~ ^-[^-]*C || "${raw_word}" == --chdir* ]]; then
     refuse "${MOVED_MSG}"
+  fi
+  # flock's -c/--command hands its argument to a shell rather than passing
+  # it as a word of the command flock runs, so the operand and gated-prefix
+  # scans below -- which read words, not a nested shell program hiding
+  # inside one -- never see a gated name written there: `flock /tmp/l -c
+  # 'cat ./cosign.key'` reads the key past the deny rule with `flock`'s own
+  # words looking like an ordinary, harmless invocation. Refused outright,
+  # the way env -S is.
+  if [[ "${wrapper_name}" == flock ]] &&
+    [[ "${raw_word}" =~ ^-[^-]*c || "${raw_word}" == --command* ]]; then
+    refuse "${WRAPPER_SHELL_MSG}"
   fi
   if [[ "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ||
     "${raw_word}" == *'*'* || "${raw_word}" == *'?'* ]] ||
@@ -1135,9 +1149,33 @@ reset_command
 # Each scan sets this latch as it reaches the `cd` rather than reading a value
 # left by the scan before it, so a `cd` written *after* the command it cannot
 # reach is not held against it: `shellcheck f; cd /home/dev` is f's own lint.
+# `cd`'s effect on this scan is scoped to the subshell or substitution it
+# runs in, the way bash itself scopes it: `(cd /etc); shellcheck
+# tests/run-tests.sh` moves nothing bash would call the working directory
+# once the `)` closes, because a `(...)` subshell's cd cannot reach the
+# shell around it, and a `$(...)` or backtick command substitution is the
+# same kind of subshell. Read before this latch existed, `worktree_moved`
+# had no notion of a boundary at all, so a `cd` inside either one stayed
+# set for the rest of the string and refused an unrelated later command
+# that runs from the checkout, exactly as it was typed. `worktree_stack`
+# saves the value at each `(` and `$(` and restores it at the matching
+# `)`/`$)`, alongside the command state `cmd_stack` already saves there.
 worktree_moved=0
+worktree_stack=()
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   ((${moves_dir[idx]:-0})) && worktree_moved=1
+  case "${kinds[idx]}" in
+  sep)
+    # shellcheck disable=SC2016 # the literal `$(` is the separator's name
+    if [[ "${words[idx]}" == '$(' || "${words[idx]}" == '(' ]]; then
+      worktree_stack+=("${worktree_moved}")
+    elif [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#worktree_stack[@]})); then
+      worktree_moved="${worktree_stack[-1]}"
+      unset 'worktree_stack[-1]'
+    fi
+    ;;
+  *) ;;
+  esac
   case "${kinds[idx]}" in
   sep)
     # A `$(...)` or a backtick inside a gated command runs the command
@@ -1350,7 +1388,14 @@ skip_git_option_value=0
 in_shellcheck=0
 skip_shellcheck_option_value=0
 diff_relocated=0 # a git global option has moved this invocation's own paths
+# `cd`'s effect here is scoped the way bash itself scopes it: a `(...)`
+# subshell's or a `$(...)`/backtick substitution's own `cd` cannot reach
+# the shell around it, so `worktree_stack` saves `worktree_moved` at each
+# `(`/`$(` and restores it at the matching `)`/`$)`, the way MOVED_MSG's
+# doc comment on path_inside_worktree() already promises for "the scans
+# below" (review on aurora-zfs-simple#223).
 worktree_moved=0
+worktree_stack=()
 
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   word="${words[idx]}"
@@ -1414,6 +1459,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # -- is refused rather than handed back unwatched. The cost is refusing an
     # `--output` that belongs to some later non-git command; the alternative
     # is a bypass spelled with one pipe.
+    # shellcheck disable=SC2016 # the literal `$(` is the separator's name
+    if [[ "${words[idx]}" == '$(' || "${words[idx]}" == '(' ]]; then
+      worktree_stack+=("${worktree_moved}")
+    elif [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#worktree_stack[@]})); then
+      worktree_moved="${worktree_stack[-1]}"
+      unset 'worktree_stack[-1]'
+    fi
     seen_git=0
     in_diff=0
     skip_git_option_value=0
@@ -1583,14 +1635,19 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       refuse "${GIT_CONFIG_MSG}"
       ;;
     # The options that move the paths this invocation opens. They do not move
-    # the shell's directory, so they are kept apart from `worktree_moved`:
-    # `git -C /home/dev diff -- .bashrc .profile` printed two files out of the
-    # home directory while `path_inside_worktree` resolved both operands
-    # against this checkout and called them inside. Where an operand lands is
-    # undecidable from here once git is pointed elsewhere, so every operand of
-    # such an invocation counts as unresolved and the two-operand plain-file
-    # form is refused; a one-operand diff, which cannot reach that mode, still
-    # runs.
+    # the shell's directory, so they are kept apart from `worktree_moved`.
+    # git loads config from the repository it is pointed at before it reads
+    # a single operand: `diff.external` there runs once per changed path
+    # whether the invocation names zero, one or two of them, the same
+    # program the leading `GIT_EXTERNAL_DIFF=` and `-c diff.external=`
+    # spellings are refused for. Waiting for the two-operand plain-file
+    # mode to also decide this left `git -C /tmp/evil diff HEAD~1` --  one
+    # operand, which cannot reach that mode -- to load and run that
+    # program from a repository this gate never looked at. So the whole
+    # invocation is refused as soon as `diff` is reached, not only once its
+    # operands turn out unresolved; `path_inside_worktree` and the
+    # two-operand test below still run for a plain relocation-free
+    # `git diff` that later turns out unresolved some other way.
     -C | --git-dir | --work-tree | --namespace | --super-prefix | --attr-source)
       diff_relocated=1
       skip_git_option_value=1
@@ -1605,6 +1662,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # git-level options such as --no-pager sit between `git` and the subcommand.
     [[ "${word}" == -* ]] && continue
     if [[ "${word}" == "diff" ]]; then
+      ((diff_relocated)) && refuse "${MOVED_MSG}"
       in_diff=1
       operands=0
       unresolved=0

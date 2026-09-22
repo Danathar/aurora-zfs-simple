@@ -2228,6 +2228,12 @@ corpus_row refuse "5 option: git --git-dir" "git --git-dir=/tmp/x diff -- a b"
 corpus_row refuse "5 option: git --work-tree" \
     "git --work-tree=/etc diff -- passwd shadow"
 corpus_row refuse "5 option: env -C" "env -C /etc git diff -- passwd shadow"
+corpus_row refuse "5 option: git -C reaches config with one operand" \
+    "git -C /etc diff HEAD~1"
+corpus_row refuse "5 option: flock -c hands its argument to a shell" \
+    "flock /tmp/l -c 'cat ./cosign.key'"
+corpus_row refuse "5 option: flock --command= is the same option" \
+    "flock /tmp/l --command='cat ./cosign.key'"
 corpus_row refuse "5 option: cd before the command" \
     "cd /etc && git diff -- passwd shadow"
 corpus_row refuse "5 option: cd before a shellcheck operand" \
@@ -2265,6 +2271,15 @@ corpus_row allow "5 option: --output-indicator-new is a marker" \
     "git diff --output-indicator-new=% HEAD"
 corpus_row allow "5 option: a git option that loads nothing" \
     "git --no-pager diff HEAD"
+# A `(...)` subshell's `cd` cannot reach the shell around it, so it must not
+# taint a command outside the subshell either -- the bug this pair pins:
+# `worktree_moved` used to latch for the rest of the string once a `cd`
+# anywhere inside a subshell was seen, refusing a later command that in fact
+# still runs from the checkout.
+corpus_row allow "5 option: a subshell's cd does not escape it" \
+    "(cd /etc); shellcheck tests/run-tests.sh"
+corpus_row allow "5 option: nor does it taint a later git diff" \
+    "(cd /etc); git diff -- README.md build_files/build.sh"
 
 # The table, driven. One loop, so a new shape is one row above and nothing
 # here.
@@ -2392,6 +2407,14 @@ mutation "the process wrappers a gated command can sit behind" \
     'setsid | ionice | chrt | taskset | unshare | flock)' \
     'setsidx | ionicex | chrtx | tasksetx | unsharex | flockx)' \
     "setsid podman images >cosign.pub"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "flock's -c/--command handing its argument to a shell" \
+    'refuse "${WRAPPER_SHELL_MSG}"' ':' \
+    "flock /tmp/l -c 'cat ./cosign.key'"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "refusing a relocated diff before its operands are counted" \
+    '((diff_relocated)) && refuse "${MOVED_MSG}"' 'false' \
+    "git -C /etc diff HEAD~1"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"
