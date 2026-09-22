@@ -2248,14 +2248,24 @@ corpus_row refuse "4 name: xargs before a gated prefix" "xargs podman inspect <i
 corpus_row refuse "4 name: xargs before any git subcommand" "xargs git log <list.txt"
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook
 corpus_row refuse "4 name: xargs inside a substitution" 'echo $(xargs git diff <list.txt)'
-# A literal path to a wrapper is that wrapper, as a literal path to git is
-# git (review on zfs-kinoite-complex#235), and only once the word is literal:
-# `$D/env` runs whatever `$D` holds, so it is a name built at runtime.
+# A path to a wrapper, cut at its last `/` or `\` the way Claude Code's
+# matcher cuts it (review on atomic-image-builder#438): the system spellings
+# `/usr/bin/NAME` and `/bin/NAME` are that wrapper (review on
+# zfs-kinoite-complex#235), and any other path to one is refused, since the
+# file at that path is what runs while the allow rule matched the words after
+# it. A path built at runtime (`$D/env`) is refused as a name that is not
+# literal.
 corpus_row refuse "4 name: a path to xargs" "git status; /usr/bin/xargs git diff"
 corpus_row refuse "4 name: a path to a wrapper before a gated write" \
     "git status; /usr/bin/nohup podman ps >out"
 corpus_row refuse "4 name: a path to timeout before shellcheck" \
     "/usr/bin/timeout 5 shellcheck tests/run-tests.sh >out"
+corpus_row refuse "4 name: a path to a wrapper an agent can write" \
+    "./shim/nohup git diff HEAD"
+corpus_row refuse "4 name: a backslash is a separator to the matcher" \
+    "'./shim\\nohup' git diff HEAD"
+corpus_row refuse "4 name: a wrapper path outside the system directories" \
+    "/tmp/timeout 5 shellcheck tests/run-tests.sh"
 # shellcheck disable=SC2016 # the variable is a spelling handed to the hook
 corpus_row refuse "4 name: a wrapper path built at runtime" 'git status; $D/env git diff HEAD'
 # The command xargs runs is the first word after xargs's own options, read
@@ -2288,6 +2298,7 @@ corpus_row allow "4 name: xargs as a word of git's" "git log --grep=xargs -1"
 corpus_row allow "4 name: xargs as an argument after a gated prefix" \
     "timeout 5 podman ps xargs"
 corpus_row allow "4 name: noglob before an ordinary diff" "noglob git diff HEAD"
+corpus_row allow "4 name: the system path to a wrapper" "/usr/bin/timeout 60 git diff HEAD"
 # The words after the command xargs runs are that command's arguments, not
 # names (review on #224).
 corpus_row allow "4 name: xargs runs rg, and shellcheck is its argument" \
@@ -2510,8 +2521,16 @@ mutation "refusing xargs in front of git or an allow-listed command" \
     "printf '%s\n' /dev/null ./cosign.key | xargs git diff"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "a literal path to a wrapper read as that wrapper" \
-    'case "${word##*/}" in' 'case "${word}" in' \
+    'case "${wrapper_base}" in' 'case "${unquoted}" in' \
     "git status; /usr/bin/xargs git diff"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "refusing a path to a wrapper other than the system one" \
+    '*) refuse "${WRAPPER_PATH_MSG}" ;;' '*) ;;' \
+    "./shim/nohup git diff HEAD"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "cutting a path to a wrapper at a backslash as well as a slash" \
+    'wrapper_base="${unquoted##*[/\\]}"' 'wrapper_base="${unquoted##*/}"' \
+    "'./shim\\nohup' git diff HEAD"
 mutation "reading the next word as the value of an xargs option" \
     'xargs_optarg=1' 'xargs_optarg=0' \
     "xargs -n 1 git diff <list.txt"
@@ -2602,6 +2621,8 @@ assert_contains "and the move that makes a containment test undecidable" \
     "${CORPUS_NOTE}" "worktree_moved"
 assert_contains "and the literal path to a wrapper, read as that wrapper" \
     "${CORPUS_NOTE}" "/usr/bin/xargs git diff"
+assert_contains "and the path to a wrapper an agent can write, refused" \
+    "${CORPUS_NOTE}" "./shim/nohup git diff HEAD"
 assert_contains "and the wrapper the matcher steps over that this gate did not" \
     "${CORPUS_NOTE}" "noglob podman ps >out"
 assert_contains "and the wrapper that hands git operands the string never names" \

@@ -233,8 +233,10 @@
 # (see `XARGS_MSG`); in front of any other command it is left alone, since
 # that command matches no allow row and prompts on its own. The command xargs
 # runs is the first word after xargs's own options, so `git ls-files | xargs
-# rg shellcheck` runs rg and is left alone. A literal path to a wrapper
-# (`/usr/bin/xargs`, `/usr/bin/nohup`) is read as that wrapper.
+# rg shellcheck` runs rg and is left alone. A path to a wrapper is cut at its
+# last `/` or `\`, as the matcher cuts it: `/usr/bin/NAME` and `/bin/NAME`
+# are that wrapper, and any other path to one (`./shim/nohup`) is refused,
+# since the file at that path is what runs (see `WRAPPER_PATH_MSG`).
 #
 # What it still cannot see, stated rather than implied: a command that hides a
 # git invocation behind another interpreter (`sh -c ...`), one that changes
@@ -308,6 +310,9 @@ MOVED_MSG='blocked: this string changes the directory the paths in it are resolv
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 WRAPPER_SHELL_MSG='blocked: `flock -c COMMAND` (and `--command=COMMAND`) hands the string to a shell rather than passing it as an ordinary command word -- `flock --help` documents `-c, --command <command>` as running a single command string through the shell -- so `git status; flock /tmp/l -c '"'"'cat ./cosign.key'"'"'` runs the read past the Read(./cosign.key) deny rule with `git status` alone matching the allow row this string is judged against. This scan reads words, not a nested shell program inside one, so that string is never re-parsed for a gated name hiding in it; the option is refused outright, the way env -S is. Run the command flock would run as a command of its own.'
+
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+WRAPPER_PATH_MSG='blocked: a wrapper (nohup, timeout, nice, env, xargs, ...) is written here as a path other than /usr/bin/NAME or /bin/NAME, and the file at that path is what runs: `./shim/nohup git diff HEAD` runs whatever ./shim/nohup is -- a file an agent can write -- while Claude Code'"'"'s permission matcher cuts the word at its last / or \, takes it for the nohup it steps over, and matches the allow rule against the words after it alone, so nothing prompts. Write the bare name (nohup git diff HEAD) or its /usr/bin path.'
 
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
@@ -631,6 +636,41 @@ name_is_literal() {
   return 0
 }
 
+# The word as bash hands it to the command, into `unquoted`: quotes removed,
+# and a backslash dropped where it escapes the next character -- anywhere
+# outside quotes, and inside double quotes only before $, a backtick, " or \
+# -- but kept where it is literal, as it is inside single quotes. `words`
+# drops every backslash, which is not the word a path is cut at:
+# `'./shim\nohup'` is `./shim\nohup` to the command and `./shimnohup` in
+# `words`. A `$` never reaches this, since the literal test refuses it first.
+unquote_word() {
+  local raw="$1" quote='' escaped=0 i ch
+  unquoted=''
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+    if ((escaped)); then
+      escaped=0
+      if [[ "${quote}" == '"' ]]; then
+        case "${ch}" in
+        '$' | '`' | '"' | $'\\') ;;
+        *) unquoted+=$'\\' ;;
+        esac
+      fi
+      unquoted+="${ch}"
+    elif [[ "${quote}" == "'" ]]; then
+      if [[ "${ch}" == "'" ]]; then quote=''; else unquoted+="${ch}"; fi
+    elif [[ "${ch}" == $'\\' ]]; then
+      escaped=1
+    elif [[ "${ch}" == '"' ]]; then
+      if [[ "${quote}" == '"' ]]; then quote=''; else quote='"'; fi
+    elif [[ "${ch}" == "'" && -z "${quote}" ]]; then
+      quote="'"
+    else
+      unquoted+="${ch}"
+    fi
+  done
+}
+
 # GNU findutils' and uutils' xargs short options, clustered the way getopt
 # allows (`-0rn1`). Returns non-zero at a letter it does not know, and at an
 # optional-value letter (`-e`, `-i`, `-l`) with no value attached, which the
@@ -821,18 +861,31 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   fi
   name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
   # A wrapper, matched on its last path component once the word is known to
-  # be literal: a literal path to a wrapper is that wrapper, as a literal path
-  # to git is git below. Read as the name, `git status; /usr/bin/xargs git
-  # diff` hid the git behind it from every scan while bash ran xargs all the
-  # same, and `/usr/bin/nohup podman ps >out` matched no gated prefix (review
-  # on zfs-kinoite-complex#235). Checked after the literal test so that
-  # `$D/env git diff HEAD` is still refused as a name built at runtime rather
-  # than stepped over.
-  case "${word##*/}" in
+  # be literal. Claude Code's permission matcher cuts a word at its last `/`
+  # or `\` (`replace(/^.*[\\/]/, "")`) and steps over what is left when it
+  # names a wrapper it strips (`nohup`, `timeout`, `nice`, ...), so any path
+  # to one -- including one to a file an agent wrote, `./shim/nohup git diff
+  # HEAD` or `'./shim\nohup' git diff HEAD` -- has the allow rule matched
+  # against the words after it, while bash runs the file at that path
+  # (review on atomic-image-builder#438).
+  # Read as the name here instead, `git status; /usr/bin/xargs git diff` hid
+  # the git behind it from every scan (review on zfs-kinoite-complex#235). So
+  # the component is cut on both separators of the word as bash passes it
+  # on, the system spellings `/usr/bin/NAME` and `/bin/NAME` are stepped over
+  # as the wrapper they name, and any other path to a wrapper is refused
+  # outright (see `WRAPPER_PATH_MSG`). Checked after the literal test so
+  # that `$D/env git diff HEAD` is still refused as a name built at runtime.
+  unquote_word "${raw_word}"
+  wrapper_base="${unquoted##*[/\\]}"
+  case "${wrapper_base}" in
   command | builtin | exec | env | nohup | noglob | nice | xargs | timeout | stdbuf | sudo | doas | \
     setsid | ionice | chrt | taskset | unshare | flock)
+    case "${unquoted}" in
+    "${wrapper_base}" | /usr/bin/"${wrapper_base}" | /bin/"${wrapper_base}") ;;
+    *) refuse "${WRAPPER_PATH_MSG}" ;;
+    esac
     after_wrapper=1
-    wrapper_name="${word##*/}"
+    wrapper_name="${wrapper_base}"
     if [[ "${wrapper_name}" == xargs ]]; then
       xargs_names[idx]=1
       xargs_state=1
