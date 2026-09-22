@@ -2248,6 +2248,16 @@ corpus_row refuse "4 name: xargs before a gated prefix" "xargs podman inspect <i
 corpus_row refuse "4 name: xargs before any git subcommand" "xargs git log <list.txt"
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook
 corpus_row refuse "4 name: xargs inside a substitution" 'echo $(xargs git diff <list.txt)'
+# A literal path to a wrapper is that wrapper, as a literal path to git is
+# git (review on zfs-kinoite-complex#235), and only once the word is literal:
+# `$D/env` runs whatever `$D` holds, so it is a name built at runtime.
+corpus_row refuse "4 name: a path to xargs" "git status; /usr/bin/xargs git diff"
+corpus_row refuse "4 name: a path to a wrapper before a gated write" \
+    "git status; /usr/bin/nohup podman ps >out"
+corpus_row refuse "4 name: a path to timeout before shellcheck" \
+    "/usr/bin/timeout 5 shellcheck tests/run-tests.sh >out"
+# shellcheck disable=SC2016 # the variable is a spelling handed to the hook
+corpus_row refuse "4 name: a wrapper path built at runtime" 'git status; $D/env git diff HEAD'
 # Allowed, with the reason: a literal name, with or without the quoting bash
 # strips off it, is the name the allow rule matched and the name this gate
 # reads.
@@ -2475,6 +2485,10 @@ mutation "noglob among the wrappers Claude Code's matcher steps over" \
 mutation "refusing xargs in front of git or an allow-listed command" \
     'refuse "${XARGS_MSG}"' ':' \
     "printf '%s\n' /dev/null ./cosign.key | xargs git diff"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "a literal path to a wrapper read as that wrapper" \
+    'case "${word##*/}" in' 'case "${word}" in' \
+    "git status; /usr/bin/xargs git diff"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"
@@ -2557,6 +2571,8 @@ assert_contains "and git's config option that runs a program" \
     "${CORPUS_NOTE}" "diff.external"
 assert_contains "and the move that makes a containment test undecidable" \
     "${CORPUS_NOTE}" "worktree_moved"
+assert_contains "and the literal path to a wrapper, read as that wrapper" \
+    "${CORPUS_NOTE}" "/usr/bin/xargs git diff"
 assert_contains "and the wrapper the matcher steps over that this gate did not" \
     "${CORPUS_NOTE}" "noglob podman ps >out"
 assert_contains "and the wrapper that hands git operands the string never names" \
