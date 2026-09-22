@@ -1162,6 +1162,13 @@ reset_command
 # `)`/`$)`, alongside the command state `cmd_stack` already saves there.
 worktree_moved=0
 worktree_stack=()
+# A backtick substitution is a subshell too, and its own `cd` cannot reach
+# the shell around it either, but bash spells its open and close with the
+# same character -- there is no `` `) `` token the way there is a `$)` --
+# so the push/pop above cannot key on the word alone. This toggles: the
+# first backtick of a pair pushes, the second pops, the way `in_backtick`
+# already does for the name scan above.
+worktree_in_backtick=0
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   ((${moves_dir[idx]:-0})) && worktree_moved=1
   case "${kinds[idx]}" in
@@ -1172,12 +1179,18 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     elif [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#worktree_stack[@]})); then
       worktree_moved="${worktree_stack[-1]}"
       unset 'worktree_stack[-1]'
+    elif [[ "${words[idx]}" == '`' ]]; then
+      if ((worktree_in_backtick)); then
+        worktree_in_backtick=0
+        if ((${#worktree_stack[@]})); then
+          worktree_moved="${worktree_stack[-1]}"
+          unset 'worktree_stack[-1]'
+        fi
+      else
+        worktree_in_backtick=1
+        worktree_stack+=("${worktree_moved}")
+      fi
     fi
-    ;;
-  *) ;;
-  esac
-  case "${kinds[idx]}" in
-  sep)
     # A `$(...)` or a backtick inside a gated command runs the command
     # inside it as part of the approved string, with no rule on that inner
     # command (`df -T $(touch cosign.pub)`, review on arch-bootc#322), the
@@ -1396,6 +1409,7 @@ diff_relocated=0 # a git global option has moved this invocation's own paths
 # below" (review on aurora-zfs-simple#223).
 worktree_moved=0
 worktree_stack=()
+worktree_in_backtick=0
 
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   word="${words[idx]}"
@@ -1465,6 +1479,17 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     elif [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#worktree_stack[@]})); then
       worktree_moved="${worktree_stack[-1]}"
       unset 'worktree_stack[-1]'
+    elif [[ "${words[idx]}" == '`' ]]; then
+      if ((worktree_in_backtick)); then
+        worktree_in_backtick=0
+        if ((${#worktree_stack[@]})); then
+          worktree_moved="${worktree_stack[-1]}"
+          unset 'worktree_stack[-1]'
+        fi
+      else
+        worktree_in_backtick=1
+        worktree_stack+=("${worktree_moved}")
+      fi
     fi
     seen_git=0
     in_diff=0
