@@ -1040,6 +1040,27 @@ would miss, and leaving `git diff`, `git diff --stat`, `git status` and a
 payload with no command in it alone, because a hook that turned the allow rule
 back into a prompt would have traded one problem for the one it replaced.
 
+That gate then grew one spelling at a time — an operand, a tilde in an operand,
+the target of an input redirection, `SHELLCHECK_OPTS`, its `+=` append, a
+leading `NAME=value`, the export family — and each fix found the next one. The
+last section of the file is the corpus instead of the next instalment: every
+way a command reaches a tool past an allow rule, as a table of
+`(expected, shape, command)` rows driving one loop, so a shape found in any of
+the six repositories that carry a hook of this kind is one row and nothing
+else. A shape this repository cannot reach is an `allow` row with the reason
+beside it rather than a shape left undecided, and the one shape with no command
+to write — an interpreter's loading options, since no `allow` rule names an
+interpreter — is asserted as an absence from the allow list, so adding one
+fails here until its options are decided.
+
+A table of expectations can pass for the wrong reason: a row may be refused by
+some *other* rule, which is how a gate grows a rule that does nothing. So each
+rule added for that corpus is disabled in a copy of the hook by string
+replacement, and the row it exists for has to flip to allowed. The replacement
+has to match, the mutant has to still parse, and the witness has to be a
+`refuse` row of the table — three failures that each catch a mutation which
+proves nothing.
+
 Two filters agreeing is not the same as either one being complete, and the
 suffix is the third selection of its kind: `test-coverage.sh` takes
 `git ls-files '*.sh'` before it demands a covered-or-`UNCOVERED` decision. A
