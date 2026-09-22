@@ -248,6 +248,9 @@ GATED_HEREDOC_MSG='blocked: a here-document with an unquoted delimiter (`<<EOF`)
 # shellcheck disable=SC2016 # the literal NAME=value spellings are what the reader has to see
 GATED_ENV_MSG='blocked: an assignment before an allow-listed command (`NAME=value cmd ...`) is an environment the command runs under, and for these commands that changes what runs or where it goes: `LD_PRELOAD=x.so shellcheck f` loads code before a line is linted, `BASH_ENV=f bash -n x` names a file for bash to read, `GH_HOST=other gh pr list` sends the token elsewhere, `CONTAINERS_CONF=f podman ps` re-points podman. A git invocation is held to the same rule (issue #218): `GIT_EXTERNAL_DIFF=prog git diff HEAD~1` runs prog once per changed path, `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0=prog` reaches that same driver under another name, and `PATH=dir git diff HEAD~1` runs a different git -- each of them arbitrary code from a string the allow rows match on their git prefix. A deny list of variable names is the wrong shape for this, since GIT_DIR, GIT_INDEX_FILE, LD_PRELOAD and PATH all matter and the list would have to track git'"'"'s own. Run the command without the assignment.'
 
+# shellcheck disable=SC2016 # the literal builtin spellings are what the reader has to see
+EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=value`, `declare -x`, `typeset -x`, `readonly`) reaches a later command of the same string exactly as a leading `NAME=value` does, and this string arms one and then runs an allow-listed command or git: `export GIT_EXTERNAL_DIFF=prog; git diff HEAD~1` runs prog once per changed path while no word of the git invocation carries an assignment at all, and `export LD_PRELOAD=x.so; shellcheck f` loads code before a line is linted. The builtin is refused rather than its options read, because the flag that exports has several spellings (-x, -gx, an earlier `declare -x NAME` with a plain `NAME=value` after it) and a half-modelled option list is a gate that disagrees with bash in some other direction. Only a string that also runs one of those commands is refused; an export on its own is not this gate'"'"'s business. Residual, stated rather than implied: bash keeps an exported variable across Bash calls, so an export approved in an earlier call is outside what a PreToolUse hook reading one command string can see.'
+
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
@@ -993,6 +996,7 @@ reset_command() {
   cmd_named=0
   cmd_gated=0
   cmd_git=0
+  cmd_export=0
 }
 
 # The words of a command from its *name* onward: a leading assignment
@@ -1011,7 +1015,10 @@ cmd_bash=0    # its name is bash, so the +n and expansion rules apply once gated
 cmd_named=0   # the name has been seen; every later word belongs to it
 cmd_gated=0   # its leading words matched one of GATED_PREFIXES
 cmd_git=0     # its name is git, which the allow rows cover with their own `*`
+cmd_export=0  # its name is export/declare/typeset/readonly: its own words assign
 cmd_stack=()  # the outer command's state, while a `$(...)` is being read
+export_idx=-1 # the first word that an export-family command assigns
+gate_idx=-1   # the last word at which a gated command or git is running
 reset_command
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   case "${kinds[idx]}" in
@@ -1041,13 +1048,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     if [[ "${words[idx]}" == '$(' ]] ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
-      cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_git} ${cmd_prefix}")
+      cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_git} ${cmd_export} ${cmd_prefix}")
       reset_command
       continue
     fi
     if [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#cmd_stack[@]})); then
       check_gated_command
-      read -r cmd_writes cmd_reads cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_git cmd_prefix <<<"${cmd_stack[-1]}"
+      read -r cmd_writes cmd_reads cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_git cmd_export cmd_prefix <<<"${cmd_stack[-1]}"
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
@@ -1124,14 +1131,35 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # (issue #218). No gated prefix begins with git, so nothing is missed.
     [[ -z "${cmd_prefix}" && "${words[idx]}" == "git" ]] && cmd_git=1
     [[ -z "${cmd_prefix}" && "${words[idx]}" == "bash" ]] && cmd_bash=1
+    # The export family. Its assignments stand *after* the name rather than
+    # before it, so the scan that records a leading `NAME=value` never sees
+    # them, and bash applies them to every later command of the string.
+    if [[ -z "${cmd_prefix}" ]]; then
+      case "${words[idx]}" in
+      export | declare | typeset | readonly) cmd_export=1 ;;
+      *) ;;
+      esac
+    fi
     cmd_prefix="${cmd_prefix:+${cmd_prefix} }${words[idx]}"
     command_is_gated "${cmd_prefix}" && cmd_gated=1
   fi
+  # The last word position at which this string runs something the gate
+  # covers. Compared against the first exported assignment below, so that an
+  # export written *after* the command it cannot reach is left alone.
+  ((cmd_gated || cmd_git)) && gate_idx=${idx}
   # A substitution or an expansion quoted into a word (`df -T "$(printf x
   # >cosign.pub)"`, `podman images $X`) is one the split above never opened,
   # and bash performs it all the same (review on arch-bootc#322).
   if ((cmd_gated)) && [[ "${raw_words[idx]}" == *'$'* || "${raw_words[idx]}" == *'`'* ]]; then
     ((cmd_subst)) || cmd_subst=1
+  fi
+  # A word of an export-family command that assigns. `export FOO=1` and
+  # `declare -x FOO=1` put FOO in the environment of every command bash runs
+  # after them in this string, which is the same reach as `FOO=1 cmd` by a
+  # spelling the leading-assignment scan is not looking at (issue #218).
+  if ((cmd_export)) && ((export_idx < 0)) &&
+    [[ "${raw_words[idx]}" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]]; then
+    export_idx=${idx}
   fi
   ((cmd_bash && cmd_gated)) || continue
   [[ "${words[idx]}" == '+'* ]] && refuse "${BASH_NOEXEC_MSG}"
@@ -1145,6 +1173,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   fi
 done
 check_gated_command
+# Decided once, over the whole string: the export may be written before the
+# command it arms, and only then does it reach it.
+((export_idx >= 0 && gate_idx > export_idx)) && refuse "${EXPORT_ENV_MSG}"
 
 # The whole string with quoting removed, for the one test that is a substring
 # match rather than a word: the shell removes quotes and backslashes on the

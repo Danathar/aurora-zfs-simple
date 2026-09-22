@@ -1688,6 +1688,68 @@ for assigned in "FOO=1 echo x; podman images" \
     assert_eq "an assignment on another command of the string, or no assignment at all, is left alone: ${assigned}" \
         "0" "${PRE_STATUS}"
 done
+# The export family is the same environment written after the name instead of
+# before it. `export NAME=value`, `declare -x` and `typeset -x` put the
+# variable in the environment of every command bash runs later in the same
+# string, so the leading-assignment scan above -- which only ever looks at a
+# word standing *before* a name -- saw nothing to record and the git
+# invocation that followed carried no assignment of its own. Shown first in a
+# temporary repository, the way the leading form is: the program named by an
+# exported GIT_EXTERNAL_DIFF runs once per changed path just the same.
+exportenv_dir="$(mktemp -d)"
+(
+    cd "${exportenv_dir}" || exit 0
+    printf '#!/bin/sh\nprintf RAN-AFTER-EXPORT >"%s/ran"\n' "${exportenv_dir}" >prog
+    chmod +x prog
+    git init -q . >/dev/null 2>&1 || exit 0
+    git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m first >/dev/null 2>&1
+    printf 'one\n' >tracked
+    git add tracked >/dev/null 2>&1
+    git -c user.email=t@example.invalid -c user.name=t commit -q -m second >/dev/null 2>&1
+    export GIT_EXTERNAL_DIFF="${exportenv_dir}/prog"
+    git diff HEAD~1 >/dev/null 2>&1
+) </dev/null
+exportenv_ran="$(cat "${exportenv_dir}/ran" 2>/dev/null)"
+rm -rf "${exportenv_dir}"
+assert_eq "an exported GIT_EXTERNAL_DIFF reaches a later git diff of the same string" \
+    "RAN-AFTER-EXPORT" "${exportenv_ran}"
+for exported in "export GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "declare -x GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "typeset -x GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "readonly GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "export PATH=/tmp/bin; git diff HEAD~1" \
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external; git diff HEAD~1" \
+    "export LD_PRELOAD=x.so; shellcheck tests/run-tests.sh" \
+    "export BASH_ENV=f; bash -n tests/run-tests.sh" \
+    "export GH_HOST=other; gh pr list" \
+    "export CONTAINERS_CONF=f && podman ps" \
+    "export FOO=1; ./tests/run-tests.sh test-harness" \
+    $'export GIT_EXTERNAL_DIFF=/tmp/prog\ngit diff HEAD~1' \
+    "export FOO=1; git status; git diff HEAD"; do
+    run_pre "$(pre_payload_for "${exported}")"
+    assert_eq "an export-family assignment that reaches a gated command is refused: ${exported//$'\n'/ | }" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the export family: ${exported//$'\n'/ | }" \
+        "${PRE_ERR}" "export family"
+done
+# An export bash cannot carry to one of these commands. The variable reaches
+# what runs *after* it and nothing earlier, and an export with no gated
+# command anywhere in the string is not this gate's business at all -- such a
+# command carries no allow row and prompts on its own.
+for exported in "export FOO=1" \
+    "export GIT_EXTERNAL_DIFF=/tmp/prog" \
+    "export FOO=1; echo hi" \
+    "declare -x FOO=1; echo hi" \
+    "git diff HEAD; export GIT_EXTERNAL_DIFF=/tmp/prog" \
+    "git status && export FOO=1" \
+    "echo export FOO=1; git diff HEAD" \
+    "git log --grep=export -1" \
+    "export; git diff HEAD" \
+    "declare -p; git diff HEAD"; do
+    run_pre "$(pre_payload_for "${exported}")"
+    assert_eq "an export that reaches no gated command is left alone: ${exported//$'\n'/ | }" \
+        "0" "${PRE_STATUS}"
+done
 for heredoc in $'bash -n <<\'EOF\'\necho hi\nEOF' \
     $'bash -n <<"EOF"\necho $(id)\nEOF' \
     $'cat <<EOF\nplain\nEOF; gh pr list' \
