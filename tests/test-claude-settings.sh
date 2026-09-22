@@ -1102,16 +1102,13 @@ for split in "git status; env -S 'git diff /dev/null ./cosign.key'" \
     assert_contains "and the refusal names it: ${split}" "${PRE_ERR}" "env -S"
 done
 for literal in "git status; git diff HEAD@{1}" \
-    "FOO=bar git diff HEAD" \
     "X=\$(date); git diff HEAD" \
     "echo \$HOME; git diff HEAD" \
     "echo \`date\`; git diff HEAD" \
     "if [ -n \"\$x\" ]; then git diff HEAD; fi" \
     "ls > out; git status" \
-    "env FOO=\$x git diff HEAD" \
     "[[ -n \"\$x\" ]] && git diff HEAD" \
     "git status; [ -f cosign.pub ]" \
-    "env -i PATH=\$PATH git diff HEAD" \
     "env -u X git diff HEAD" \
     "timeout 60 git diff HEAD" \
     "git status; timeout -s KILL 5 git diff HEAD" \
@@ -1630,25 +1627,127 @@ for heredoc in $'podman images <<EOF\necho $(printf x >cosign.pub)\nEOF' \
 done
 # An assignment before the name is an environment the command runs under,
 # and for these commands that changes what runs or where it goes (review on
-# sensi#244, the Python twin of this hook); git keeps `FOO=bar git diff`.
+# sensi#244, the Python twin of this hook). Git was exempt until issue #218,
+# on the reading that a git invocation is decided by the operand scan; that
+# scan reads words, and an assignment is not one. Shown first in a temporary
+# repository: `GIT_EXTERNAL_DIFF` names a program git runs once per changed
+# path, so an allow-listed `git diff` string runs it with no prompt.
+gitenv_dir="$(mktemp -d)"
+(
+    cd "${gitenv_dir}" || exit 0
+    printf '#!/bin/sh\nprintf RAN-AS-EXTERNAL-DIFF >"%s/ran"\n' "${gitenv_dir}" >prog
+    chmod +x prog
+    git init -q . >/dev/null 2>&1 || exit 0
+    git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m first >/dev/null 2>&1
+    printf 'one\n' >tracked
+    git add tracked >/dev/null 2>&1
+    git -c user.email=t@example.invalid -c user.name=t commit -q -m second >/dev/null 2>&1
+    GIT_EXTERNAL_DIFF="${gitenv_dir}/prog" git diff HEAD~1 >/dev/null 2>&1
+) </dev/null
+gitenv_ran="$(cat "${gitenv_dir}/ran" 2>/dev/null)"
+rm -rf "${gitenv_dir}"
+assert_eq "GIT_EXTERNAL_DIFF=prog git diff runs prog, so an assignment before git is code execution" \
+    "RAN-AS-EXTERNAL-DIFF" "${gitenv_ran}"
 for assigned in "LD_PRELOAD=x.so shellcheck tests/run-tests.sh" \
     "BASH_ENV=f bash -n tests/run-tests.sh" \
     "GH_HOST=other gh pr list" \
     "CONTAINERS_CONF=f podman ps" \
     "FOO=1 ./tests/run-tests.sh test-harness" \
-    "git status; FOO=1 skopeo inspect docker://x"; do
+    "git status; FOO=1 skopeo inspect docker://x" \
+    "GIT_EXTERNAL_DIFF=/tmp/prog git diff HEAD~1" \
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0=/tmp/prog git diff HEAD~1" \
+    "PATH=/tmp/bin git diff HEAD~1" \
+    "FOO=bar git diff HEAD" \
+    "PAGER=cat git log -1" \
+    "GIT_DIR=/tmp/other git ls-files" \
+    "git status; FOO=1 git log -1" \
+    "env FOO=bar git diff HEAD" \
+    "env -u X GIT_EXTERNAL_DIFF=/tmp/prog git diff HEAD~1" \
+    "env -i PATH=/tmp/bin git diff HEAD~1" \
+    "env -u X LD_PRELOAD=x.so shellcheck tests/run-tests.sh" \
+    "timeout 60 FOO=1 git diff HEAD" \
+    "command FOO=1 git diff HEAD"; do
     run_pre "$(pre_payload_for "${assigned}")"
     assert_eq "an assignment before an allow-listed command is refused: ${assigned}" \
         "2" "${PRE_STATUS}"
     assert_contains "and the refusal names the assignment: ${assigned}" \
         "${PRE_ERR}" "assignment before"
 done
-for assigned in "FOO=bar git diff HEAD" \
-    "PAGER=cat git log -1" \
-    "FOO=1 echo x; podman images" \
-    "x=1; podman images"; do
+# A wrapper's own option is a name candidate too, so the scan that decides
+# `the name has been seen` saw one before the assignment and let it through
+# (issue #218). These are the same invocations without the assignment, and
+# they stay unprompted.
+for assigned in "FOO=1 echo x; podman images" \
+    "x=1; podman images" \
+    "FOO=1 echo x; git diff HEAD" \
+    "echo FOO=bar; git status" \
+    "env -u X git diff HEAD" \
+    "env -i git diff HEAD" \
+    "timeout 60 git diff HEAD"; do
     run_pre "$(pre_payload_for "${assigned}")"
-    assert_eq "an assignment before git, or on another command, is left alone: ${assigned}" \
+    assert_eq "an assignment on another command of the string, or no assignment at all, is left alone: ${assigned}" \
+        "0" "${PRE_STATUS}"
+done
+# The export family is the same environment written after the name instead of
+# before it. `export NAME=value`, `declare -x` and `typeset -x` put the
+# variable in the environment of every command bash runs later in the same
+# string, so the leading-assignment scan above -- which only ever looks at a
+# word standing *before* a name -- saw nothing to record and the git
+# invocation that followed carried no assignment of its own. Shown first in a
+# temporary repository, the way the leading form is: the program named by an
+# exported GIT_EXTERNAL_DIFF runs once per changed path just the same.
+exportenv_dir="$(mktemp -d)"
+(
+    cd "${exportenv_dir}" || exit 0
+    printf '#!/bin/sh\nprintf RAN-AFTER-EXPORT >"%s/ran"\n' "${exportenv_dir}" >prog
+    chmod +x prog
+    git init -q . >/dev/null 2>&1 || exit 0
+    git -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m first >/dev/null 2>&1
+    printf 'one\n' >tracked
+    git add tracked >/dev/null 2>&1
+    git -c user.email=t@example.invalid -c user.name=t commit -q -m second >/dev/null 2>&1
+    export GIT_EXTERNAL_DIFF="${exportenv_dir}/prog"
+    git diff HEAD~1 >/dev/null 2>&1
+) </dev/null
+exportenv_ran="$(cat "${exportenv_dir}/ran" 2>/dev/null)"
+rm -rf "${exportenv_dir}"
+assert_eq "an exported GIT_EXTERNAL_DIFF reaches a later git diff of the same string" \
+    "RAN-AFTER-EXPORT" "${exportenv_ran}"
+for exported in "export GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "declare -x GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "typeset -x GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "readonly GIT_EXTERNAL_DIFF=/tmp/prog; git diff HEAD~1" \
+    "export PATH=/tmp/bin; git diff HEAD~1" \
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external; git diff HEAD~1" \
+    "export LD_PRELOAD=x.so; shellcheck tests/run-tests.sh" \
+    "export BASH_ENV=f; bash -n tests/run-tests.sh" \
+    "export GH_HOST=other; gh pr list" \
+    "export CONTAINERS_CONF=f && podman ps" \
+    "export FOO=1; ./tests/run-tests.sh test-harness" \
+    $'export GIT_EXTERNAL_DIFF=/tmp/prog\ngit diff HEAD~1' \
+    "export FOO=1; git status; git diff HEAD"; do
+    run_pre "$(pre_payload_for "${exported}")"
+    assert_eq "an export-family assignment that reaches a gated command is refused: ${exported//$'\n'/ | }" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the export family: ${exported//$'\n'/ | }" \
+        "${PRE_ERR}" "export family"
+done
+# An export bash cannot carry to one of these commands. The variable reaches
+# what runs *after* it and nothing earlier, and an export with no gated
+# command anywhere in the string is not this gate's business at all -- such a
+# command carries no allow row and prompts on its own.
+for exported in "export FOO=1" \
+    "export GIT_EXTERNAL_DIFF=/tmp/prog" \
+    "export FOO=1; echo hi" \
+    "declare -x FOO=1; echo hi" \
+    "git diff HEAD; export GIT_EXTERNAL_DIFF=/tmp/prog" \
+    "git status && export FOO=1" \
+    "echo export FOO=1; git diff HEAD" \
+    "git log --grep=export -1" \
+    "export; git diff HEAD" \
+    "declare -p; git diff HEAD"; do
+    run_pre "$(pre_payload_for "${exported}")"
+    assert_eq "an export that reaches no gated command is left alone: ${exported//$'\n'/ | }" \
         "0" "${PRE_STATUS}"
 done
 for heredoc in $'bash -n <<\'EOF\'\necho hi\nEOF' \
