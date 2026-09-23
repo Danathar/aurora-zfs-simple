@@ -265,6 +265,19 @@ assert_eq "a document is the load-bearing-prose tier" \
 assert_eq "a dependency pin is the pipeline tier" \
     "2" "$(classify renovate.json)"
 
+# The agent permission boundary. Both files match the tier 1 `.claude/**` glob
+# as well, so these two assertions are also the highest-tier rule doing its job:
+# if the top row stops naming them, they fall back to prose and the table says a
+# widened allow rule merges on a green doc suite.
+assert_eq "the permission table is the published-artifact tier" \
+    "3" "$(classify .claude/settings.json)"
+assert_eq "the PreToolUse gate is the published-artifact tier" \
+    "3" "$(classify .claude/hooks/gate-git-diff.sh)"
+# The rest of .claude/ is prose and stays there; a tier that swallowed the whole
+# directory would make every session-summary edit need a human.
+assert_eq "a session summary is still the load-bearing-prose tier" \
+    "1" "$(classify .claude/session-summary.md)"
+
 # The worked example, taken from the sentence rather than from this file's
 # memory of it: both paths it names are classified, and the stated answer has to
 # be the higher of the two.
@@ -316,6 +329,8 @@ assert_eq "docs are mergeable on a green suite" "Yes" "$(merge_answer "$(classif
 assert_eq "tests are mergeable on a green suite" "Yes" "$(merge_answer "$(classify tests/run-tests.sh)")"
 assert_eq "the Containerfile is not" "No" "$(merge_answer "$(classify Containerfile)")"
 assert_eq "the signing key's public half is not" "No" "$(merge_answer "$(classify cosign.pub)")"
+assert_eq "the permission table is not" "No" "$(merge_answer "$(classify .claude/settings.json)")"
+assert_eq "the PreToolUse gate is not" "No" "$(merge_answer "$(classify .claude/hooks/gate-git-diff.sh)")"
 
 security_free=$(
     awk '
@@ -329,6 +344,23 @@ if require_nonempty "docs/SECURITY-AI.md's free-to-do list" "${security_free}"; 
         "${security_free}" "docs"
     assert_contains "docs/SECURITY-AI.md lets an agent edit tests unattended" \
         "${security_free}" "tests"
+fi
+
+# The middle list: what needs a human first. The two boundary files are in the
+# top tier of the table above, and a tier answer no agent-facing document
+# repeats is one an agent never reads, so the claim is checked on both sides.
+security_human=$(
+    awk '
+        /^Requires a human decision first/ { in_section = 1; next }
+        in_section && /^Never, under any circumstances/ { exit }
+        in_section
+    ' "${SECURITY_AI}"
+)
+if require_nonempty "docs/SECURITY-AI.md's human-decision list" "${security_human}"; then
+    assert_contains "it names the permission table" \
+        "${security_human}" ".claude/settings.json"
+    assert_contains "it names the PreToolUse gate" \
+        "${security_human}" ".claude/hooks/gate-git-diff.sh"
 fi
 
 security_never=$(

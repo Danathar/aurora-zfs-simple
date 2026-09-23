@@ -164,3 +164,8 @@ Open an issue before:
   published tag on one manifest digest
 - adding a runtime dependency to CI. The repo deliberately has no package
   manager and no `node_modules`; the tests are shell because the code is shell.
+- widening the agent permission boundary — a new allow row or a dropped `deny`
+  row in `.claude/settings.json`, or a relaxed refusal in
+  `.claude/hooks/gate-git-diff.sh`. Those two files are Tier 3 in
+  [`docs/risk-tiers.md`](docs/risk-tiers.md) for the reason the section there
+  gives. Narrowing the boundary needs no issue first.
