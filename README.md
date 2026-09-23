@@ -279,6 +279,9 @@ The post-check verifies:
 - `spl.ko` and `zfs.ko` exist for the selected kernel
 - `modinfo -k <kernel> spl` and `modinfo -k <kernel> zfs` work after `depmod`
 - `spl` and `zfs` module vermagic matches the selected kernel
+- `spl.ko` and `zfs.ko` are signed by the certificate the image installs at
+  `/etc/pki/akmods/certs/akmods-ublue.der`, so a Secure Boot host that enrolled
+  it can load them
 - the generated initramfs contains `zfs.ko` and `spl.ko`
 - critical ZFS kmod RPM payload files are not missing or content-modified, while
   harmless rpm-ostree/bootc ownership/group/timestamp normalization is ignored
