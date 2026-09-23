@@ -215,6 +215,29 @@
 # `.claude/settings.json` records the decision for every shape, the ones this
 # repository cannot reach included.
 #
+# Two wrappers were still read wrong after that pass. Claude Code 2.1.267's
+# permission matcher steps over `noglob` before it matches an allow row, the
+# way it steps over `timeout` and `nohup`, and this gate did not: `noglob
+# podman ps >out` matched `Bash(podman ps:*)` and emptied `out` -- bash opens
+# the target before it finds no command called `noglob`, and zsh runs the
+# command -- while the gated-prefix scan read `noglob` as the name and never
+# saw `podman ps`. It is in the wrapper list now. `xargs` was in that list,
+# and a wrapper is the wrong model of it: xargs appends words it reads from
+# standard input, or from the file its `-a` option names, to the command it
+# runs, so the operands git or shellcheck receive are not in the string at
+# all. `printf '%s\n' /dev/null ./cosign.key | xargs git diff` is the
+# two-operand plain-file read with a one-word git invocation, and the same
+# matcher accepts `xargs git diff` for `Bash(git diff:*)` as readily as `git
+# diff`, so nothing prompted. An `xargs` in front of git or an allow-listed
+# command is refused outright, wherever it stands among the other wrappers
+# (see `XARGS_MSG`); in front of any other command it is left alone, since
+# that command matches no allow row and prompts on its own. The command xargs
+# runs is the first word after xargs's own options, so `git ls-files | xargs
+# rg shellcheck` runs rg and is left alone. A path to a wrapper is cut at its
+# last `/` or `\`, as the matcher cuts it: `/usr/bin/NAME` and `/bin/NAME`
+# are that wrapper, and any other path to one (`./shim/nohup`) is refused,
+# since the file at that path is what runs (see `WRAPPER_PATH_MSG`).
+#
 # What it still cannot see, stated rather than implied: a command that hides a
 # git invocation behind another interpreter (`sh -c ...`), one that changes
 # directory out of the repository first, and anything a command reads or writes
@@ -288,11 +311,17 @@ MOVED_MSG='blocked: this string changes the directory the paths in it are resolv
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 WRAPPER_SHELL_MSG='blocked: `flock -c COMMAND` (and `--command=COMMAND`) hands the string to a shell rather than passing it as an ordinary command word -- `flock --help` documents `-c, --command <command>` as running a single command string through the shell -- so `git status; flock /tmp/l -c '"'"'cat ./cosign.key'"'"'` runs the read past the Read(./cosign.key) deny rule with `git status` alone matching the allow row this string is judged against. This scan reads words, not a nested shell program inside one, so that string is never re-parsed for a gated name hiding in it; the option is refused outright, the way env -S is. Run the command flock would run as a command of its own.'
 
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+WRAPPER_PATH_MSG='blocked: a wrapper (nohup, timeout, nice, env, xargs, ...) is written here as something other than its bare name, /usr/bin/NAME or /bin/NAME -- a path, a quote or a backslash in it -- and the file that spelling names is what runs, or nothing runs and only the redirection happens (/usr/bin\timeout is /usr/bintimeout to bash): `./shim/nohup git diff HEAD` runs whatever ./shim/nohup is -- a file an agent can write -- while Claude Code'"'"'s permission matcher cuts the word at its last / or \, takes it for the nohup it steps over, and matches the allow rule against the words after it alone, so nothing prompts. Write the bare name (nohup git diff HEAD) or its /usr/bin path.'
+
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
 # shellcheck disable=SC2016 # the literal ${VAR} and $(...) are what the reader has to see
 BASH_EXPAND_MSG='blocked: a brace bash could expand, an unquoted glob character (*, ? or a bracket), an unquoted leading ~, a $ or a backtick in a word of a bash -n invocation is refused rather than expanded (a process substitution is refused by GATED_SUBST_MSG), for the reason EXPAND_MSG gives for git: bash rewrites the words before the inner bash sees them, so `{+,+}n` matches no spelling here and reaches bash as +n, which turns noexec off, `?n` does the same when a file named +n exists in the working directory, and $(...), ${VAR} and a backtick supply a word this gate never saw. Write the command out in full.'
+
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+XARGS_MSG='blocked: xargs adds words it reads from standard input (or from the file its -a option names) to the command it runs, so the operands git or the linter receive are not in this string and cannot be checked here: `printf '"'"'%s\n'"'"' /dev/null ./cosign.key | xargs git diff` hands git the two-operand plain-file read of the key while the git invocation this gate reads has no operand at all, and `xargs -a list.txt shellcheck` prints back whatever list.txt names. And Claude Code matches `xargs git diff` against the `Bash(git diff:*)` allow rule as readily as `git diff`, so nothing prompts either. xargs in front of git or an allow-listed command is refused, wherever it stands among other wrappers (`timeout 5 xargs git diff`); in front of any other command it is left to the permission rules. Name the operands in the command itself instead.'
 
 # Fail closed. This gate stands in front of the pre-approved commands that can
 # read a denied path, so a missing dependency must not quietly disable it:
@@ -563,16 +592,17 @@ end_word
 # (or of the string) that is not a variable assignment (`FOO=bar git diff
 # HEAD` names git) and not a shell keyword that takes a command (`{`, `!`,
 # `if`, `then`, `time`, ...). After a wrapper that runs its arguments
-# (`command`, `exec`, `env`, `nohup`, `xargs`, `timeout`, ...) the name is
-# somewhere among the words that follow, behind options this gate does not
-# model -- `command -- $G` -- so every remaining word of that command is
-# held to the test. A word in that position carrying a `$`, a backtick, a
-# `*` or `?`, a `[` (other than the `[` and `[[` commands themselves), or a
-# brace bash would expand is refused, and so is an unquoted backtick opening
-# there, whose output would be the name. A literal name whose last path
-# component is `git` is rewritten to `git`, so `/usr/bin/git diff` opens
-# every scope that `git diff` does. A redirection's target is never the
-# name. One wrapper option is modelled, because it is not an option but an
+# (`command`, `exec`, `env`, `nohup`, `noglob`, `xargs`, `timeout`, ...) the
+# name is somewhere among the words that follow, behind options this gate
+# does not model -- `command -- $G` -- so every remaining word of that
+# command is held to the test. A word in that position carrying a `$`, a
+# backtick, a `*` or `?`, a `[` (other than the `[` and `[[` commands
+# themselves), or a brace bash would expand is refused, and so is an
+# unquoted backtick opening there, whose output would be the name. A literal
+# name whose last path component is `git` is rewritten to `git`, so
+# `/usr/bin/git diff` opens every scope that `git diff` does. A
+# redirection's target is never the name. One wrapper option is modelled,
+# because it is not an option but an
 # interpreter: `env -S 'git diff /dev/null ./cosign.key'` (GNU and uutils
 # `--split-string`) splits its quoted string into a command this scan never
 # sees as words, so any `-S`, clustered (`-iS`) or long, after `env` is
@@ -584,12 +614,96 @@ end_word
 # `$(...)` spelling of the same assignment is not affected. A glob or a `$`
 # in an argument after a wrapper (`timeout 60 find . -name '*.sh'`) is
 # refused too; without the wrapper it is not.
+#
+# `noglob` is one of those wrappers because Claude Code's permission matcher
+# steps over it before matching an allow row, as it steps over `nohup` and
+# `timeout`: read as the name, it hid `podman ps` in `noglob podman ps >out`
+# from the gated-prefix scan below, which decides the write from the name.
+# `xargs` is recorded as well as stepped over, in `xargs_names`: it is the
+# one wrapper that adds words to the command it runs, so that scan refuses
+# it in front of git or an allow-listed command (see `XARGS_MSG`). Its own
+# options are read, too, so that the command it runs is known and the words
+# after that command are its arguments rather than names (see below).
+#
+# Whether a word in a name position is spelled literally: no `$`, backtick,
+# `*` or `?`, no `[` other than the `[` and `[[` commands themselves, and no
+# brace bash would expand.
+name_is_literal() {
+  local raw="$1" word="$2"
+  [[ "${raw}" == *'$'* || "${raw}" == *'`'* || "${raw}" == *'*'* || "${raw}" == *'?'* ]] && return 1
+  brace_would_expand "${raw}" && return 1
+  [[ "${raw}" == *'['* && "${word}" != '[' && "${word}" != '[[' ]] && return 1
+  return 0
+}
+
+# The word as bash hands it to the command, into `unquoted`: quotes removed,
+# and a backslash dropped where it escapes the next character -- anywhere
+# outside quotes, and inside double quotes only before $, a backtick, " or \
+# -- but kept where it is literal, as it is inside single quotes. `words`
+# drops every backslash, which is not the word a path is cut at:
+# `'./shim\nohup'` is `./shim\nohup` to the command and `./shimnohup` in
+# `words`. A `$` never reaches this, since the literal test refuses it first.
+unquote_word() {
+  local raw="$1" quote='' escaped=0 i ch
+  unquoted=''
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+    if ((escaped)); then
+      escaped=0
+      if [[ "${quote}" == '"' ]]; then
+        case "${ch}" in
+        '$' | '`' | '"' | $'\\') ;;
+        *) unquoted+=$'\\' ;;
+        esac
+      fi
+      unquoted+="${ch}"
+    elif [[ "${quote}" == "'" ]]; then
+      if [[ "${ch}" == "'" ]]; then quote=''; else unquoted+="${ch}"; fi
+    elif [[ "${ch}" == $'\\' ]]; then
+      escaped=1
+    elif [[ "${ch}" == '"' ]]; then
+      if [[ "${quote}" == '"' ]]; then quote=''; else quote='"'; fi
+    elif [[ "${ch}" == "'" && -z "${quote}" ]]; then
+      quote="'"
+    else
+      unquoted+="${ch}"
+    fi
+  done
+}
+
+# GNU findutils' and uutils' xargs short options, clustered the way getopt
+# allows (`-0rn1`). Returns non-zero at a letter it does not know, and at an
+# optional-value letter (`-e`, `-i`, `-l`) with no value attached, which the
+# two implementations read differently. Sets `xargs_optarg` when a letter
+# that takes a value ends the word, so the value is the next word.
+xargs_short_options() {
+  local cluster="${1#-}" i
+  for ((i = 0; i < ${#cluster}; i++)); do
+    case "${cluster:i:1}" in
+    0 | o | p | r | t | x) ;;
+    a | d | E | I | L | n | P | s)
+      ((i + 1 < ${#cluster})) || xargs_optarg=1
+      return 0
+      ;;
+    e | i | l)
+      ((i + 1 < ${#cluster}))
+      return
+      ;;
+    *) return 1 ;;
+    esac
+  done
+  return 0
+}
 command_word_pending=1 # the next word of this command may be its name
 after_time=0           # the last name-position word was `time`, whose -p may follow
 after_wrapper=0        # a wrapper ran: every remaining word may be the name
 command_names=()       # 1 at each index that names, or may name, a command
 name_assignments=()    # 1 at each assignment this scan skipped before a name
 moves_dir=()           # 1 at each name that moves the shell's working directory
+xargs_names=()         # 1 at each `xargs` in a position a command's name may take
+xargs_state=0          # 1: xargs's own options are being read; 2: after its `--`
+xargs_optarg=0         # the next word is the value of an xargs option
+xargs_command_idx=-1   # the word xargs runs, once its options are read
 worktree_moved=0       # a name above has moved it, for the scans that follow
 wrapper_name=''
 in_backtick=0
@@ -603,14 +717,16 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # `echo $(date) *.sh` does not read `*.sh` as a name.
     # shellcheck disable=SC2016 # the literal `$(` is the separator's name
     if [[ "${words[idx]}" == '$(' ]]; then
-      name_stack+=("${command_word_pending} ${after_wrapper} ${wrapper_name}")
+      name_stack+=("${command_word_pending} ${after_wrapper} ${xargs_state} ${xargs_optarg} ${wrapper_name}")
       command_word_pending=1
       after_wrapper=0
       wrapper_name=''
+      xargs_state=0
+      xargs_optarg=0
       continue
     fi
     if [[ "${words[idx]}" == '$)' ]] && ((${#name_stack[@]})); then
-      read -r command_word_pending after_wrapper wrapper_name <<<"${name_stack[-1]}"
+      read -r command_word_pending after_wrapper xargs_state xargs_optarg wrapper_name <<<"${name_stack[-1]}"
       unset 'name_stack[-1]'
       continue
     fi
@@ -621,6 +737,8 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
         command_word_pending=0
         after_wrapper=0
         wrapper_name=''
+        xargs_state=0
+        xargs_optarg=0
         continue
       fi
       ((command_word_pending)) && refuse "${CMD_MSG}"
@@ -630,6 +748,8 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     after_wrapper=0
     after_time=0
     wrapper_name=''
+    xargs_state=0
+    xargs_optarg=0
     continue
     ;;
   target) continue ;;
@@ -638,6 +758,48 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   ((command_word_pending)) || continue
   raw_word="${raw_words[idx]}"
   word="${words[idx]}"
+  # xargs's own options and their values, read so that the command xargs
+  # runs is known: it is the first word after them, and the words after it
+  # are that command's arguments rather than names -- `git ls-files | xargs
+  # rg shellcheck` runs rg with `shellcheck` as its pattern, and read as a
+  # chain of name candidates it was refused as a shellcheck run (review on
+  # #224). Read here, before the assignment and keyword tests below, which
+  # would take the value in `-I if` or `-I A=1` for a word of their own and
+  # hand the value's slot to the command after it. Held to the literal test
+  # all the same: bash splits an unquoted `$X` in `-n$X` into more words. An
+  # option GNU findutils and uutils do not both read the same way, or that
+  # neither has (`-J`), or an abbreviated long option, leaves the older
+  # reading in place: every later word may be the name.
+  if ((xargs_optarg)); then
+    name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
+    xargs_optarg=0
+    continue
+  fi
+  if ((xargs_state == 1)) && [[ "${word}" == -?* ]]; then
+    name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
+    case "${word}" in
+    --)
+      xargs_state=2
+      continue
+      ;;
+    --arg-file | --delimiter | --max-args | --max-procs | --max-chars | --process-slot-var)
+      xargs_optarg=1
+      continue
+      ;;
+    --arg-file=* | --delimiter=* | --max-args=* | --max-procs=* | --max-chars=* | \
+      --process-slot-var=* | --eof=* | --replace=* | --max-lines=* | --null | \
+      --open-tty | --interactive | --no-run-if-empty | --verbose | --exit | --show-limits)
+      continue
+      ;;
+    --*) ;;
+    *) xargs_short_options "${word}" && continue ;;
+    esac
+    xargs_state=0 # not an option this reads: every later word may be the name
+  fi
+  if ((xargs_state)); then
+    xargs_state=0
+    xargs_command_idx=${idx}
+  fi
   if ((after_time)) && [[ "${word}" == '-p' || "${word}" == '--' ]]; then
     continue # time's own option (review on arch-bootc#322); the name is still to come
   fi
@@ -669,12 +831,6 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   '{' | '}' | '!' | if | then | else | elif | fi | do | done | while | until | coproc)
     continue # a keyword; the name is still to come
     ;;
-  command | builtin | exec | env | nohup | nice | xargs | timeout | stdbuf | sudo | doas | \
-    setsid | ionice | chrt | taskset | unshare | flock)
-    after_wrapper=1
-    wrapper_name="${word}"
-    continue
-    ;;
   *) ;;
   esac
   if [[ "${wrapper_name}" == env ]] &&
@@ -703,12 +859,50 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     [[ "${raw_word}" =~ ^-[^-]*c || "${raw_word}" == --command* ]]; then
     refuse "${WRAPPER_SHELL_MSG}"
   fi
-  if [[ "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ||
-    "${raw_word}" == *'*'* || "${raw_word}" == *'?'* ]] ||
-    brace_would_expand "${raw_word}" ||
-    { [[ "${raw_word}" == *'['* ]] && [[ "${word}" != '[' && "${word}" != '[[' ]]; }; then
-    refuse "${CMD_MSG}"
-  fi
+  name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
+  # A wrapper, matched on its last path component once the word is known to
+  # be literal. Claude Code's permission matcher cuts a word at its last `/`
+  # or `\` (`replace(/^.*[\\/]/, "")`) and steps over what is left when it
+  # names a wrapper it strips (`nohup`, `timeout`, `nice`, ...), so any path
+  # to one -- including one to a file an agent wrote, `./shim/nohup git diff
+  # HEAD` or `'./shim\nohup' git diff HEAD` -- has the allow rule matched
+  # against the words after it, while bash runs the file at that path
+  # (review on atomic-image-builder#438).
+  # Read as the name here instead, `git status; /usr/bin/xargs git diff` hid
+  # the git behind it from every scan (review on zfs-kinoite-complex#235). So
+  # the component is cut on both separators, and it is tried on two
+  # spellings: the word as typed, quote marks dropped but every backslash
+  # kept, which is the text the matcher cuts (`/usr/bin\timeout` is
+  # `/usr/bintimeout` to bash, command-not-found, and still `timeout` to the
+  # matcher, which auto-allows `/usr/bin\timeout 5 podman ps >out` while bash
+  # truncates `out`; review on sensi#259), and the word as bash hands it on.
+  # Only the typed spellings `NAME`, `/usr/bin/NAME` and `/bin/NAME` are
+  # stepped over as the wrapper they name; any other spelling of a wrapper is
+  # refused outright (see `WRAPPER_PATH_MSG`). Checked after the literal test
+  # so that `$D/env git diff HEAD` is still refused as a name built at
+  # runtime.
+  unquote_word "${raw_word}"
+  typed_base="${raw_word//[\'\"]/}"
+  typed_base="${typed_base##*[/\\]}"
+  for wrapper_base in "${typed_base}" "${unquoted##*[/\\]}"; do
+    case "${wrapper_base}" in
+    command | builtin | exec | env | nohup | noglob | nice | xargs | timeout | stdbuf | sudo | doas | \
+      setsid | ionice | chrt | taskset | unshare | flock)
+      case "${raw_word}" in
+      "${wrapper_base}" | /usr/bin/"${wrapper_base}" | /bin/"${wrapper_base}") ;;
+      *) refuse "${WRAPPER_PATH_MSG}" ;;
+      esac
+      after_wrapper=1
+      wrapper_name="${wrapper_base}"
+      if [[ "${wrapper_name}" == xargs ]]; then
+        xargs_names[idx]=1
+        xargs_state=1
+      fi
+      continue 2
+      ;;
+    *) ;;
+    esac
+  done
   # A literal path to a gated tool reaches the same tool. `/usr/bin/git diff`
   # is rewritten so every scope `git diff` opens is opened for it too, and
   # `/usr/bin/shellcheck ./.env` is rewritten for the same reason: it prints
@@ -734,6 +928,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   *) ;;
   esac
   command_names[idx]=1
+  # The command xargs runs, when it is not a wrapper, keyword or assignment
+  # (each of which went on above): the words after it are its arguments.
+  ((idx == xargs_command_idx)) && after_wrapper=0
   ((after_wrapper)) || command_word_pending=0
 done
 
@@ -1079,6 +1276,10 @@ prefix_could_match() {
 # `shellcheck tests/run-tests.sh >cosign.pub`), so neither fact is complete
 # until the command ends.
 check_gated_command() {
+  # xargs in front of the command: the words it reads from stdin or from `-a
+  # FILE` are operands no scan here reads, and the allow rule matches `xargs
+  # git diff` as it matches `git diff`. Git counts, whichever subcommand.
+  ((cmd_xargs && (cmd_gated || cmd_git))) && refuse "${XARGS_MSG}"
   ((cmd_gated && cmd_writes)) && refuse "${GATED_REDIRECT_MSG}"
   # A shellcheck invocation has its own scan for this, with the message that
   # names the operand; that one is left to say it.
@@ -1121,6 +1322,7 @@ reset_command() {
   cmd_git=0
   cmd_export=0
   cmd_export_idx=-1
+  cmd_xargs=0
 }
 
 # The words of a command from its *name* onward: a leading assignment
@@ -1142,6 +1344,7 @@ cmd_git=0     # its name is git, which the allow rows cover with their own `*`
 cmd_export=0  # 1: its name is export/declare/typeset/readonly, whose own words
               # assign; 2: it is `set`, whose -a arms every later assignment
 cmd_export_idx=-1 # the word that named it, so the name is not read as its own
+cmd_xargs=0   # an `xargs` stood in a name position before the name was gated
 cmd_stack=()  # the outer command's state, while a `$(...)` is being read
 export_idx=-1 # the first word at which an export-family command arms a variable
 gate_idx=-1   # the last word at which a gated command or git is running
@@ -1216,13 +1419,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     if [[ "${words[idx]}" == '$(' ]] ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
-      cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_git} ${cmd_export} ${cmd_export_idx} ${cmd_prefix}")
+      cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_git} ${cmd_export} ${cmd_export_idx} ${cmd_xargs} ${cmd_prefix}")
       reset_command
       continue
     fi
     if [[ "${words[idx]}" == '$)' || "${words[idx]}" == ')' ]] && ((${#cmd_stack[@]})); then
       check_gated_command
-      read -r cmd_writes cmd_reads cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_git cmd_export cmd_export_idx cmd_prefix <<<"${cmd_stack[-1]}"
+      read -r cmd_writes cmd_reads cmd_subst cmd_heredoc cmd_assign cmd_bash cmd_named cmd_gated cmd_git cmd_export cmd_export_idx cmd_xargs cmd_prefix <<<"${cmd_stack[-1]}"
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
@@ -1288,6 +1491,12 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     cmd_assign_name="${BASH_REMATCH[1]}"
     continue
   fi
+  # An `xargs` the command-name scan found where a name may stand runs the
+  # command after it with words this string does not contain, so it is kept
+  # until the command's name is known and `check_gated_command` decides it.
+  # One after a gated name is that command's argument (`timeout 5 podman ps
+  # xargs`), and is not.
+  ((${xargs_names[idx]:-0})) && ((cmd_gated == 0 && cmd_git == 0)) && cmd_xargs=1
   ((cmd_named)) || ((${command_names[idx]:-0})) || continue
   cmd_named=1
   if ((cmd_gated == 0)); then
