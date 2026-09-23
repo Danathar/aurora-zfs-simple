@@ -312,7 +312,7 @@ MOVED_MSG='blocked: this string changes the directory the paths in it are resolv
 WRAPPER_SHELL_MSG='blocked: `flock -c COMMAND` (and `--command=COMMAND`) hands the string to a shell rather than passing it as an ordinary command word -- `flock --help` documents `-c, --command <command>` as running a single command string through the shell -- so `git status; flock /tmp/l -c '"'"'cat ./cosign.key'"'"'` runs the read past the Read(./cosign.key) deny rule with `git status` alone matching the allow row this string is judged against. This scan reads words, not a nested shell program inside one, so that string is never re-parsed for a gated name hiding in it; the option is refused outright, the way env -S is. Run the command flock would run as a command of its own.'
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
-WRAPPER_PATH_MSG='blocked: a wrapper (nohup, timeout, nice, env, xargs, ...) is written here as a path other than /usr/bin/NAME or /bin/NAME, and the file at that path is what runs: `./shim/nohup git diff HEAD` runs whatever ./shim/nohup is -- a file an agent can write -- while Claude Code'"'"'s permission matcher cuts the word at its last / or \, takes it for the nohup it steps over, and matches the allow rule against the words after it alone, so nothing prompts. Write the bare name (nohup git diff HEAD) or its /usr/bin path.'
+WRAPPER_PATH_MSG='blocked: a wrapper (nohup, timeout, nice, env, xargs, ...) is written here as something other than its bare name, /usr/bin/NAME or /bin/NAME -- a path, a quote or a backslash in it -- and the file that spelling names is what runs, or nothing runs and only the redirection happens (/usr/bin\timeout is /usr/bintimeout to bash): `./shim/nohup git diff HEAD` runs whatever ./shim/nohup is -- a file an agent can write -- while Claude Code'"'"'s permission matcher cuts the word at its last / or \, takes it for the nohup it steps over, and matches the allow rule against the words after it alone, so nothing prompts. Write the bare name (nohup git diff HEAD) or its /usr/bin path.'
 
 # shellcheck disable=SC2016 # the backticks quote a command spelling for the reader
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
@@ -870,30 +870,39 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # (review on atomic-image-builder#438).
   # Read as the name here instead, `git status; /usr/bin/xargs git diff` hid
   # the git behind it from every scan (review on zfs-kinoite-complex#235). So
-  # the component is cut on both separators of the word as bash passes it
-  # on, the system spellings `/usr/bin/NAME` and `/bin/NAME` are stepped over
-  # as the wrapper they name, and any other path to a wrapper is refused
-  # outright (see `WRAPPER_PATH_MSG`). Checked after the literal test so
-  # that `$D/env git diff HEAD` is still refused as a name built at runtime.
+  # the component is cut on both separators, and it is tried on two
+  # spellings: the word as typed, quote marks dropped but every backslash
+  # kept, which is the text the matcher cuts (`/usr/bin\timeout` is
+  # `/usr/bintimeout` to bash, command-not-found, and still `timeout` to the
+  # matcher, which auto-allows `/usr/bin\timeout 5 podman ps >out` while bash
+  # truncates `out`; review on sensi#259), and the word as bash hands it on.
+  # Only the typed spellings `NAME`, `/usr/bin/NAME` and `/bin/NAME` are
+  # stepped over as the wrapper they name; any other spelling of a wrapper is
+  # refused outright (see `WRAPPER_PATH_MSG`). Checked after the literal test
+  # so that `$D/env git diff HEAD` is still refused as a name built at
+  # runtime.
   unquote_word "${raw_word}"
-  wrapper_base="${unquoted##*[/\\]}"
-  case "${wrapper_base}" in
-  command | builtin | exec | env | nohup | noglob | nice | xargs | timeout | stdbuf | sudo | doas | \
-    setsid | ionice | chrt | taskset | unshare | flock)
-    case "${unquoted}" in
-    "${wrapper_base}" | /usr/bin/"${wrapper_base}" | /bin/"${wrapper_base}") ;;
-    *) refuse "${WRAPPER_PATH_MSG}" ;;
+  typed_base="${raw_word//[\'\"]/}"
+  typed_base="${typed_base##*[/\\]}"
+  for wrapper_base in "${typed_base}" "${unquoted##*[/\\]}"; do
+    case "${wrapper_base}" in
+    command | builtin | exec | env | nohup | noglob | nice | xargs | timeout | stdbuf | sudo | doas | \
+      setsid | ionice | chrt | taskset | unshare | flock)
+      case "${raw_word}" in
+      "${wrapper_base}" | /usr/bin/"${wrapper_base}" | /bin/"${wrapper_base}") ;;
+      *) refuse "${WRAPPER_PATH_MSG}" ;;
+      esac
+      after_wrapper=1
+      wrapper_name="${wrapper_base}"
+      if [[ "${wrapper_name}" == xargs ]]; then
+        xargs_names[idx]=1
+        xargs_state=1
+      fi
+      continue 2
+      ;;
+    *) ;;
     esac
-    after_wrapper=1
-    wrapper_name="${wrapper_base}"
-    if [[ "${wrapper_name}" == xargs ]]; then
-      xargs_names[idx]=1
-      xargs_state=1
-    fi
-    continue
-    ;;
-  *) ;;
-  esac
+  done
   # A literal path to a gated tool reaches the same tool. `/usr/bin/git diff`
   # is rewritten so every scope `git diff` opens is opened for it too, and
   # `/usr/bin/shellcheck ./.env` is rewritten for the same reason: it prints

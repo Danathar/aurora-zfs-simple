@@ -2266,6 +2266,14 @@ corpus_row refuse "4 name: a backslash is a separator to the matcher" \
     "'./shim\\nohup' git diff HEAD"
 corpus_row refuse "4 name: a wrapper path outside the system directories" \
     "/tmp/timeout 5 shellcheck tests/run-tests.sh"
+# An unquoted backslash is removed by bash and kept by the matcher, which cuts
+# the typed text at it: bash runs no command at all and still truncates the
+# target (review on sensi#259).
+corpus_row refuse "4 name: a backslash bash removes and the matcher cuts at" \
+    "/usr/bin\\timeout 5 podman ps >out"
+corpus_row refuse "4 name: a backslash before a wrapper name" "x\\nohup podman ps >out"
+corpus_row refuse "4 name: a backslash in a path to a wrapper before shellcheck" \
+    "/usr/bin\\nohup shellcheck tests/run-tests.sh >out"
 # shellcheck disable=SC2016 # the variable is a spelling handed to the hook
 corpus_row refuse "4 name: a wrapper path built at runtime" 'git status; $D/env git diff HEAD'
 # The command xargs runs is the first word after xargs's own options, read
@@ -2524,12 +2532,16 @@ mutation "a literal path to a wrapper read as that wrapper" \
     'case "${wrapper_base}" in' 'case "${unquoted}" in' \
     "git status; /usr/bin/xargs git diff"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "deciding a wrapper on the word as typed, backslashes kept" \
+    'for wrapper_base in "${typed_base}" ' 'for wrapper_base in ' \
+    "/usr/bin\\timeout 5 podman ps >out"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "refusing a path to a wrapper other than the system one" \
     '*) refuse "${WRAPPER_PATH_MSG}" ;;' '*) ;;' \
     "./shim/nohup git diff HEAD"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "cutting a path to a wrapper at a backslash as well as a slash" \
-    'wrapper_base="${unquoted##*[/\\]}"' 'wrapper_base="${unquoted##*/}"' \
+    '[/\\]}' '/}' \
     "'./shim\\nohup' git diff HEAD"
 mutation "reading the next word as the value of an xargs option" \
     'xargs_optarg=1' 'xargs_optarg=0' \
