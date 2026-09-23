@@ -131,6 +131,14 @@ and are repeated because the consequence is security-relevant, not just social:
   job that can reach the signing secret.
 - **granting any new workflow `packages: write`, `contents: write`, or access to
   `secrets`.**
+- **changing the permission table in `.claude/settings.json`, or the `PreToolUse`
+  gate at `.claude/hooks/gate-git-diff.sh`.** That pair is the boundary an agent
+  works inside: the `deny` list is what keeps a tool call off `cosign.key` and
+  off `git push --force`, and the gate is what keeps the allow-listed commands
+  from reaching past it. Widening either is the one change whose own result
+  cannot review it, so it is Tier 3 in [`docs/risk-tiers.md`](risk-tiers.md)
+  rather than the prose tier the rest of `.claude/` sits in. Narrowing the
+  boundary — a new refusal, a removed allow row — is ordinary work.
 
 Never, under any circumstances:
 
