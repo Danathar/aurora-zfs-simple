@@ -6,16 +6,17 @@ enforcing it.
 
 ## Status
 
-As of 2026-09-24, `main` has no branch protection and no ruleset. Check it
-yourself; neither call needs admin rights:
+The ruleset below has been active on `main` since 2026-09-24, as ruleset
+`23944694`. It was applied from this file after #243 merged (issue #242).
+Check it yourself; neither call needs admin rights:
 
 ```bash
 gh api repos/Danathar/aurora-zfs-simple/branches/main --jq .protected
 gh api repos/Danathar/aurora-zfs-simple/rulesets
 ```
 
-`false` and `[]` mean unprotected. Once the ruleset below is applied, the first
-prints `true` and the second lists `protect main`.
+The first prints `true` and the second lists `protect main`. `false` and `[]`
+mean someone has removed it, and `main` is unprotected again.
 
 ## Why it matters here
 
@@ -62,8 +63,8 @@ about how work lands.
 
 ## Applying it
 
-A pull request cannot change repository settings. A repository admin applies
-it once:
+A pull request cannot change repository settings. A repository admin applied
+it once, with:
 
 ```bash
 gh api --method POST repos/Danathar/aurora-zfs-simple/rulesets \
@@ -71,7 +72,12 @@ gh api --method POST repos/Danathar/aurora-zfs-simple/rulesets \
 ```
 
 To change it later, edit the file through a pull request, then update the live
-ruleset from the file with `--method PUT` on `rulesets/<id>`.
+ruleset from the file:
+
+```bash
+gh api --method PUT repos/Danathar/aurora-zfs-simple/rulesets/23944694 \
+  --input .github/rulesets/main.json
+```
 
 ## When there is a second reviewer
 

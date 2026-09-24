@@ -197,11 +197,12 @@ meets each condition, and the points worth knowing:
   to `SIGNING_SECRET` — and the publishing steps in `build.yml` are gated on
   `github.event_name != 'pull_request'` *and* the default branch, so a pull
   request it opens cannot publish or sign what it contains. That gate bounds
-  the grant only while the job has to go through a pull request, and until
-  the ruleset in [`branch-protection.md`](branch-protection.md) is applied
-  it does not: `main` is unprotected, so the same token can push to `main`
-  directly, and the next scheduled build signs what it pushed. The prompt's
-  "never push to `main`" is an instruction, not a control.
+  the grant only while the job has to go through a pull request. The ruleset
+  in [`branch-protection.md`](branch-protection.md), active on `main` since
+  2026-09-24 with no bypass actors, is what makes it: without it the same
+  token could push to `main` directly, and the next scheduled build would sign
+  what it pushed. The prompt's "never push to `main`" is an instruction, not a
+  control.
 - No agent credential is set on this repository as of this writing, so every
   trigger currently stops at the workflow's `preflight` job, records why in the
   run summary, and succeeds.
@@ -216,8 +217,9 @@ Stated plainly, so nobody assumes otherwise:
   or an agent honours. The only mechanical controls are the `permissions:`
   blocks, the `if:` conditions on the publishing steps, and branch protection.
   Branch protection is defined in
-  [`.github/rulesets/main.json`](../.github/rulesets/main.json) and is not yet
-  applied; [`branch-protection.md`](branch-protection.md) says how to check.
+  [`.github/rulesets/main.json`](../.github/rulesets/main.json) and has been
+  applied since 2026-09-24; [`branch-protection.md`](branch-protection.md)
+  says how to check that it still is.
 - **It says nothing about the contents of the published image.** Upstream Aurora
   and akmods content is trusted by construction; this repo does not audit it.
 - **It does not cover the machines that consume the image.** Rebase policy,
