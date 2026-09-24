@@ -74,7 +74,10 @@ fi
 
 so sourcing it defines the helpers without running a check, and
 `test-post-check.sh` calls them directly with `rpm`, `ldd` and `find` stubbed.
-The `check_*` functions themselves are still only exercised by a real build.
+Two of the seven `check_*` stages are reached as well: `test-post-check-checks.sh`
+runs `check_kernel_tree` and `check_zfs_packages` against stubbed `rpm` and
+`find` output. The other five read paths or tools only the finished image has,
+and are still only exercised by a real build.
 
 So: if you change `build_files/` or the `Containerfile`, a green suite is not
 evidence. Say in the PR how you verified it, or say that you did not. A green
@@ -96,8 +99,11 @@ prose, run `./tests/run-tests.sh` locally and say so in the PR.
 
 Match the file you are editing. Across the repo:
 
-- `set -euo pipefail` at the top of anything executed; `set -uo pipefail` in the
-  test runner, which needs to survive a failing test and report it.
+- `set -euo pipefail` at the top of anything executed; the three build scripts
+  add `x` so the build log traces them. `set -uo pipefail` in the test runner
+  and every `tests/test-*.sh`, which need to survive a failing test or
+  assertion and report it, and in `.claude/hooks/gate-git-diff.sh`, which
+  chooses each exit itself and refuses with `exit 2`.
 - Four-space indentation in shell, except `ci/write-badges.sh` and
   `.claude/hooks/gate-git-diff.sh`, which use two and are left alone.
 - Shebang and executable bit on anything run by path. The test suite enforces

@@ -3,8 +3,9 @@
 # Tests for the pure helpers in build_files/post-check.sh.
 #
 # post-check.sh runs inside the image build against a real RPM database, module
-# tree and initramfs, so its check_* functions are not reachable from a test on
-# the host. Its helpers are: they take strings, shell out to one tool, and
+# tree and initramfs, so most of its check_* functions are not reachable from a
+# test on the host (the two that are live in test-post-check-checks.sh). Its
+# helpers are: they take strings, shell out to one tool, and
 # decide. Now that the file guards its entry point, sourcing it defines those
 # helpers without running a single check, so each one can be called directly
 # with a stub standing in for rpm, ldd or find.
