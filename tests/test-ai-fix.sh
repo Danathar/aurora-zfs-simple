@@ -445,4 +445,73 @@ assert_eq "one agent at a time per issue or pull request" \
 assert_eq "an in-flight agent run is not cancelled" \
     "false" "$(wf '.concurrency["cancel-in-progress"]')"
 
+# --- B7. the ruleset that keeps the grant off main --------------------------
+#
+# contents: write is bounded by the publish gate in build.yml only while this
+# job has to go through a pull request. Nothing in the workflow makes it: main
+# had no branch protection and no ruleset (issue #242), so the token could push
+# to main directly and the next scheduled build would sign the result. The
+# ruleset is repository configuration a pull request cannot apply, so what is
+# checked here is the committed definition an admin applies from, and
+# docs/branch-protection.md says how to check the live one.
+
+RULESET="${REPO_ROOT}/.github/rulesets/main.json"
+
+rs() {
+    jq -r "$1" <"${RULESET}"
+}
+
+if jq -e . <"${RULESET}" >/dev/null 2>&1; then
+    _pass "the main ruleset is committed and parses as JSON"
+
+    assert_eq "the ruleset is enforced, not evaluated" "active" "$(rs '.enforcement')"
+    assert_eq "the ruleset targets the default branch" \
+        "~DEFAULT_BRANCH" "$(rs '.conditions.ref_name.include | join(",")')"
+    # A bypass for Actions or an App gives back the direct push this exists to
+    # stop, and it is the obvious fix to reach for when a workflow's push fails.
+    assert_eq "nothing may bypass the ruleset" "0" "$(rs '.bypass_actors | length')"
+    assert_eq "the ruleset carries the four rules docs/branch-protection.md explains" \
+        "deletion,non_fast_forward,pull_request,required_status_checks" \
+        "$(rs '[.rules[].type] | sort | join(",")')"
+    # One approval on a single-maintainer repository means nothing can merge.
+    assert_eq "a pull request needs no approval a sole maintainer cannot give" \
+        "0" "$(rs '.rules[] | select(.type == "pull_request") | .parameters.required_approving_review_count')"
+
+    # A required check that some pull requests never get leaves them waiting
+    # forever. Every required context must be a job name in both build.yml and
+    # coverage-gate.yml, whose path filters between them cover every change.
+    required=$(rs '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context')
+    if [[ -n "${required}" ]]; then
+        _pass "the ruleset requires at least one check"
+    else
+        _fail "the ruleset requires at least one check" \
+            "no required_status_checks context was extracted; the loop below asserts nothing"
+    fi
+    for gate in build coverage-gate; do
+        gate_json="${TMP_ROOT}/${gate}.json"
+        if ! "${WORKFLOW_PYTHON}" -B "${NORMALIZER}" "${REPO_ROOT}/.github/workflows/${gate}.yml" \
+            >"${gate_json}" 2>"${TMP_ROOT}/${gate}.err"; then
+            _fail "${gate}.yml parses as YAML" "$(cat "${TMP_ROOT}/${gate}.err")"
+            continue
+        fi
+        assert_eq "${gate}.yml runs on pull requests to main" \
+            "main" "$(jq -r '.on.pull_request.branches | join(",")' <"${gate_json}")"
+        names=$(jq -r '.jobs[].name // empty' <"${gate_json}")
+        while IFS= read -r context; do
+            [[ -z "${context}" ]] && continue
+            if grep -qxF -- "${context}" <<<"${names}"; then
+                _pass "required check '${context}' is a job in ${gate}.yml"
+            else
+                _fail "required check '${context}' is a job in ${gate}.yml" \
+                    "jobs found: ${names//$'\n'/, }" \
+                    "a pull request that only runs ${gate}.yml would never get this check"
+            fi
+        done <<<"${required}"
+    done
+else
+    _fail "the main ruleset is committed and parses as JSON" \
+        "missing or not JSON: ${RULESET}" \
+        "see docs/branch-protection.md and issue #242"
+fi
+
 finish

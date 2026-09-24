@@ -196,8 +196,12 @@ meets each condition, and the points worth knowing:
   for pushing a branch, and it comes with neither `packages: write` nor access
   to `SIGNING_SECRET` — and the publishing steps in `build.yml` are gated on
   `github.event_name != 'pull_request'` *and* the default branch, so a pull
-  request it opens cannot publish or sign what it contains. That gate is what
-  bounds the grant.
+  request it opens cannot publish or sign what it contains. That gate bounds
+  the grant only while the job has to go through a pull request, and until
+  the ruleset in [`branch-protection.md`](branch-protection.md) is applied
+  it does not: `main` is unprotected, so the same token can push to `main`
+  directly, and the next scheduled build signs what it pushed. The prompt's
+  "never push to `main`" is an instruction, not a control.
 - No agent credential is set on this repository as of this writing, so every
   trigger currently stops at the workflow's `preflight` job, records why in the
   run summary, and succeeds.
@@ -210,8 +214,10 @@ Stated plainly, so nobody assumes otherwise:
 
 - **It is not enforced by CI.** Every rule above is a convention that a reviewer
   or an agent honours. The only mechanical controls are the `permissions:`
-  blocks, the `if:` conditions on the publishing steps, and branch protection if
-  it is enabled.
+  blocks, the `if:` conditions on the publishing steps, and branch protection.
+  Branch protection is defined in
+  [`.github/rulesets/main.json`](../.github/rulesets/main.json) and is not yet
+  applied; [`branch-protection.md`](branch-protection.md) says how to check.
 - **It says nothing about the contents of the published image.** Upstream Aurora
   and akmods content is trusted by construction; this repo does not audit it.
 - **It does not cover the machines that consume the image.** Rebase policy,
