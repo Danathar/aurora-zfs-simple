@@ -201,6 +201,7 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/rulesets/main.json                the ruleset that protects `main`, as applied to it
 .github/labeler.yml                       path-to-label map for the above
 .github/auto-qa-tuning.json               declared CI timeouts and the drift policy
+.github/policies/                         what each workflow's token may do, held to the workflows by a test
 renovate.json                             dependency updates, including the Chunkah release tag
 docs/manual-input-check.md                Fedora release input-check notes
 docs/quality.md                           where the signal comes from, and what it cannot tell you

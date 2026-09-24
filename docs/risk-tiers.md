@@ -11,7 +11,7 @@ radius**: who or what is damaged if the change is wrong, and how it is noticed.
 
 | Tier                       | Blast radius                                                                     | Paths                                                                                                        | Merge on green CI alone?                                     |
 | -------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| **3 — Published artifact** | A wrong change ships signed bytes, a host that will not boot, or an agent that can reach past the deny list | `Containerfile`, `build_files/**`, the push/verify/sign steps of `.github/workflows/build.yml`, `cosign.pub`, `.claude/settings.json`, `.claude/hooks/**`, `.github/rulesets/**` | **No.** Needs a human and stated evidence.                   |
+| **3 — Published artifact** | A wrong change ships signed bytes, a host that will not boot, or an agent that can reach past the deny list | `Containerfile`, `build_files/**`, the push/verify/sign steps of `.github/workflows/build.yml`, `cosign.pub`, `.claude/settings.json`, `.claude/hooks/**`, `.github/rulesets/**`, `.github/policies/**` | **No.** Needs a human and stated evidence.                   |
 | **2 — Pipeline**           | A wrong change breaks or silently degrades the build, badges, or dependency pins | other parts of `.github/workflows/**`, `ci/**`, `renovate.json`, `.github/dependabot.yml`                    | No. Needs a human, but CI is meaningful evidence.            |
 | **1 — Load-bearing prose** | A wrong change misleads a human or an agent mid-incident                         | `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, `docs/**`, `.github/prompts/**`, `.claude/**`                   | Yes, if the doc-path suite is green and a human has read it. |
 | **0 — Self-checking**      | A wrong change fails in front of the person who made it                          | `tests/**`, `.editorconfig`, `.shellcheckrc`, `.gitignore`                                                   | Yes.                                                         |
@@ -61,6 +61,18 @@ that proposed the change. That is the one edit a pull request cannot be reviewed
 by its own result, so it takes a human, the way signing does.
 [`docs/SECURITY-AI.md`](SECURITY-AI.md) lists it among the changes that need a
 human decision first.
+
+## Why `.github/policies/**` is Tier 3
+
+[`.github/policies/workflow-permissions.json`](../.github/policies/workflow-permissions.json)
+lists what each workflow's `GITHUB_TOKEN` may do, and
+[`tests/test-workflow-permissions.sh`](../tests/test-workflow-permissions.sh)
+fails when a workflow's `permissions:` block asks for anything the file does not
+list. The file exists so that widening a token takes a second, visible edit.
+A change that adds a scope to it is the decision
+[`docs/SECURITY-AI.md`](SECURITY-AI.md) says needs a human — a new
+`contents: write` or `packages: write` — written down, so it sits in the tier
+that needs one. Removing a scope from both files is ordinary work.
 
 ## Evidence, by tier
 
