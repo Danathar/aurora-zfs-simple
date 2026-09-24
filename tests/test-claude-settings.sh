@@ -1967,7 +1967,10 @@ done
 # read the way bash reads its own (`-nv` is `-n -v`; `-no verbose` hands
 # `verbose` to the `-o`), and the script it opens -- an operand, or stdin when
 # none is named -- is held to the shellcheck operand test, since bash prints
-# the line a syntax error stands on.
+# the line a syntax error stands on. A login shell reached from outside
+# bash's own words -- `exec -l`, or a zeroth argument that begins with `-`
+# (review on #237) -- reads the same startup files `-l` does, and is refused
+# with it.
 #
 # Each row is run twice: by real bash, in a throwaway checkout holding a
 # synthetic key, `.env` and script under a throwaway HOME, and through the
@@ -2024,6 +2027,8 @@ bash_n_row prints refuse "bash -n -i tests/run-tests.sh"
 bash_n_row prints refuse "bash -n -l tests/run-tests.sh"
 bash_n_row prints refuse "command -p bash -n -v tests/run-tests.sh"
 bash_n_row prints refuse "echo x; bash -nv tests/run-tests.sh"
+bash_n_row prints refuse "exec -l bash -n tests/run-tests.sh"
+bash_n_row prints refuse "exec -a -bash bash -n tests/run-tests.sh"
 # The file bash opens: an operand, or stdin when no operand is named.
 bash_n_row prints refuse "bash -n .env"
 bash_n_row prints refuse "bash -n ./.env"
@@ -2057,6 +2062,7 @@ bash_n_row quiet allow "bash -n tests/run-tests.sh < /dev/null"
 bash_n_row quiet allow "bash -n -- -v"
 bash_n_row quiet allow "bash -n tests/run-tests.sh -v"
 bash_n_row quiet allow "bash -n -c 'x=1'"
+bash_n_row quiet allow "exec bash -n tests/run-tests.sh"
 bash_n_prints_rows=0
 bash_n_allow_rows=0
 for bash_n_entry in "${BASHN_ROWS[@]}"; do
@@ -2490,6 +2496,8 @@ corpus_row refuse "5 option: -o takes the next word inside a cluster" \
     "bash -n -no verbose tests/run-tests.sh"
 corpus_row refuse "5 option: a bash -n operand is held to the shellcheck test" "bash -n .env"
 corpus_row allow "5 option: bash -O takes a value" "bash -n -O extglob tests/run-tests.sh"
+corpus_row refuse "5 option: exec -l makes bash a login shell" "exec -l bash -n tests/run-tests.sh"
+corpus_row refuse "5 option: env --argv0 can too" "env --argv0=-bash bash -n tests/run-tests.sh"
 corpus_row refuse "5 option: a shellcheck value option is stepped over" \
     "shellcheck -e SC1091 ./.env"
 corpus_row refuse "5 option: shellcheck --rcfile is not one" \
@@ -2708,6 +2716,10 @@ mutation "holding a bash -n operand to the shellcheck operand test" \
 mutation "holding a file on bash -n's stdin to the same test" \
     '((cmd_gated && cmd_reads && cmd_bash))' '((0))' \
     "bash -n - < .env"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "refusing a login shell set up by exec -l or a dashed zeroth argument" \
+    '((${argv0_words[idx]:-0})) && ((cmd_gated == 0)) && cmd_argv0=1' ':' \
+    "exec -l bash -n tests/run-tests.sh"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"
