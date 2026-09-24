@@ -611,6 +611,31 @@ repo_slug="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/workf
     head -1 | cut -d/ -f2,3)"
 require_nonempty "this repository's slug in README.md's build badge" "${repo_slug}"
 
+# Prints each command line in $1 (continuations already joined) that runs a `gh`
+# call without naming this repository. A line may hold a `$(gh ...)` inside a
+# loop, so calls are counted rather than lines matched. Every subcommand counts,
+# not a list of the ones in use today: `gh api` has to name the repository in
+# its path, and anything else -- `pr`, `run`, or a later `gh workflow list` --
+# has to carry `--repo` or `-R`.
+unscoped_gh_calls() {
+    local line calls named api_calls api_named
+    while IFS= read -r line; do
+        calls="$(grep -oE '(^|[^[:alnum:]_./-])gh [a-z]+' <<<"${line}" | grep -vc ' api$')"
+        named="$(grep -oE -- "(--repo|-R) ${repo_slug}( |$)" <<<"${line}" | wc -l)"
+        api_calls="$(grep -oE '(^|[^[:alnum:]_./-])gh api ' <<<"${line}" | wc -l)"
+        api_named="$(grep -oE "gh api \"?repos/${repo_slug}/" <<<"${line}" | wc -l)"
+        if [[ "${calls}" -ne "${named}" || "${api_calls}" -ne "${api_named}" ]]; then
+            printf '%s\n' "${line}"
+        fi
+    done <<<"$1"
+}
+
+# metrics.md's commands are the ones a reader runs for current values, so they
+# are held to the same rule as the snapshots' (Codex review on #248: a clone
+# made with `gh repo clone` defaults `gh` to the parent repository).
+assert_eq "every gh call in docs/metrics.md names ${repo_slug}" \
+    "" "$(unscoped_gh_calls "${joined_blocks}")"
+
 snapshots=()
 while IFS= read -r snapshot; do
     snapshots+=("${snapshot}")
@@ -661,21 +686,8 @@ for snapshot in "${snapshots[@]}"; do
     assert_eq "every jq filter in ${rel} is single-quoted on one line, so the compile check read it" \
         "${jq_flags}" "$(grep -c . <<<"${snapshot_filters}")"
 
-    # One line per command after continuations are joined; a line may hold a
-    # `$(gh ...)` inside a loop, so calls are counted rather than lines matched.
-    # Every subcommand counts, not a list of the ones in use today: `gh api`
-    # has to name the repository in its path, and anything else -- `pr`, `run`,
-    # or a later `gh workflow list` -- has to carry `--repo` or `-R`.
-    unnamed=""
     unpinned=""
     while IFS= read -r line; do
-        calls="$(grep -oE '(^|[^[:alnum:]_./-])gh [a-z]+' <<<"${line}" | grep -vc ' api$')"
-        named="$(grep -oE -- "(--repo|-R) ${repo_slug}( |$)" <<<"${line}" | wc -l)"
-        api_calls="$(grep -oE '(^|[^[:alnum:]_./-])gh api ' <<<"${line}" | wc -l)"
-        api_named="$(grep -oE "gh api \"?repos/${repo_slug}/" <<<"${line}" | wc -l)"
-        if [[ "${calls}" -ne "${named}" || "${api_calls}" -ne "${api_named}" ]]; then
-            unnamed+="${line}"$'\n'
-        fi
         if [[ "${line}" == *"gh run list"* && "${line}" != *"--created '<${read_on}'"* ]]; then
             unpinned+="${line}"$'\n'
         fi
@@ -683,7 +695,7 @@ for snapshot in "${snapshots[@]}"; do
             unpinned+="${line}"$'\n'
         fi
     done <<<"${snapshot_joined}"
-    assert_eq "every gh call in ${rel} names ${repo_slug}" "" "${unnamed%$'\n'}"
+    assert_eq "every gh call in ${rel} names ${repo_slug}" "" "$(unscoped_gh_calls "${snapshot_joined}")"
     assert_eq "every run and pull request listing in ${rel} is pinned to a fixed scope" \
         "" "${unpinned%$'\n'}"
     # Two tables over different ranges of pull requests would not add up.
