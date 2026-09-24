@@ -1,0 +1,48 @@
+{
+  "$comment": "The GITHUB_TOKEN permissions each workflow in .github/workflows/ may request. tests/test-workflow-permissions.sh reads every workflow and fails when one asks for anything not written here, when a workflow is missing from this file, or when an entry here names a workflow or job that no longer declares that block. So widening what a token can do takes two edits a reviewer sees side by side: the workflow and this file. 'workflow' is the top-level permissions block; null means the file declares none. 'jobs' lists only the jobs that declare their own block, and a job not listed must not declare one. A job with neither block would run with the repository's default token, and the test refuses that too. docs/risk-tiers.md puts this file in Tier 3; see docs/SECURITY-AI.md.",
+  "workflows": {
+    "ai-fix.yml": {
+      "workflow": null,
+      "jobs": {
+        "preflight": {"contents": "read", "pull-requests": "read"},
+        "fix": {"contents": "write", "pull-requests": "write", "issues": "write", "id-token": "write", "actions": "read"}
+      }
+    },
+    "auto-qa.yml": {
+      "workflow": null,
+      "jobs": {
+        "tune": {"contents": "read", "actions": "read"}
+      }
+    },
+    "build.yml": {
+      "workflow": null,
+      "jobs": {
+        "tests": {"contents": "read"},
+        "build_push": {"contents": "read", "packages": "write"}
+      }
+    },
+    "coverage-gate.yml": {
+      "workflow": null,
+      "jobs": {
+        "tests": {"contents": "read"}
+      }
+    },
+    "labeler.yml": {
+      "workflow": null,
+      "jobs": {
+        "label": {"contents": "read", "pull-requests": "write"}
+      }
+    },
+    "nightly-compliance.yml": {
+      "workflow": null,
+      "jobs": {
+        "suite": {"contents": "read"},
+        "published_image": {"contents": "read", "packages": "read"}
+      }
+    },
+    "status-badges.yml": {
+      "workflow": {"contents": "write"},
+      "jobs": {}
+    }
+  }
+}

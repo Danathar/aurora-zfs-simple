@@ -219,7 +219,13 @@ Stated plainly, so nobody assumes otherwise:
   Branch protection is defined in
   [`.github/rulesets/main.json`](../.github/rulesets/main.json) and has been
   applied since 2026-09-24; [`branch-protection.md`](branch-protection.md)
-  says how to check that it still is.
+  says how to check that it still is. The `permissions:` blocks are also
+  written down a second time, in
+  [`.github/policies/workflow-permissions.json`](../.github/policies/workflow-permissions.json),
+  and `tests/test-workflow-permissions.sh` fails when a workflow asks for
+  anything that file does not list. A workflow therefore cannot gain a scope
+  unless the same pull request also edits the policy file, which
+  [`risk-tiers.md`](risk-tiers.md) puts in Tier 3.
 - **It says nothing about the contents of the published image.** Upstream Aurora
   and akmods content is trusted by construction; this repo does not audit it.
 - **It does not cover the machines that consume the image.** Rebase policy,
