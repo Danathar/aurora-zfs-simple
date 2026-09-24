@@ -32,6 +32,7 @@ when present and skipped when not.
 | `test-e2e-preflight.sh`     | `tests/e2e/run-e2e.sh`'s option parsing, free-space preflight and `--clean`, with `podman` and `df` stubbed |
 | `test-e2e-verify.sh`        | `tests/e2e/run-e2e.sh` after the build: `--rechunk`, the four checks, `--keep-going` and the report, with the `podman` stub succeeding the build |
 | `test-ai-fix.sh`            | `.github/workflows/ai-fix.yml`: the `preflight` step's decision script, extracted and executed with `gh` stubbed, plus the permissions, triggers and action inputs that bound its `contents: write` grant |
+| `test-branch-protection.sh` | `docs/branch-protection.md` against `.github/rulesets/main.json`: the bold lead of each rule bullet joined to the JSON both ways — rule types, the `~DEFAULT_BRANCH` target, no bypass actors, the approval count, the required checks by name and number word and their `integration_id` — every job a `pull_request` or `pull_request_target` workflow runs classified as required or named in the bullet as not required, the workflows the bullet says run the required check equal to the ones whose job carries that name, the `status` branch exemption against `status-badges.yml`'s push, the Status section's ruleset name and recorded id joined to the JSON and to the `PUT` command, both `gh api` commands reading the committed file, and no tracked Markdown still saying the ruleset on `main` is missing or unapplied (issue #245) |
 | `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — auth-file use, the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
 | `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op and the ref the push lands on |
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
@@ -227,10 +228,12 @@ a workflow file, so a pull request deleting the `Shell tests` job from
 suite that would have gone red is the suite that no longer runs. So
 `coverage-gate.yml` triggers on `.github/workflows/**` too, and the test asserts
 that it does: any workflow edit is checked by a workflow the pull request did
-not touch, and the two files police each other. Disabling the gate now takes an
-edit to both in one pull request. Making that impossible rather than merely
-conspicuous needs a required status check in branch protection, which no file in
-the tree can assert.
+not touch, and the two files police each other. Disabling the gate takes an
+edit to both in one pull request, and since 2026-09-24 that pull request cannot
+merge either: the ruleset in `.github/rulesets/main.json` requires `Shell tests`,
+so a pull request that removes it from both files waits for a check that never
+reports. `test-ai-fix.sh` asserts the committed ruleset; only the commands in
+`docs/branch-protection.md` can show the live one matches it.
 
 The branch and activity filters are checked for the same reason. A path filter
 is not the only way a workflow stops running: point `build.yml`'s
