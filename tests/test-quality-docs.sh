@@ -691,7 +691,10 @@ for snapshot in "${snapshots[@]}"; do
         if [[ "${line}" == *"gh run list"* && "${line}" != *"--created '<${read_on}'"* ]]; then
             unpinned+="${line}"$'\n'
         fi
-        if [[ "${line}" == *"gh pr list"* && "${line}" != *".number <= "* ]]; then
+        # `.number <=` alone is applied by jq after `--limit` has already cut
+        # the newest-first listing, so the cutoff also has to reach GitHub.
+        if [[ "${line}" == *"gh pr list"* ]] &&
+            [[ "${line}" != *".number <= "* || "${line}" != *"--search 'created:<="* ]]; then
             unpinned+="${line}"$'\n'
         fi
     done <<<"${snapshot_joined}"
