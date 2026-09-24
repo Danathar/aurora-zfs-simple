@@ -97,8 +97,10 @@
 # refused outright, whatever it targets, on the same ground as `--output`:
 # these commands print to stdout, and that is what to read. `>&N`, `N>&M`
 # and `>&-` name a descriptor rather than a path and are not refused; nor is
-# any input redirection (`<`, `<<`, `<<<`, `<&`); nor is a redirection on
-# some other command of the same string (`echo x >out; git diff HEAD`).
+# `<<`, `<<<` or `<&`; nor is a redirection on some other command of the same
+# string (`echo x >out; git diff HEAD`). A bare `<` is held to a read test of
+# its own: `git log --stdin <.env` prints the file's first line back (see
+# `GIT_STDIN_MSG`).
 #
 # So this looks at the operands git would actually receive, and refuses the
 # two-operand form unless every operand resolves as a revision -- which is what
@@ -272,7 +274,7 @@ DIFF_MSG='blocked: this git diff would compare paths as plain files (git'"'"'s -
 EXPAND_MSG='blocked: bash expands braces, ANSI-C quotes and substitutions before git sees the words, and this gate reads the words as typed, so four characters rebuild both spellings it refuses: `git diff {/dev/null,./cosign.key}` passes the operand scan as one word and reaches git as two operands (the plain-file read), `--outpu{t,t}=FILE` and `--outpu$'"'"'\x74'"'"'=FILE` match no word here and reach git as --output=FILE, and `git diff $(...)` or `git diff <(...)` supplies operands this scan never saw. Expanding them correctly means reimplementing bash inside a hook, so a brace bash could expand -- a { followed, anywhere later in the word, by a comma or a .. and then a } -- and every $, backtick and process substitution are refused instead. Write the command out in full. A brace with neither, such as HEAD@{1} or main@{upstream}, is a literal to bash and is not refused; a .. between two reflog entries (HEAD@{2}..HEAD@{1}) has the refused shape, so write HEAD~2..HEAD~1. Only words of a git invocation are affected: awk and jq programs elsewhere in the string are not.'
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
-REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside a git invocation makes the shell open its target for writing before git runs -- `git diff HEAD >cosign.pub` truncates the trust anchor, and `>> .claude/settings.json` or `2> .claude/hooks/gate-git-diff.sh` reach any file this uid can write -- and the allow rule for git diff, git log and git show sees none of it. These commands print to stdout; read that instead. Descriptor forms (2>&1, >&2, >&-) and input redirections (<, <<, <<<, <&) are not affected, and a redirection on another command of the same string is that command'"'"'s own.'
+REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>) inside a git invocation makes the shell open its target for writing before git runs -- `git diff HEAD >cosign.pub` truncates the trust anchor, and `>> .claude/settings.json` or `2> .claude/hooks/gate-git-diff.sh` reach any file this uid can write -- and the allow rule for git diff, git log and git show sees none of it. These commands print to stdout; read that instead. Descriptor forms (2>&1, >&2, >&-), here-documents, here-strings and <&N are not affected (a bare < has a read test of its own), and a redirection on another command of the same string is that command'"'"'s own.'
 
 # shellcheck disable=SC2016 # the literal $HOME is what the reader has to see
 TILDE_MSG='blocked: an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to this gate, so the path checked here is not the path git would open: `git diff -- ~/.aws/credentials ~/.bashrc` resolved both operands inside the working tree and printed both files out of the home directory as a plain-file diff, past the Read(...) deny rules in .claude/settings.json. A word of a git invocation that begins with an unquoted ~ (~/..., ~user/..., or ~ alone) is refused rather than expanded. Spell the path out in full, relative to the checkout. A tilde inside a word (HEAD~1) and a quoted or escaped one are literals to bash and are not refused by this rule.'
@@ -289,6 +291,9 @@ SHELLCHECK_EXPAND_MSG='blocked: bash rewrites this word before shellcheck sees i
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 SHELLCHECK_READ_MSG='blocked: shellcheck reads standard input when its operand is `-`, and it prints the source line above every diagnostic it reports, so `shellcheck - < .env` prints the file back exactly as `shellcheck ./.env` does -- and the operand scan says nothing, because the path sits behind the `<` rather than in the argv. The target of a bare `<` on a shellcheck invocation is checked the way an operand is: it must be inside the working tree, must not be one of the secret-shaped names the Read(...) deny rules in .claude/settings.json list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519), and must be spelled out -- no brace, no leading ~, no glob, since those are words bash rewrites before shellcheck opens anything. Redirecting from a script inside the checkout is unaffected, and so is </dev/null. Describe such a file with ls -l or wc -c instead.'
+
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+GIT_STDIN_MSG='blocked: git log, git show and git diff take revisions from standard input under --stdin, one per line, and the first line that is not a revision ends the run with fatal: bad revision followed by that line, so `git log --stdin <.env` prints the first line of the file back past the Read(...) deny rules in .claude/settings.json. The target of a bare < on a git invocation is therefore checked the way a shellcheck one is: it must be inside the working tree, must not be one of the secret-shaped names those rules list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519), and must be spelled out -- no brace, no leading ~, no glob. Put the revisions in a file inside the checkout (`git log --stdin <revs.txt`), or name them on the command line. </dev/null, here-strings and <&N are unaffected.'
 
 OUT_MSG='blocked: git --output=FILE (and the space form) writes this diff or log to the path it names instead of stdout, overwriting any file this uid can reach -- cosign.pub, .claude/settings.json, this hook, ~/.ssh/authorized_keys -- with no Read(...) deny rule in its way. git diff, git log and git show print to stdout; read that instead. --output-indicator-* is a different flag and is unaffected.'
 
@@ -1348,6 +1353,12 @@ check_gated_command() {
   # stdin is not read back out.
   ((cmd_gated && cmd_reads)) && [[ "${cmd_prefix}" == shellcheck* ]] && refuse "${SHELLCHECK_READ_MSG}"
   ((cmd_gated && cmd_reads && cmd_bash)) && refuse "${BASH_READ_MSG}"
+  # Git's half of the same read: under --stdin, log, show and diff take
+  # revisions from standard input and name the first line that is not one in
+  # their error, so `git log --stdin <.env` prints that line back (issue #239).
+  # Decided on `cmd_git`, which is set only where the name stands, so
+  # `grep git <notes.txt` is not read as a git invocation.
+  ((cmd_git && cmd_reads)) && refuse "${GIT_STDIN_MSG}"
   return 0
 }
 
@@ -1378,7 +1389,7 @@ reset_command() {
 # after it belongs to the same command until a separator.
 cmd_prefix='' # the words so far, space-joined, while a prefix is still possible
 cmd_writes=0  # a redirection in this command opens a path for writing
-cmd_reads=0   # a bare `<` in it feeds shellcheck or bash -n a file it would print back
+cmd_reads=0   # a bare `<` in it feeds shellcheck, bash -n or git a file it would print back
 cmd_subst=0   # a substitution stands in this command, or in a target of it
 cmd_heredoc=0 # this command reads a here-document bash expands
 cmd_assign=0  # an assignment stands before this command's name

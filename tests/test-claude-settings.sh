@@ -1535,6 +1535,45 @@ done
 run_pre "$(pre_payload_for "$(printf "shellcheck - <<'EOF'\necho hi\nEOF\n")")"
 assert_eq "a here-document delimiter is not a path" "0" "${PRE_STATUS}"
 
+# 8d''. git reads standard input too. Under --stdin, git log, git show and
+# git diff take revisions from it, one per line, and the first line that is
+# not a revision ends the run with `fatal: bad revision '<that line>'`, so
+# `git log --stdin <.env` printed the first line of the file while the gate
+# passed every input redirection on a git invocation (#239). The target of a
+# bare `<` on git is now held to the test 8d' applies. Shown first, against
+# the synthetic file above.
+git_stdin_out="$(git -C "${REPO_ROOT}" log --stdin <"${SC_WORK}/dotenv" 2>&1 || true)"
+assert_contains "git log --stdin prints the first line of the file on its standard input" \
+    "${git_stdin_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
+for fed in "git log --stdin <.env" \
+    "git show --stdin < ./cosign.key" \
+    "<./cosign.key git show --stdin" \
+    "git diff --stdin 0<.env.local" \
+    "git log --stdin < /etc/shadow" \
+    "git log --stdin < ~/.netrc" \
+    "git log --stdin < .en?" \
+    "git log --stdin 3<.env <&3" \
+    "timeout 5 git log --stdin <.env" \
+    "cd /etc && git log --stdin <shadow" \
+    "git status; git log --stdin <.env"; do
+    run_pre "$(pre_payload_for "${fed}")"
+    assert_eq "a file fed to git on stdin is refused: ${fed}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the read: ${fed}" \
+        "${PRE_ERR}" "take revisions from standard input"
+done
+# A revision list inside the checkout is what --stdin is for, and a `git`
+# word that is not the command's name is not a git invocation.
+for fedok in "git log --stdin <revs.txt" \
+    "git log --stdin </dev/null" \
+    "git log --stdin <<<HEAD" \
+    "grep git <.env" \
+    "git log -1 && cat <.env"; do
+    run_pre "$(pre_payload_for "${fedok}")"
+    assert_eq "an ordinary input redirection near git is left alone: ${fedok}" \
+        "0" "${PRE_STATUS}"
+done
+
 # 8e. the settings file records the decision, next to the one for git diff.
 SHELLCHECK_NOTE="$(jq -r '._note_shellcheck // ""' "${SETTINGS}")"
 assert_contains "the note names what shellcheck prints" \
@@ -2253,10 +2292,13 @@ corpus_row refuse "2 redirect: a file on shellcheck's stdin" "shellcheck - < .en
 corpus_row refuse "2 redirect: written before the name" "< .env shellcheck -"
 corpus_row refuse "2 redirect: with a descriptor" "shellcheck - 0<.env"
 corpus_row refuse "2 redirect: a file on bash -n's stdin" "bash -n - < .env"
+corpus_row refuse "2 redirect: a file on git's stdin under --stdin" "git log --stdin <.env"
+corpus_row refuse "2 redirect: the same, written before the name" "<./cosign.key git show --stdin"
 corpus_row allow "2 redirect: 2>&1 names a descriptor" "git diff HEAD 2>&1"
 corpus_row allow "2 redirect: >&2 names a descriptor" "git diff HEAD >&2"
 corpus_row allow "2 redirect: >&- closes one" "podman images 2>&-"
 corpus_row allow "2 redirect: reading /dev/null" "git diff HEAD </dev/null"
+corpus_row allow "2 redirect: a revision list in the tree on git's stdin" "git log --stdin <revs.txt"
 corpus_row allow "2 redirect: shellcheck reading /dev/null" "shellcheck - </dev/null"
 corpus_row allow "2 redirect: reading a script in the tree" \
     "shellcheck tests/run-tests.sh <tests/run-tests.sh"
@@ -2716,6 +2758,10 @@ mutation "holding a bash -n operand to the shellcheck operand test" \
 mutation "holding a file on bash -n's stdin to the same test" \
     '((cmd_gated && cmd_reads && cmd_bash))' '((0))' \
     "bash -n - < .env"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "holding a file on git's stdin to the same test" \
+    '((cmd_git && cmd_reads)) && refuse "${GIT_STDIN_MSG}"' ':' \
+    "git log --stdin <.env"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "refusing a login shell set up by exec -l or a dashed zeroth argument" \
     '((${argv0_words[idx]:-0})) && ((cmd_gated == 0)) && cmd_argv0=1' ':' \
