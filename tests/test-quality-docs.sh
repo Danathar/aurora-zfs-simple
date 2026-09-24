@@ -603,7 +603,9 @@ assert_eq "every unreachable script records a reason, which is what is tracked i
 # carries an `upstream` remote, and a bare `gh` can read the parent repository
 # instead), and every listing is pinned to the scope the numbers came from -- the
 # runs created before the snapshot's date, the pull requests up to one number --
-# so a rerun next month gives the same answer rather than a newer one.
+# so a rerun reads the same records rather than newer ones. It cannot freeze
+# those records -- a reopened pull request or a deleted comment still changes
+# the answer -- and the snapshot says so.
 
 repo_slug="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/workflows/build\.yml' "${README}" |
     head -1 | cut -d/ -f2,3)"
@@ -652,12 +654,15 @@ for snapshot in "${snapshots[@]}"; do
 
     # One line per command after continuations are joined; a line may hold a
     # `$(gh ...)` inside a loop, so calls are counted rather than lines matched.
+    # Every subcommand counts, not a list of the ones in use today: `gh api`
+    # has to name the repository in its path, and anything else -- `pr`, `run`,
+    # or a later `gh workflow list` -- has to carry `--repo` or `-R`.
     unnamed=""
     unpinned=""
     while IFS= read -r line; do
-        calls="$(grep -oE 'gh (pr|run|issue) [a-z]+' <<<"${line}" | wc -l)"
-        named="$(grep -oF -- "--repo ${repo_slug} " <<<"${line} " | wc -l)"
-        api_calls="$(grep -oE 'gh api ' <<<"${line}" | wc -l)"
+        calls="$(grep -oE '(^|[^[:alnum:]_./-])gh [a-z]+' <<<"${line}" | grep -vc ' api$')"
+        named="$(grep -oE -- "(--repo|-R) ${repo_slug}( |$)" <<<"${line}" | wc -l)"
+        api_calls="$(grep -oE '(^|[^[:alnum:]_./-])gh api ' <<<"${line}" | wc -l)"
         api_named="$(grep -oE "gh api \"?repos/${repo_slug}/" <<<"${line}" | wc -l)"
         if [[ "${calls}" -ne "${named}" || "${api_calls}" -ne "${api_named}" ]]; then
             unnamed+="${line}"$'\n'
