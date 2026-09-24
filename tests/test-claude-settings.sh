@@ -2650,23 +2650,24 @@ assert_eq "no allow rule names an interpreter, so its loading options are out of
 # allow rows say about the command inside ("Contains subshell", "Contains
 # compound_statement"). Checked on 2.1.273 and 2.1.280 with `Bash(git diff:*)`,
 # `Bash(git log:*)`, `Bash(shellcheck:*)` and `Bash(bash -n:*)` allowed, in the
-# default and acceptEdits modes. The only rows that let such a string run with
-# no prompt were one that names the grouped string itself
-# (`Bash({ git diff HEAD; } >out3.txt)` ran exactly that string), a bare `Bash`
-# and `Bash(*)`. This fails if a row like that is added.
-grouped_rules=""
-while IFS= read -r allow_rule; do
-    [[ -z "${allow_rule}" ]] && continue
-    if ! grouped_cmd="$(bash_prefix "${allow_rule}")"; then
-        [[ "${allow_rule}" == Bash ]] && grouped_rules+="${allow_rule} "
-        continue
-    fi
-    case "${grouped_cmd//[[:space:]]/}" in
-    '' | '*' | *[\(\)\{\}]*) grouped_rules+="${allow_rule} " ;;
-    *) ;;
-    esac
-done <<<"${ALLOW}"
-assert_eq "no allow rule reaches a redirection written after a subshell or a brace group" \
+# default and acceptEdits modes; the `if`, `for`, `while` and function forms
+# were asked the same way ("Contains if_statement" and so on). The only rows
+# that let such a string run with no prompt were one that names the grouped
+# string itself (`Bash({ git diff HEAD; } >out3.txt)` ran exactly that
+# string), a bare `Bash` and `Bash(*)`. This fails if a row like that is added.
+# A row naming a compound command has a parenthesis or a brace in it, or, for
+# the keyword forms (`if ...; then ...; fi >f`), a `;` or a newline, so those
+# are what it looks for. It reads the settings file with jq rather than
+# ${ALLOW}, which is split on newlines.
+grouped_rules="$(jq -r '
+    .permissions.allow[]?
+    | select(. == "Bash" or (startswith("Bash(") and (
+        ltrimstr("Bash(") | rtrimstr(")")
+        | test("[(){};\n]") or (rtrimstr(":*") | gsub("\\s"; "") | . == "" or . == "*")
+      )))
+    | @json
+' "${SETTINGS}" | tr '\n' ' ')"
+assert_eq "no allow rule reaches a redirection written after a compound command" \
     "" "${grouped_rules% }"
 
 # 10g. the mutation check. A corpus is only as good as the rules behind it: a
