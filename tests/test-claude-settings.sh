@@ -2656,14 +2656,17 @@ assert_eq "no allow rule names an interpreter, so its loading options are out of
 # string itself (`Bash({ git diff HEAD; } >out3.txt)` ran exactly that
 # string), a bare `Bash` and `Bash(*)`. This fails if a row like that is added.
 # A row naming a compound command has a parenthesis or a brace in it, or, for
-# the keyword forms (`if ...; then ...; fi >f`), a `;` or a newline, so those
-# are what it looks for. It reads the settings file with jq rather than
+# the keyword forms (`if ...; then ...; fi >f`), what ends each part: a `;`, a
+# newline or a lone `&` (`if true & then ... & fi >f` is the same `if`). Those
+# are what it looks for; the `&` in `&&`, `2>&1`, `&>` and `|&` ends nothing,
+# so it is taken out first. It reads the settings file with jq rather than
 # ${ALLOW}, which is split on newlines.
 grouped_rules="$(jq -r '
     .permissions.allow[]?
     | select(. == "Bash" or (startswith("Bash(") and (
         ltrimstr("Bash(") | rtrimstr(")")
-        | test("[(){};\n]") or (rtrimstr(":*") | gsub("\\s"; "") | . == "" or . == "*")
+        | (gsub("&&|[<>|]&|&>"; "") | test("[(){};&\n]"))
+          or (rtrimstr(":*") | gsub("\\s"; "") | . == "" or . == "*")
       )))
     | @json
 ' "${SETTINGS}" | tr '\n' ' ')"
