@@ -883,6 +883,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # wrapper is known, and refused in front of a gated bash below. Any exec
   # option carrying an `l` or an `a` counts, whatever the value: `exec -a
   # bash` sets no dash, and refusing it costs a spelling nobody needs.
+  # Claude Code does not step over exec or env before it matches an allow
+  # row, so these spellings prompt today; they are refused so that this
+  # gate does not rest on that.
   if [[ "${wrapper_name}" == exec && "${raw_word}" =~ ^-[^-]*[al] ]] ||
     [[ "${wrapper_name}" == env && ("${raw_word}" =~ ^-[^-]*a || "${raw_word}" == --argv0*) ]]; then
     argv0_words[idx]=1
@@ -1588,12 +1591,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     fi
     cmd_prefix="${cmd_prefix:+${cmd_prefix} }${words[idx]}"
     command_is_gated "${cmd_prefix}" && cmd_gated=1
-    # `bash -nv ./cosign.key` begins with the characters `bash -n`, and bash
-    # reads `-nv` as `-n -v`. Whether or not the allow row's prefix match
-    # stops at a word boundary, a first option word that begins `-n`
-    # completes the prefix here, and the option scan at the end of this loop
-    # reads the rest of it; where the row does not match, the refusal blocks
-    # a spelling a syntax check never needs.
+    # `bash -nv ./cosign.key` is `bash -n -v` to bash. Claude Code's
+    # documented matcher keeps the space after `-n` in the allow row, so that
+    # spelling prompts today; it is gated here anyway, so this gate does not
+    # rest on where the matcher draws a word boundary. A first option word
+    # that begins `-n` completes the prefix, and the option scan at the end
+    # of this loop reads the rest of it; the refusal blocks a spelling a
+    # syntax check never needs.
     ((cmd_bash)) && [[ "${cmd_prefix}" == 'bash -n'?* ]] && cmd_gated=1
     ((cmd_bash && cmd_gated)) && bash_options=1
     ((cmd_bash && cmd_gated && cmd_argv0)) && refuse "${BASH_ECHO_MSG}"
