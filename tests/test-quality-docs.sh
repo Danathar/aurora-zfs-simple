@@ -35,7 +35,10 @@
 # source and destination documents in review-rubric.md are read from the claim
 # before their link is checked; the scripts quality.md calls unreachable are
 # compared with the manifest's UNCOVERED set; and metrics.md must point at the
-# file that actually holds that manifest.
+# file that actually holds that manifest. The dated snapshots under
+# docs/metrics/ are read as well: each must be linked from metrics.md, and each
+# command in it must parse, name this repository and be pinned to the scope its
+# numbers were read over.
 
 set -uo pipefail
 
@@ -588,6 +591,96 @@ done <<<"${manifest}"
 uncovered_count="$(awk -F'\t' '$2 == "UNCOVERED" && $3 ~ /[^[:space:]]/' <<<"${manifest}" | wc -l)"
 assert_eq "every unreachable script records a reason, which is what is tracked instead" \
     "$(awk -F'\t' '$2 == "UNCOVERED"' <<<"${manifest}" | wc -l)" "${uncovered_count}"
+
+# =============================================================================
+# docs/metrics/*.md -- dated snapshots
+# =============================================================================
+#
+# metrics.md is the method; a snapshot under docs/metrics/ is one reading of it,
+# dated and left as it was read. What a snapshot owes a later reader is that its
+# numbers can be reproduced, so each one is held to that: its commands parse and
+# their jq filters compile, every `gh` call names this repository (a clone here
+# carries an `upstream` remote, and a bare `gh` can read the parent repository
+# instead), and every listing is pinned to the scope the numbers came from -- the
+# runs created before the snapshot's date, the pull requests up to one number --
+# so a rerun next month gives the same answer rather than a newer one.
+
+repo_slug="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/workflows/build\.yml' "${README}" |
+    head -1 | cut -d/ -f2,3)"
+require_nonempty "this repository's slug in README.md's build badge" "${repo_slug}"
+
+snapshots=()
+while IFS= read -r snapshot; do
+    snapshots+=("${snapshot}")
+done < <(find "${REPO_ROOT}/docs/metrics" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
+require_nonempty "a dated snapshot under docs/metrics/" "${snapshots[*]}"
+
+for snapshot in "${snapshots[@]}"; do
+    rel="${snapshot#"${REPO_ROOT}"/}"
+    read_on="$(basename "${snapshot}" .md)"
+    if [[ "${read_on}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -d "${read_on}" >/dev/null 2>&1; then
+        _pass "${rel} is named for the date it was read"
+    else
+        _fail "${rel} is named for the date it was read" "expected docs/metrics/YYYY-MM-DD.md"
+        continue
+    fi
+    assert_eq "${rel}'s title carries the same date" \
+        "# Metrics snapshot — ${read_on}" "$(head -1 "${snapshot}")"
+    assert_contains "docs/metrics.md links to ${rel}" \
+        "$(cat "${METRICS_DOC}")" "](metrics/${read_on}.md)"
+
+    snapshot_blocks="$(fenced_blocks "${snapshot}" bash)"
+    require_nonempty "runnable bash blocks in ${rel}" "${snapshot_blocks}" || continue
+    if bash -n <<<"${snapshot_blocks}" 2>/dev/null; then
+        _pass "every bash block in ${rel} parses"
+    else
+        _fail "every bash block in ${rel} parses" "bash -n rejected the concatenated blocks"
+    fi
+
+    snapshot_joined="$(sed -e ':a' -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' <<<"${snapshot_blocks}")"
+    snapshot_filters="$(grep -oE -- "(-q|--jq) '[^']+'" <<<"${snapshot_joined}" |
+        sed -E "s/^(-q|--jq) '//; s/'\$//")"
+    require_nonempty "jq filters in ${rel}'s gh commands" "${snapshot_filters}"
+    uncompiled=""
+    while IFS= read -r filter; do
+        [[ -z "${filter}" ]] && continue
+        jq "${filter}" <<<'[]' >/dev/null 2>&1
+        # 3 is jq's compile error, as in the metrics.md check above.
+        [[ $? -eq 3 ]] && uncompiled+="${filter:0:60}"$'\n'
+    done <<<"${snapshot_filters}"
+    assert_eq "jq compiles every filter in ${rel}" "" "${uncompiled%$'\n'}"
+
+    # One line per command after continuations are joined; a line may hold a
+    # `$(gh ...)` inside a loop, so calls are counted rather than lines matched.
+    unnamed=""
+    unpinned=""
+    while IFS= read -r line; do
+        calls="$(grep -oE 'gh (pr|run|issue) [a-z]+' <<<"${line}" | wc -l)"
+        named="$(grep -oF -- "--repo ${repo_slug} " <<<"${line} " | wc -l)"
+        api_calls="$(grep -oE 'gh api ' <<<"${line}" | wc -l)"
+        api_named="$(grep -oE "gh api \"?repos/${repo_slug}/" <<<"${line}" | wc -l)"
+        if [[ "${calls}" -ne "${named}" || "${api_calls}" -ne "${api_named}" ]]; then
+            unnamed+="${line}"$'\n'
+        fi
+        if [[ "${line}" == *"gh run list"* && "${line}" != *"--created '<${read_on}'"* ]]; then
+            unpinned+="${line}"$'\n'
+        fi
+        if [[ "${line}" == *"gh pr list"* && "${line}" != *".number <= "* ]]; then
+            unpinned+="${line}"$'\n'
+        fi
+    done <<<"${snapshot_joined}"
+    assert_eq "every gh call in ${rel} names ${repo_slug}" "" "${unnamed%$'\n'}"
+    assert_eq "every run and pull request listing in ${rel} is pinned to a fixed scope" \
+        "" "${unpinned%$'\n'}"
+    # Two tables over different ranges of pull requests would not add up.
+    pr_bounds="$(grep -oE '\.number <= [0-9]+' <<<"${snapshot_joined}" | LC_ALL=C sort -u)"
+    if [[ "$(grep -c . <<<"${pr_bounds}")" -le 1 ]]; then
+        _pass "${rel} reads every pull request listing up to the same number"
+    else
+        _fail "${rel} reads every pull request listing up to the same number" \
+            "bounds found: ${pr_bounds//$'\n'/, }"
+    fi
+done
 
 # =============================================================================
 # docs/review-rubric.md
