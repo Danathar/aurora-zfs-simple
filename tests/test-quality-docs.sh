@@ -652,6 +652,15 @@ for snapshot in "${snapshots[@]}"; do
     done <<<"${snapshot_filters}"
     assert_eq "jq compiles every filter in ${rel}" "" "${uncompiled%$'\n'}"
 
+    # The extractor reads a filter only when it is single-quoted on one line. A
+    # double-quoted filter, or one that wraps, would be skipped while the
+    # assertion above still said every filter compiled, so every -q/--jq on a
+    # gh command has to be one the extractor read.
+    gh_lines="$(grep -E '(^|[^[:alnum:]_./-])gh [a-z]+' <<<"${snapshot_joined}")"
+    jq_flags="$(grep -oE -- '(^|[[:space:]])(-q|--jq)([[:space:]]|=)' <<<"${gh_lines}" | wc -l)"
+    assert_eq "every jq filter in ${rel} is single-quoted on one line, so the compile check read it" \
+        "${jq_flags}" "$(grep -c . <<<"${snapshot_filters}")"
+
     # One line per command after continuations are joined; a line may hold a
     # `$(gh ...)` inside a loop, so calls are counted rather than lines matched.
     # Every subcommand counts, not a list of the ones in use today: `gh api`
