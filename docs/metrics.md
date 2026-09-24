@@ -4,33 +4,45 @@ Reproducible commands, and an honest account of what the numbers are worth on a
 repo this size.
 
 There is no metrics service and no scheduled collector. Adding one would be more
-machinery than the signal justifies — roughly forty merged PRs total, most of
-them Dependabot. What follows is what to run when the question actually comes
-up, and how to avoid drawing a conclusion the data does not support.
+machinery than the signal justifies on a repository with one maintainer and a
+little over a hundred merged PRs. What follows is what to run when the question
+actually comes up, and how to avoid drawing a conclusion the data does not
+support.
+
+Readings of these numbers, each dated and left as it was read, are in
+[`docs/metrics/`](metrics/2026-09-24.md). The first,
+[2026-09-24](metrics/2026-09-24.md), covers the whole history up to PR #246.
+
+Every command below names `Danathar/aurora-zfs-simple`. This repository is a
+fork, and `gh repo clone` of a fork adds an `upstream` remote and makes the
+parent, `renner0e/aurora-zfs-example`, the default for `gh`. Without `--repo`,
+`gh pr list` in such a clone counts the parent's pull requests.
 
 ## PR acceptance
 
 ```bash
-merged=$(gh pr list --state merged --limit 500 --json number -q 'length')
-rejected=$(gh pr list --state closed --limit 500 --json number,mergedAt \
+merged=$(gh pr list --repo Danathar/aurora-zfs-simple --state merged --limit 500 --json number -q 'length')
+rejected=$(gh pr list --repo Danathar/aurora-zfs-simple --state closed --limit 500 --json number,mergedAt \
   -q '[.[] | select(.mergedAt == null)] | length')
 printf 'merged %s, closed unmerged %s, acceptance %s%%\n' \
   "$merged" "$rejected" "$(( merged * 100 / (merged + rejected) ))"
 ```
 
-At the time of writing: 35 merged, 6 closed unmerged, 85%.
+When this page was first written: 35 merged, 6 closed unmerged, 85%. On
+2026-09-24 it was 129 merged and 9 closed unmerged, 93%.
 
 **What that does not mean.** A high acceptance rate on a single-maintainer repo
 measures how often the maintainer merges their own work, not review quality. The
 figure only becomes interesting when broken out by author:
 
 ```bash
-gh pr list --state merged --limit 500 --json author -q \
+gh pr list --repo Danathar/aurora-zfs-simple --state merged --limit 500 --json author -q \
   '[.[].author.login] | group_by(.) | map({author: .[0], merged: length}) | sort_by(-.merged)[]'
 ```
 
-Dependabot dominates the count. Separate bot PRs from human ones before reading
-anything into a trend.
+Separate bot PRs from human ones before reading anything into a trend. Early on
+Dependabot opened most of them; by 2026-09-24, of the 129 merged, Danathar had
+opened 55, Hive (`app/danathar-atomic-hive`) 48 and Dependabot 24.
 
 ## Which changes get pushed back on
 
@@ -38,8 +50,8 @@ More useful than the acceptance rate, because it is about substance:
 
 ```bash
 # Review comments per PR, most-reviewed first
-gh pr list --state merged --limit 50 --json number -q '.[].number' | while read -r n; do
-  c=$(gh api "repos/{owner}/{repo}/pulls/$n/comments" -q 'length')
+gh pr list --repo Danathar/aurora-zfs-simple --state merged --limit 50 --json number -q '.[].number' | while read -r n; do
+  c=$(gh api "repos/Danathar/aurora-zfs-simple/pulls/$n/comments" -q 'length')
   [ "$c" -gt 0 ] && printf '%s\t%s\n' "$c" "$n"
 done | sort -rn
 ```
@@ -57,7 +69,7 @@ scheduled builds were lost**, since each one is a skipped image refresh and
 therefore a week of missed Aurora and security updates.
 
 ```bash
-gh run list --workflow build.yml --event schedule --limit 20 \
+gh run list --repo Danathar/aurora-zfs-simple --workflow build.yml --event schedule --limit 20 \
   --json createdAt,conclusion -q '.[] | "\(.createdAt[0:10])\t\(.conclusion)"'
 ```
 
@@ -66,7 +78,7 @@ health signal. Correlate against the OpenZFS/kernel badge before treating it as
 one: red builds *with* a green badge are the ones worth investigating.
 
 ```bash
-gh run list --workflow build.yml --limit 40 \
+gh run list --repo Danathar/aurora-zfs-simple --workflow build.yml --limit 40 \
   --json conclusion -q '[.[] | select(.conclusion == "failure")] | length'
 ```
 
