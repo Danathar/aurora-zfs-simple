@@ -709,6 +709,30 @@ for snapshot in "${snapshots[@]}"; do
         _fail "${rel} reads every pull request listing up to the same number" \
             "bounds found: ${pr_bounds//$'\n'/, }"
     fi
+
+    # The server-side cutoff has to be one moment, a real date no later than
+    # the snapshot's own, and the one the prose says is when the last pull
+    # request in scope was opened. A listing cut off somewhere else -- say
+    # 1900-01-01, which returns nothing -- would otherwise pass the prefix
+    # check above while the table beside it came from other records.
+    pr_cutoffs="$(grep -oE "created:<=[^' ]+" <<<"${snapshot_joined}" | cut -d= -f2 | LC_ALL=C sort -u)"
+    [[ -z "${pr_cutoffs}" ]] && continue
+    if [[ "$(grep -c . <<<"${pr_cutoffs}")" -eq 1 ]]; then
+        _pass "${rel} cuts every pull request listing off at the same moment"
+    else
+        _fail "${rel} cuts every pull request listing off at the same moment" \
+            "cutoffs found: ${pr_cutoffs//$'\n'/, }"
+        continue
+    fi
+    cutoff_day="$(date -u -d "${pr_cutoffs}" +%F 2>/dev/null)"
+    if [[ -n "${cutoff_day}" && ! "${cutoff_day}" > "${read_on}" ]]; then
+        _pass "${rel}'s pull request cutoff is a date no later than the snapshot"
+    else
+        _fail "${rel}'s pull request cutoff is a date no later than the snapshot" \
+            "cutoff: ${pr_cutoffs}" "snapshot: ${read_on}"
+    fi
+    require_claim "${snapshot}" "the cutoff is when the last pull request in scope was opened" \
+        "\`--search 'created:<=${pr_cutoffs}'\` is the moment #${pr_bounds##* } was opened"
 done
 
 # =============================================================================
