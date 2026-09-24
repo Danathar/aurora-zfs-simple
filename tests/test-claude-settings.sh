@@ -1915,10 +1915,11 @@ done
 # allow rule covers prompts on its own, and refusing it here would be the hook
 # deciding a question the settings file already decides; a redirection on
 # another command of the same string is that command's own.
-# The last two are decided by Claude Code itself: a redirection on a brace
-# group or a subshell is refused by the Bash tool before any rule or hook
-# sees it ("does not accept compound statements with redirection", 2.1.267),
-# so the hook does not restate that refusal.
+# The brace group and the subshell below are decided by Claude Code itself: it
+# asks before it runs any command that contains one, whatever the allow rows
+# say ("Contains compound_statement", "Contains subshell"; 2.1.273 and
+# 2.1.280), so the hook does not restate that. The check after 10f fails if an
+# allow row that could reach one is added.
 # shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
 for unlisted in "echo x >cosign.pub" \
     "cat tests/run-tests.sh >cosign.pub" \
@@ -2638,6 +2639,36 @@ while IFS= read -r allow_rule; do
 done <<<"${ALLOW}"
 assert_eq "no allow rule names an interpreter, so its loading options are out of reach" \
     "" "${interpreter_rules% }"
+
+# A redirection written after a subshell or a brace group:
+# `(git diff HEAD) >cosign.pub` and `(shellcheck -) <cosign.key` write and read
+# the same files as the refused `git diff HEAD >cosign.pub` and
+# `shellcheck - <cosign.key`, but the redirection stands outside the command,
+# and the hook does not charge it to the command inside (#238). It does not
+# need to while nothing here reaches those strings: Claude Code asks before it
+# runs any command that contains a subshell or a brace group, whatever the
+# allow rows say about the command inside ("Contains subshell", "Contains
+# compound_statement"). Checked on 2.1.273 and 2.1.280 with `Bash(git diff:*)`,
+# `Bash(git log:*)`, `Bash(shellcheck:*)` and `Bash(bash -n:*)` allowed, in the
+# default and acceptEdits modes; the `if`, `for`, `while` and function forms
+# were asked the same way ("Contains if_statement" and so on). The only rows
+# that let such a string run with no prompt were one that names the grouped
+# string itself (`Bash({ git diff HEAD; } >out3.txt)` ran exactly that
+# string), a bare `Bash` and `Bash(*)`. This fails if a row like that is added.
+# A row naming a compound command has a parenthesis or a brace in it, or, for
+# the keyword forms (`if ...; then ...; fi >f`), a `;` or a newline, so those
+# are what it looks for. It reads the settings file with jq rather than
+# ${ALLOW}, which is split on newlines.
+grouped_rules="$(jq -r '
+    .permissions.allow[]?
+    | select(. == "Bash" or (startswith("Bash(") and (
+        ltrimstr("Bash(") | rtrimstr(")")
+        | test("[(){};\n]") or (rtrimstr(":*") | gsub("\\s"; "") | . == "" or . == "*")
+      )))
+    | @json
+' "${SETTINGS}" | tr '\n' ' ')"
+assert_eq "no allow rule reaches a redirection written after a compound command" \
+    "" "${grouped_rules% }"
 
 # 10g. the mutation check. A corpus is only as good as the rules behind it: a
 # row can pass because some *other* rule refuses the same command, which is how
