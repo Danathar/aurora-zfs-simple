@@ -146,9 +146,11 @@
 # operand must resolve inside the working tree -- reusing `path_inside_worktree`
 # below, `..` climb-outs and all -- and must not be one of the secret-shaped
 # names the deny rules list. Linting this repository's own scripts is
-# unaffected. `bash -n`, the other allowed linter, is not the same case: it
-# echoes at most the one line of a syntax error, and the key and `.env` shapes
-# parse cleanly and print nothing.
+# unaffected. `bash -n`, the other allowed linter, reads the same way and is
+# held to the same test (issue #233): it prints the line a syntax error
+# stands on, so `bash -n .env` prints a `NAME=value` line whose value holds a
+# `(`, and its options print, or copy, far more -- see the paragraph on it
+# below.
 #
 # An operand is not the only way to aim it at a file. ShellCheck reads standard
 # input when its operand is `-`, so `shellcheck - < .env` printed the file back
@@ -188,7 +190,13 @@
 # ran the command under the linter's allow rule. A word beginning with `+`
 # in a `bash -n` invocation is refused, and so is a brace, a glob, a `$` or
 # a backtick in one of its words, since `{+,+}n` reaches bash as `+n` and so
-# does `?n` beside a file of that name.
+# does `?n` beside a file of that name. And `-n` stops bash running the
+# script, not printing it (issue #233): `-v` prints every line bash reads,
+# so `bash -n -v ./cosign.key` printed the key. The options that print or
+# copy what bash reads are refused in a `bash -n` invocation, read the way
+# bash reads its own options (`-nv` is `-n -v`, `-no verbose` is `-n -o
+# verbose`), and its operands and a file on its stdin are held to the test
+# the shellcheck operands are held to above.
 #
 # Everything above was written one spelling at a time, and each fix found the
 # next. Issue #222 decided the corpus in one pass instead, across the six
@@ -306,7 +314,7 @@ GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-p
 GIT_GLOB_MSG='blocked: an unquoted glob character (*, ? or a bracket) in a word of a git invocation is expanded by bash before git sees it, so the operands this gate counted are not the operands git receives: `git diff /etc/passwd*` is one word here and two plain files at git, which prints the diff between them, and `git diff .env*` is that same read of two untracked files inside the checkout -- the plain-file mode reached with one operand written and no flag anywhere. Expanding it correctly means reimplementing bash inside a hook, so it is refused instead, as it already is in a shellcheck and a bash -n invocation. Quote the pathspec (`git diff -- '"'"'tests/*.sh'"'"'`), which is the spelling git expands itself, or write the paths out.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
-MOVED_MSG='blocked: this string changes the directory the paths in it are resolved against -- a `cd` or `pushd` before the command, `env -C DIR`, or git'"'"'s own -C, --git-dir, --work-tree, --namespace, --super-prefix or --attr-source -- and the containment test here runs against this checkout while the command opens paths under the new directory. So every operand looked local and none was: `git -C /home/dev diff -- .bashrc .profile` printed two files out of the home directory as a plain-file diff, and `cd /home/dev && shellcheck .bashrc` printed one back through the source line it echoes. Operands are undecidable once the directory moves, so the two-operand diff, a shellcheck operand and a file on shellcheck'"'"'s stdin are refused there. Run the command from the checkout with its paths spelled relative to it.'
+MOVED_MSG='blocked: this string changes the directory the paths in it are resolved against -- a `cd` or `pushd` before the command, `env -C DIR`, or git'"'"'s own -C, --git-dir, --work-tree, --namespace, --super-prefix or --attr-source -- and the containment test here runs against this checkout while the command opens paths under the new directory. So every operand looked local and none was: `git -C /home/dev diff -- .bashrc .profile` printed two files out of the home directory as a plain-file diff, and `cd /home/dev && shellcheck .bashrc` printed one back through the source line it echoes. Operands are undecidable once the directory moves, so the two-operand diff, a shellcheck or bash -n operand and a file on the stdin of either are refused there. Run the command from the checkout with its paths spelled relative to it.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 WRAPPER_SHELL_MSG='blocked: `flock -c COMMAND` (and `--command=COMMAND`) hands the string to a shell rather than passing it as an ordinary command word -- `flock --help` documents `-c, --command <command>` as running a single command string through the shell -- so `git status; flock /tmp/l -c '"'"'cat ./cosign.key'"'"'` runs the read past the Read(./cosign.key) deny rule with `git status` alone matching the allow row this string is judged against. This scan reads words, not a nested shell program inside one, so that string is never re-parsed for a gated name hiding in it; the option is refused outright, the way env -S is. Run the command flock would run as a command of its own.'
@@ -319,6 +327,12 @@ BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script wi
 
 # shellcheck disable=SC2016 # the literal ${VAR} and $(...) are what the reader has to see
 BASH_EXPAND_MSG='blocked: a brace bash could expand, an unquoted glob character (*, ? or a bracket), an unquoted leading ~, a $ or a backtick in a word of a bash -n invocation is refused rather than expanded (a process substitution is refused by GATED_SUBST_MSG), for the reason EXPAND_MSG gives for git: bash rewrites the words before the inner bash sees them, so `{+,+}n` matches no spelling here and reaches bash as +n, which turns noexec off, `?n` does the same when a file named +n exists in the working directory, and $(...), ${VAR} and a backtick supply a word this gate never saw. Write the command out in full.'
+
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+BASH_ECHO_MSG='blocked: this bash -n invocation carries an option that makes bash print or copy what it reads, and -n stops bash running a script, not printing it: -v (and -o verbose) prints every line as bash reads it, so `bash -n -v ./cosign.key` prints the whole key past the Read(...) deny rules in .claude/settings.json; -D prints every $"..." string in the script; -o history and -i copy every line into ~/.bash_history when bash exits; -i and -l read ~/.bashrc and the login profiles and print the line a syntax error in them stands on, and so does a login shell started without -l: exec -l, or exec -a / env -a (--argv0) naming a zeroth argument that begins with -. -x (and -o xtrace) prints what bash runs, which under -n is nothing; it is refused with the rest because a syntax check has no use for it. bash reads a cluster of letters as separate options (-nv is -n -v) and takes the value of -o from the next word (-no verbose is -n -o verbose), and so does this gate. Check syntax with bash -n FILE and nothing else.'
+
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+BASH_READ_MSG='blocked: bash -n prints the line a syntax error stands on, so pointing it at a file prints that line back -- `bash -n .env` prints a NAME=value line whose value holds a ( -- past the Read(...) deny rules in .claude/settings.json, which gate the Read tool and say nothing about what an allow-listed Bash command opens. bash reads the script from standard input when no file is named, so `bash -n - < .env` is the same read. Every operand of a bash -n invocation, and the target of a bare < on it, must be inside the working tree and must not be one of the secret-shaped names those rules list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519); </dev/null stays allowed. Check the syntax of this repository'"'"'s own scripts.'
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 XARGS_MSG='blocked: xargs adds words it reads from standard input (or from the file its -a option names) to the command it runs, so the operands git or the linter receive are not in this string and cannot be checked here: `printf '"'"'%s\n'"'"' /dev/null ./cosign.key | xargs git diff` hands git the two-operand plain-file read of the key while the git invocation this gate reads has no operand at all, and `xargs -a list.txt shellcheck` prints back whatever list.txt names. And Claude Code matches `xargs git diff` against the `Bash(git diff:*)` allow rule as readily as `git diff`, so nothing prompts either. xargs in front of git or an allow-listed command is refused, wherever it stands among other wrappers (`timeout 5 xargs git diff`); in front of any other command it is left to the permission rules. Name the operands in the command itself instead.'
@@ -701,6 +715,7 @@ command_names=()       # 1 at each index that names, or may name, a command
 name_assignments=()    # 1 at each assignment this scan skipped before a name
 moves_dir=()           # 1 at each name that moves the shell's working directory
 xargs_names=()         # 1 at each `xargs` in a position a command's name may take
+argv0_words=()         # 1 at each exec/env option that sets the zeroth argument
 xargs_state=0          # 1: xargs's own options are being read; 2: after its `--`
 xargs_optarg=0         # the next word is the value of an xargs option
 xargs_command_idx=-1   # the word xargs runs, once its options are read
@@ -858,6 +873,22 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   if [[ "${wrapper_name}" == flock ]] &&
     [[ "${raw_word}" =~ ^-[^-]*c || "${raw_word}" == --command* ]]; then
     refuse "${WRAPPER_SHELL_MSG}"
+  fi
+  # bash starts as a login shell when its zeroth argument begins with `-`,
+  # which is what exec's -l puts there, and what exec -a and env -a
+  # (--argv0) can set: `exec -l bash -n tests/run-tests.sh` and `exec -a
+  # -bash bash -n ...` read ~/.bash_profile and print the line a syntax
+  # error in it stands on, the read `bash -n -l` is refused for, with no
+  # `-l` among bash's own words (review on #237). Marked here, where the
+  # wrapper is known, and refused in front of a gated bash below. Any exec
+  # option carrying an `l` or an `a` counts, whatever the value: `exec -a
+  # bash` sets no dash, and refusing it costs a spelling nobody needs.
+  # Claude Code does not step over exec or env before it matches an allow
+  # row, so these spellings prompt today; they are refused so that this
+  # gate does not rest on that.
+  if [[ "${wrapper_name}" == exec && "${raw_word}" =~ ^-[^-]*[al] ]] ||
+    [[ "${wrapper_name}" == env && ("${raw_word}" =~ ^-[^-]*a || "${raw_word}" == --argv0*) ]]; then
+    argv0_words[idx]=1
   fi
   name_is_literal "${raw_word}" "${word}" || refuse "${CMD_MSG}"
   # A wrapper, matched on its last path component once the word is known to
@@ -1225,6 +1256,14 @@ done
 # `{+,+}n` is the rebuild that reopened the git half of this gate twice and
 # `?n` beside a file named `+n` is the same rebuild by pathname expansion.
 #
+# And `-n` stops bash running the script, not reading it out (issue #233).
+# `bash -n -v ./cosign.key` printed the key: `-v` prints every line bash
+# reads, and nothing about `-n` stops it. So the options that print or copy
+# what bash reads are refused in a `bash -n` invocation, read the way bash
+# reads its own, and the script it opens -- an operand, or its stdin when
+# none is named -- is held to the shellcheck operand test. The option scan
+# at the end of the loop below says which options and why.
+#
 # The prefixes below are the allow rows with a trailing `:*` other than git's,
 # which the scan above already covers (an output redirection is refused in
 # every git invocation, `git status` and `git ls-files` included). The exact
@@ -1298,13 +1337,17 @@ check_gated_command() {
   # different git altogether -- each of them an unprompted string the allow
   # rows match on their `git diff` prefix.
   ((cmd_git && cmd_assign)) && refuse "${GATED_ENV_MSG}"
-  # Scoped to shellcheck rather than to every gated prefix, and decided here
-  # rather than at the redirection, because bash lets the redirection precede
-  # the command name -- `< .env shellcheck -` is the same command as
-  # `shellcheck - < .env`, and the name is not known until the command ends.
-  # The other gated commands print their own output rather than what they are
-  # fed, so a file on their stdin is not read back out.
+  # Scoped to shellcheck and bash -n rather than to every gated prefix, and
+  # decided here rather than at the redirection, because bash lets the
+  # redirection precede the command name -- `< .env shellcheck -` is the same
+  # command as `shellcheck - < .env`, and the name is not known until the
+  # command ends. bash -n reads its script from stdin when no file is named
+  # and prints the line a syntax error stands on, so `bash -n - < .env` is
+  # `bash -n .env` by another route (issue #233). The other gated commands
+  # print their own output rather than what they are fed, so a file on their
+  # stdin is not read back out.
   ((cmd_gated && cmd_reads)) && [[ "${cmd_prefix}" == shellcheck* ]] && refuse "${SHELLCHECK_READ_MSG}"
+  ((cmd_gated && cmd_reads && cmd_bash)) && refuse "${BASH_READ_MSG}"
   return 0
 }
 
@@ -1323,6 +1366,9 @@ reset_command() {
   cmd_export=0
   cmd_export_idx=-1
   cmd_xargs=0
+  bash_options=0
+  bash_optvals=''
+  cmd_argv0=0
 }
 
 # The words of a command from its *name* onward: a leading assignment
@@ -1332,7 +1378,7 @@ reset_command() {
 # after it belongs to the same command until a separator.
 cmd_prefix='' # the words so far, space-joined, while a prefix is still possible
 cmd_writes=0  # a redirection in this command opens a path for writing
-cmd_reads=0   # a bare `<` in it feeds shellcheck a file it would print back
+cmd_reads=0   # a bare `<` in it feeds shellcheck or bash -n a file it would print back
 cmd_subst=0   # a substitution stands in this command, or in a target of it
 cmd_heredoc=0 # this command reads a here-document bash expands
 cmd_assign=0  # an assignment stands before this command's name
@@ -1345,6 +1391,9 @@ cmd_export=0  # 1: its name is export/declare/typeset/readonly, whose own words
               # assign; 2: it is `set`, whose -a arms every later assignment
 cmd_export_idx=-1 # the word that named it, so the name is not read as its own
 cmd_xargs=0   # an `xargs` stood in a name position before the name was gated
+bash_options=0 # a gated bash is still reading option words, as bash itself does
+bash_optvals='' # one letter per -o/-O still waiting for its value, in order
+cmd_argv0=0   # an exec/env option before the name set bash's zeroth argument
 cmd_stack=()  # the outer command's state, while a `$(...)` is being read
 export_idx=-1 # the first word at which an export-family command arms a variable
 gate_idx=-1   # the last word at which a gated command or git is running
@@ -1497,6 +1546,9 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # One after a gated name is that command's argument (`timeout 5 podman ps
   # xargs`), and is not.
   ((${xargs_names[idx]:-0})) && ((cmd_gated == 0 && cmd_git == 0)) && cmd_xargs=1
+  # An exec or env option that sets the zeroth argument, before the name: a
+  # dash there makes bash a login shell (see `argv0_words` above).
+  ((${argv0_words[idx]:-0})) && ((cmd_gated == 0)) && cmd_argv0=1
   ((cmd_named)) || ((${command_names[idx]:-0})) || continue
   cmd_named=1
   if ((cmd_gated == 0)); then
@@ -1539,6 +1591,16 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     fi
     cmd_prefix="${cmd_prefix:+${cmd_prefix} }${words[idx]}"
     command_is_gated "${cmd_prefix}" && cmd_gated=1
+    # `bash -nv ./cosign.key` is `bash -n -v` to bash. Claude Code's
+    # documented matcher keeps the space after `-n` in the allow row, so that
+    # spelling prompts today; it is gated here anyway, so this gate does not
+    # rest on where the matcher draws a word boundary. A first option word
+    # that begins `-n` completes the prefix, and the option scan at the end
+    # of this loop reads the rest of it; the refusal blocks a spelling a
+    # syntax check never needs.
+    ((cmd_bash)) && [[ "${cmd_prefix}" == 'bash -n'?* ]] && cmd_gated=1
+    ((cmd_bash && cmd_gated)) && bash_options=1
+    ((cmd_bash && cmd_gated && cmd_argv0)) && refuse "${BASH_ECHO_MSG}"
   fi
   # The last word position at which this string runs something the gate
   # covers. Compared against the first exported assignment below, so that an
@@ -1582,6 +1644,50 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   if brace_would_expand "${raw_words[idx]}" || [[ "${raw_words[idx]}" == *'$'* ]] ||
     word_bash_would_rewrite "${raw_words[idx]}"; then
     refuse "${BASH_EXPAND_MSG}"
+  fi
+  # What the inner bash reads and prints, decided the way bash reads its own
+  # command line (issue #233). `-n` stops bash running the script, not
+  # printing it: `-v` (`-o verbose`) prints every line bash reads, `-D`
+  # every `$"..."` string in it, `-o history` and `-i` copy every line into
+  # ~/.bash_history when bash exits, and `-i` and `-l` read ~/.bashrc and
+  # the login profiles, whose syntax errors print a line of them. `-x` (`-o
+  # xtrace`) prints what bash runs, which under `-n` is nothing; it goes with
+  # the rest because a syntax check has no use for it. Every other option
+  # letter, `-o` name and `-O` name was run under `-n` (bash 5.3) against a
+  # script holding a marker, and put none of it in the output or in HOME.
+  #
+  # bash's own parser (shell.c, parse_shell_options) takes a word beginning
+  # with `-` as options until the first word that does not, or a lone `-` or
+  # `--`, which it consumes. Each letter of such a word is an option of its
+  # own, so `-nv` is `-n -v`, and each `o` or `O` among them takes the next
+  # unread word as its value, in order, so `-no verbose` and `-oo noexec
+  # verbose` both turn verbose on. A `--word` there is not a long option --
+  # bash reads those only before the first short one, and the allow row puts
+  # `-n` first -- so bash rejects it and exits; one carrying a refused letter
+  # (`--verbose`) is refused here all the same. The first word that is not an
+  # option, and every word after it, is the script (or the `-c` string) and
+  # its arguments, held to the shellcheck operand test: bash prints the line
+  # a syntax error stands on, so `bash -n .env` printed a `NAME=value` line
+  # whose value held a `(`.
+  if [[ -n "${bash_optvals}" ]]; then
+    if [[ "${bash_optvals:0:1}" == o ]]; then
+      case "${words[idx]}" in
+      verbose | xtrace | history) refuse "${BASH_ECHO_MSG}" ;;
+      *) ;;
+      esac
+    fi
+    bash_optvals="${bash_optvals:1}"
+  elif ((bash_options)) && [[ "${words[idx]}" == - || "${words[idx]}" == -- ]]; then
+    bash_options=0
+  elif ((bash_options)) && [[ "${words[idx]}" == -* ]]; then
+    [[ "${words[idx]}" == -*[vxilD]* ]] && refuse "${BASH_ECHO_MSG}"
+    bash_optvals+="${words[idx]//[!oO]/}"
+  else
+    bash_options=0
+    ((worktree_moved)) && refuse "${MOVED_MSG}"
+    if ! path_inside_worktree "${words[idx]}" || denied_read_shape "${words[idx]}"; then
+      refuse "${BASH_READ_MSG}"
+    fi
   fi
 done
 check_gated_command
