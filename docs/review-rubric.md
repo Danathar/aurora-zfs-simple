@@ -57,7 +57,8 @@ the PR needs to say why it no longer applies.
 - Shebang and executable bit on anything run by path — the `Containerfile` and
   the workflows do exactly that.
 - `set -euo pipefail` on anything executed, with the exceptions
-  `CONTRIBUTING.md` names: the build scripts add `x`, and the test runner,
+  `CONTRIBUTING.md` names: `build.sh`, `kernel-akmods.sh` and `zfs.sh` add `x`
+  (`post-check.sh` does not), and the test runner,
   every `tests/test-*.sh` and `.claude/hooks/gate-git-diff.sh` use
   `set -uo pipefail`.
 - New scripts: is there a seam that makes them testable? `post-check.sh` is
