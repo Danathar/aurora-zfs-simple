@@ -362,15 +362,15 @@ fleet of AI agents to continuously review this codebase. This repository's Hive
 runs at **ACMM level 5, Semi-Autonomous (L5)**. Here that means:
 
 - The agents may file issues and open pull requests. Every pull request an agent
-  opens gets a `hold` label automatically, and nothing auto-merges: a human
-  maintainer reviews the held pull requests in batches.
+  opens gets a `hold` label automatically and does not merge on its own: a human
+  maintainer reviews the held pull requests in batches, and nothing an agent
+  opens lands without that approval.
 - L5 adds a reviewer agent, which comments on open pull requests with file:line
   evidence but never merges, approves or closes one; an architect agent for RFCs
   and structural changes; and a strategist agent that coordinates the others.
   The telemetry and operations agents ship paused.
-- Every change is still reviewed and merged by a human maintainer. What an agent
-  may do here unattended, and which paths always need a human, is set out in
-  [docs/SECURITY-AI.md](docs/SECURITY-AI.md) and
+- What an agent may do here unattended, and which paths always need a human, is
+  set out in [docs/SECURITY-AI.md](docs/SECURITY-AI.md) and
   [docs/risk-tiers.md](docs/risk-tiers.md).
 
 Learn more: [Hive](https://github.com/hivecommons/hive) · [Hive Hub](https://hive.kubestellar.io) · [ACMM levels](https://github.com/hivecommons/hive#acmm-levels) · [full ACMM policy matrix](https://github.com/hivecommons/hive/blob/v4/src/docs/acmm-policy-matrix.md)
