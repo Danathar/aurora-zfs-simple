@@ -2,8 +2,9 @@
 name: AI fix
 
 # Lets a maintainer hand a piece of work to an agent from inside GitHub: label an
-# issue `ai-fix-requested`, or say `@claude` in a comment or a review thread. The
-# agent opens a pull request. It never merges one.
+# issue `ai-fix-requested`, or say `@claude` in a pull request or issue
+# conversation comment (not an inline review reply). The agent opens a pull
+# request. It never merges one.
 #
 # This is the workflow docs/SECURITY-AI.md anticipated. That document says any
 # workflow letting an agent open pull requests from a label or comment must run

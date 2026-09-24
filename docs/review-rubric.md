@@ -56,7 +56,10 @@ the PR needs to say why it no longer applies.
   explaining why beats reshaping the code around it.
 - Shebang and executable bit on anything run by path — the `Containerfile` and
   the workflows do exactly that.
-- `set -euo pipefail` on anything executed.
+- `set -euo pipefail` on anything executed, with the exceptions
+  `CONTRIBUTING.md` names: the build scripts add `x`, and the test runner,
+  every `tests/test-*.sh` and `.claude/hooks/gate-git-diff.sh` use
+  `set -uo pipefail`.
 - New scripts: is there a seam that makes them testable? `post-check.sh` is
   covered *because* someone guarded its entry point with `BASH_SOURCE`. The
   others are not, because they do their work at the top level.
