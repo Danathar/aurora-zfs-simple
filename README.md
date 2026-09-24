@@ -7,7 +7,7 @@
 [![OpenZFS/kernel status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FDanathar%2Faurora-zfs-simple%2Fstatus%2Fakmods-badge.json)](AGENTS.md#dominant-failure-mode-kernel--zfs-akmod-skew)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Danathar/aurora-zfs-simple)
 [![Maintenance assisted by Hivecommons Hive](https://img.shields.io/badge/maintenance%20assisted%20by-Hivecommons%20Hive-1f6feb)](https://github.com/hivecommons/hive)
-[![ACMM L4 Security-Aware](https://img.shields.io/badge/ACMM-L4%20Security--Aware-2da44e)](https://github.com/hivecommons/hive#acmm-levels)
+[![ACMM L5 Semi-Autonomous](https://img.shields.io/badge/ACMM-L5%20Semi--Autonomous-2da44e)](#maintained-with-hive-acmm-l5)
 [![AI assisted](https://img.shields.io/badge/AI-assisted-d29922)](#about-this-project)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -354,17 +354,26 @@ every `bootc upgrade` after it.
 > unbootable system, a failed build, or other consequences that may result from
 > using this image.
 
-> [!NOTE]
-> **Maintenance on this repository is assisted by [Hivecommons Hive](https://github.com/hivecommons/hive) at ACMM level 4.**
->
-> Hive orchestrates a fleet of AI agents that continuously review this codebase.
->
-> At **L4 (Security-Aware)** all agents may file issues, and the quality,
-> sec-check and CI agents may additionally open pull requests that carry a
-> `hold` label. The rest stay advisory: they report, they do not act. Every
-> change is still reviewed and merged by a human maintainer.
->
-> Learn more: [Hive](https://github.com/hivecommons/hive) · [Hive Hub](https://hive.kubestellar.io) · [full ACMM policy matrix](https://github.com/hivecommons/hive/blob/v4/src/docs/acmm-policy-matrix.md)
+## Maintained with Hive (ACMM L5)
+
+Maintenance on this repository is assisted by
+[Hivecommons Hive](https://github.com/hivecommons/hive), a system that runs a
+fleet of AI agents to continuously review this codebase. This repository's Hive
+runs at **ACMM level 5, Semi-Autonomous (L5)**. Here that means:
+
+- The agents may file issues and open pull requests. Every pull request an agent
+  opens gets a `hold` label automatically and does not merge on its own: a human
+  maintainer reviews the held pull requests in batches, and nothing an agent
+  opens lands without that approval.
+- L5 adds a reviewer agent, which comments on open pull requests with file:line
+  evidence but never merges, approves or closes one; an architect agent for RFCs
+  and structural changes; and a strategist agent that coordinates the others.
+  The telemetry and operations agents ship paused.
+- What an agent may do here unattended, and which paths always need a human, is
+  set out in [docs/SECURITY-AI.md](docs/SECURITY-AI.md) and
+  [docs/risk-tiers.md](docs/risk-tiers.md).
+
+Learn more: [Hive](https://github.com/hivecommons/hive) · [Hive Hub](https://hive.kubestellar.io) · [ACMM levels](https://github.com/hivecommons/hive#acmm-levels) · [full ACMM policy matrix](https://github.com/hivecommons/hive/blob/v4/src/docs/acmm-policy-matrix.md)
 
 ## References
 
