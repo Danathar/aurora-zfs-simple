@@ -198,6 +198,7 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/workflows/auto-qa.yml             compare CI timeouts against observed durations
 .github/workflows/labeler.yml             apply the descriptive `area/*` labels
 .github/workflows/ai-fix.yml              hand a labelled issue or a review to an agent
+.github/rulesets/main.json                the ruleset that protects `main`, for an admin to apply
 .github/labeler.yml                       path-to-label map for the above
 .github/auto-qa-tuning.json               declared CI timeouts and the drift policy
 renovate.json                             dependency updates, including the Chunkah release tag
@@ -205,6 +206,7 @@ docs/manual-input-check.md                Fedora release input-check notes
 docs/quality.md                           where the signal comes from, and what it cannot tell you
 docs/metrics.md                           what is measured here and what is not
 docs/review-rubric.md                     what a review of a change here should ask
+docs/branch-protection.md                 what protects `main`, and how to check it is applied
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs
 docs/SECURITY-AI.md                       what an agent may do here, and what it must not touch
 docs/reflections/                         durable lessons from things that went wrong
