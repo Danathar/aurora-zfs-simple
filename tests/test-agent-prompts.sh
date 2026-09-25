@@ -464,6 +464,33 @@ assert_contains "the verify step inspects the same tag the example pins to" \
 assert_contains "the verify step reads the label that decides the match" \
     "${pin_fenced}" 'ostree.linux'
 
+# The example is pasted as-is, so it has to be for the release being built.
+# Everything above compares stage names, repositories and one kernel; nothing
+# compared the release, so a FEDORA_VERSION bump left this pinning a Fedora 44
+# kernel into a Fedora 45 image while README.md's copy -- held to the same shape
+# by test-readme.sh -- went red. The Containerfile guard checks only aurora-dx
+# against FEDORA_VERSION, so the build would not have caught it either.
+pin_tag_shape="^coreos-stable-${FEDORA_VERSION}-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc${FEDORA_VERSION}\.x86_64$"
+if [[ "$(printf '%s\n' "${pin_tags}" | head -1)" =~ ${pin_tag_shape} ]]; then
+    _pass "the pinned tag is the Containerfile's template with a Fedora ${FEDORA_VERSION} kernel spliced in"
+else
+    _fail "the pinned tag is the Containerfile's template with a Fedora ${FEDORA_VERSION} kernel spliced in" \
+        "expected to match: ${pin_tag_shape}" "actual: ${pin_tags}"
+fi
+
+# Every release the whole prompt names, in stream tags and in kernel releases,
+# not only in the FROM lines: the verify loop carries its own copy of the tag.
+pin_text="$(cat "${PIN}")"
+pin_stream_releases="$(grep -oE 'coreos-(stable|testing)-[0-9]+' <<<"${pin_text}" | sed -E 's/.*-//' | sort -u)"
+pin_fc_releases="$(grep -oE '\.fc[0-9]+\.' <<<"${pin_text}" | tr -dc '0-9\n' | sort -u)"
+pin_stream_count="$(grep -oE 'coreos-(stable|testing)-[0-9]+' <<<"${pin_text}" | grep -c .)"
+assert_eq "the prompt names a release-numbered tag in both FROM lines and the verify loop" \
+    "3" "${pin_stream_count}"
+assert_eq "every stream tag in the pin prompt is for the Fedora release the Containerfile builds" \
+    "${FEDORA_VERSION}" "${pin_stream_releases}"
+assert_eq "every kernel release in the pin prompt is a Fedora ${FEDORA_VERSION} kernel" \
+    "${FEDORA_VERSION}" "${pin_fc_releases}"
+
 # "The `Containerfile` comments say so" -- the pin-both rule is stated there too.
 assert_contains "the Containerfile comment the pin prompt cites is still there" \
     "$(flattened_prose "${CONTAINERFILE}")" 'if you have to pin keep this in sync with the above'
