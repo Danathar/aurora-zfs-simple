@@ -42,7 +42,9 @@
 #     the two akmods repositories and the `ostree.linux` label
 #     `ci/write-badges.sh` reads;
 #   * the Fix options against build.yml's schedule and `workflow_dispatch`, and
-#     the mixed-pin example against the stage names it would replace;
+#     the mixed-pin example against the stage names it would replace, and
+#     every kernel-pinned tag and release above the incident log against
+#     `FEDORA_VERSION`;
 #   * the Chunkah section against the `Rechunk Image with Chunkah` step body;
 #   * its links, its one in-page anchor, that every `bash` block parses and
 #     every `--jq` filter compiles.
@@ -729,6 +731,44 @@ assert_contains "the pinned kernel keeps the stable stream for the kernel itself
     "${mixed_pin}" "akmods:coreos-stable-"
 assert_contains "and takes only the ZFS kmod from coreos-testing, as the prose says" \
     "${mixed_pin}" "akmods-zfs:coreos-testing-"
+
+# Every kernel-pinned tag and kernel release the document tells a reader to use
+# is for the release being built. The kernel comparison above strips the release
+# before it compares, so a FEDORA_VERSION bump left the mixed-pin block, the
+# "e.g." pin tag and step 4's "tags look like" all naming last release while
+# README.md's pin example went red. The incident log is history: each entry
+# keeps the release it happened on, so it is exempt by section -- and the
+# exemption is asserted to still be doing something, so it cannot go dead.
+incident_line="$(grep -nxF '## Incident log' "${AGENTS_DOC}" | head -1 | cut -d: -f1)"
+require_nonempty "an Incident log heading to bound the current guidance" "${incident_line}" || true
+guidance_text="$(head -n "$((${incident_line:-1} - 1))" "${AGENTS_DOC}")"
+history_text="$(tail -n "+${incident_line:-1}" "${AGENTS_DOC}")"
+pinned_tag_re='coreos-(stable|testing)-[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc[0-9]+\.x86_64'
+guidance_pins="$(grep -oE "${pinned_tag_re}" <<<"${guidance_text}")"
+assert_eq "the guidance offers four kernel-pinned tags: step 4, the pin option and the mixed-pin pair" \
+    "4" "$(grep -c . <<<"${guidance_pins}")"
+wrong_pins=""
+while IFS= read -r tag; do
+    [[ -n "${tag}" ]] || continue
+    [[ "${tag}" =~ ^coreos-(stable|testing)-${fedora_version}-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc${fedora_version}\.x86_64$ ]] ||
+        wrong_pins+="${tag} "
+done <<<"${guidance_pins}"
+assert_eq "every kernel-pinned tag outside the incident log is for Fedora ${fedora_version}" \
+    "" "${wrong_pins}"
+guidance_releases="$(
+    {
+        grep -oE 'coreos-(stable|testing)-[0-9]+' <<<"${guidance_text}" | sed -E 's/.*-//'
+        grep -oE '\.fc[0-9]+\.' <<<"${guidance_text}" | tr -dc '0-9\n'
+    } | LC_ALL=C sort -u
+)"
+assert_eq "and every release number it names, in stream tags or kernel releases, is ${fedora_version}" \
+    "${fedora_version}" "${guidance_releases}"
+if grep -qE "${pinned_tag_re}" <<<"${history_text}"; then
+    _pass "the incident log still records pinned tags, so exempting it still matters"
+else
+    _fail "the incident log still records pinned tags, so exempting it still matters" \
+        "no pinned tag below '## Incident log'; drop the exemption and check the whole file"
+fi
 
 # "They must be pinned together — the Containerfile comments say so."
 assert_contains "the Containerfile really carries the keep-in-sync pin comment" \
