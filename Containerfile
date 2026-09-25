@@ -27,6 +27,8 @@ RUN test "$(rpm -E %fedora)" = "${FEDORA_VERSION}" || \
     { echo "ERROR: ${AURORA_IMAGE}:${AURORA_TAG} is Fedora $(rpm -E %fedora), but FEDORA_VERSION=${FEDORA_VERSION}"; exit 1; }
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
     --mount=type=bind,from=akmods,src=/kernel-rpms,dst=/tmp/kernel-rpms \
     --mount=type=bind,from=akmods,src=/rpms/common,dst=/tmp/rpms/common \
     --mount=type=bind,from=akmods,src=/rpms/kmods,dst=/tmp/rpms/kmods \
