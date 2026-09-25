@@ -443,4 +443,19 @@ for body in "${RUN_BODIES[@]}"; do
         "$(run_mounts "${body}")" $'tmpfs\t/tmp\t-'
 done
 
+# Both RUNs that install packages keep dnf5's repo metadata and log out of the
+# image. Without these cache mounts the layer ships /var/cache/libdnf5 and
+# /var/log/dnf5.log, which `bootc container lint` reports as var-tmpfiles and
+# var-log warnings.
+for script in /ctx/kernel-akmods.sh /ctx/build.sh; do
+    for body in "${RUN_BODIES[@]}"; do
+        [[ "${body}" == *"${script}"* ]] || continue
+        mounts="$(run_mounts "${body}")"
+        assert_contains "${script#/ctx/}'s RUN puts a cache mount on /var/cache" \
+            "${mounts}" $'cache\t/var/cache\t-'
+        assert_contains "${script#/ctx/}'s RUN puts a cache mount on /var/log" \
+            "${mounts}" $'cache\t/var/log\t-'
+    done
+done
+
 finish
