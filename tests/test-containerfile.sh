@@ -443,19 +443,96 @@ for body in "${RUN_BODIES[@]}"; do
         "$(run_mounts "${body}")" $'tmpfs\t/tmp\t-'
 done
 
-# Both RUNs that install packages keep dnf5's repo metadata and log out of the
-# image. Without these cache mounts the layer ships /var/cache/libdnf5 and
+# Every RUN that installs packages keeps dnf5's repo metadata and log out of
+# the image. Without these cache mounts the layer ships /var/cache/libdnf5 and
 # /var/log/dnf5.log, which `bootc container lint` reports as var-tmpfiles and
 # var-log warnings.
-for script in /ctx/kernel-akmods.sh /ctx/build.sh; do
-    for body in "${RUN_BODIES[@]}"; do
-        [[ "${body}" == *"${script}"* ]] || continue
-        mounts="$(run_mounts "${body}")"
-        assert_contains "${script#/ctx/}'s RUN puts a cache mount on /var/cache" \
-            "${mounts}" $'cache\t/var/cache\t-'
-        assert_contains "${script#/ctx/}'s RUN puts a cache mount on /var/log" \
-            "${mounts}" $'cache\t/var/log\t-'
-    done
+#
+# The set of such RUNs is derived, not typed in: a RUN installs packages when
+# its own body calls dnf/dnf5 in command position, or when a /ctx script it
+# runs does so on a line that is not a comment. A list naming today's two RUNs
+# only protects the RUNs that already carry the mounts; an inline
+# `RUN dnf5 -y install ...` added later would pass it.
+
+# The shell command a RUN hands to /bin/sh: the instruction with `RUN` and its
+# `--mount=`/`--network=` style flags removed.
+run_command() {
+    sed -E 's/^RUN[[:space:]]+//; s/--[a-z-]+=[^[:space:]]+[[:space:]]*//g' <<<"$1"
+}
+
+# Prints the input's non-comment lines that call dnf or dnf5 as a command:
+# at the start of a line or after `;`, `&`, `|`, `(`, `{`, `!` or `then`/`do`.
+dnf_calls() {
+    grep -vE '^[[:space:]]*#' |
+        grep -E '(^|[;&|({!]|[[:space:]](then|do|else))[[:space:]]*(sudo[[:space:]]+)?dnf5?[[:space:]]'
+}
+
+cat >"${fixture_dir}/dnf.sh" <<'FIXTURE'
+dnf5 -y install /tmp/kernel-rpms/kernel-[0-9]*.rpm
+    dnf5 versionlock add kernel
+true && dnf -y install tmux
+if true; then dnf5 -y remove foo; fi
+# dnf5 install -y tmux
+#   true && dnf5 -y install tmux
+echo "see /var/log/dnf5.log"
+rm -f /var/cache/dnf5
+mydnf5 install x
+FIXTURE
+
+assert_eq "the dnf detector finds calls in command position and skips comments and words" \
+    "4" "$(dnf_calls <"${fixture_dir}/dnf.sh" | wc -l | tr -d ' ')"
+inline_bare="$(dnf_calls <<<"$(run_command 'RUN dnf5 -y install htop')" | wc -l | tr -d ' ')"
+inline_mounted="$(dnf_calls <<<"$(run_command \
+    'RUN --mount=type=bind,from=ctx,source=/,target=/ctx dnf5 -y install htop')" | wc -l | tr -d ' ')"
+assert_eq "and finds an inline RUN dnf5, with or without mounts in front" \
+    "1 1" "${inline_bare} ${inline_mounted}"
+
+# build.sh installs nothing today, but it is the slot its own comments tell a
+# user to add `dnf5 install` lines to, so its RUN is held to the same rule by
+# name. Keep that reason checkable: if the examples go, so does the exemption.
+build_sh_examples="$(grep -cE '^[[:space:]]*#[[:space:]]*dnf5[[:space:]].*install' \
+    "${REPO_ROOT}/build_files/build.sh")"
+if [[ "${build_sh_examples}" -gt 0 ]]; then
+    _pass "build.sh's comments still tell a user to add dnf5 install lines there"
+else
+    _fail "build.sh's comments still tell a user to add dnf5 install lines there" \
+        "no commented 'dnf5 ... install' example left; drop build.sh from the named set"
+fi
+
+installing_runs=()
+for index in "${!RUN_BODIES[@]}"; do
+    body="${RUN_BODIES[index]}"
+    installs=""
+    [[ -n "$(dnf_calls <<<"$(run_command "${body}")")" ]] && installs="inline dnf"
+    while IFS= read -r script; do
+        [[ -z "${script}" ]] && continue
+        file="${REPO_ROOT}/build_files/${script#/ctx/}"
+        [[ -f "${file}" ]] || continue
+        if [[ -n "$(dnf_calls <"${file}")" || "${script}" == "/ctx/build.sh" ]]; then
+            installs="${script#/ctx/}"
+        fi
+    done < <(run_scripts "${body}")
+    [[ -n "${installs}" ]] && installing_runs+=("${index}")
+done
+
+joined_installing=""
+for index in "${installing_runs[@]}"; do
+    joined_installing+="$(run_scripts "${RUN_BODIES[index]}" | tr '\n' ' ')|"
+done
+assert_contains "the kernel/ZFS RUN is found as a package-installing RUN" \
+    "${joined_installing}" "/ctx/kernel-akmods.sh /ctx/zfs.sh "
+assert_contains "and so is build.sh's RUN" \
+    "${joined_installing}" "/ctx/build.sh "
+
+for index in "${installing_runs[@]}"; do
+    body="${RUN_BODIES[index]}"
+    label="$(run_scripts "${body}" | sed 's|^/ctx/||' | paste -sd+ -)"
+    label="${label:-inline RUN #$((index + 1))}"
+    mounts="$(run_mounts "${body}")"
+    assert_contains "${label}'s RUN puts a cache mount on /var/cache" \
+        "${mounts}" $'cache\t/var/cache\t-'
+    assert_contains "${label}'s RUN puts a cache mount on /var/log" \
+        "${mounts}" $'cache\t/var/log\t-'
 done
 
 finish
