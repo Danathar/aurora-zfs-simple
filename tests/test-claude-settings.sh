@@ -1848,6 +1848,8 @@ for rebuilt in "podman images --cpu-pro{f..f}ile cosign.pub" \
     "podman images @(--cpu-profile=cosign.pub)" \
     "podman ps +(--memory-profile=cosign.pub)" \
     "podman images fedora!(x)" \
+    "podman images ''@(--cpu-profile=cosign.pub)" \
+    'podman images ""@(--cpu-profile=cosign.pub)' \
     "git status; podman images --cpu-pro{f..f}ile cosign.pub"; do
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "a podman word bash rewrites is refused: ${rebuilt}" \

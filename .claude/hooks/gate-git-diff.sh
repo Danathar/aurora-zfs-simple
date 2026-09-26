@@ -1079,6 +1079,45 @@ word_bash_would_rewrite() {
   return 1
 }
 
+# Whether the word ends in an extglob operator (`@`, `+`, `!`, `?`, `*`) that
+# bash leaves unquoted, so a `(` right after it opens an extglob pattern. The
+# quote state is walked rather than read off the character before the
+# operator: an empty quoted prefix (`''@(...)`, `""@(...)`) quotes nothing,
+# and the `@` after it is live (Codex on #262/#391). Only content characters
+# count; the quote marks themselves are not the operator.
+word_ends_in_unquoted_extglob_op() {
+  local raw="$1" quote='' escaped=0 i ch last='' last_unquoted=0
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+    if ((escaped)); then
+      escaped=0
+      last="${ch}"
+      last_unquoted=0
+      continue
+    fi
+    if [[ -n "${quote}" ]]; then
+      if [[ "${ch}" == "${quote}" ]]; then
+        quote=''
+      elif [[ "${quote}" == '"' && "${ch}" == $'\\' ]]; then
+        escaped=1
+      else
+        last="${ch}"
+        last_unquoted=0
+      fi
+      continue
+    fi
+    case "${ch}" in
+    $'\\') escaped=1 ;;
+    "'" | '"') quote="${ch}" ;;
+    *)
+      last="${ch}"
+      last_unquoted=1
+      ;;
+    esac
+  done
+  ((last_unquoted)) && [[ "${last}" == [@+!?*] ]]
+}
+
 # Whether bash would brace-expand this word as typed. `brace_would_expand`
 # reads the word with its quotes and refuses a fully quoted brace as its
 # price; podman cannot pay that price, because `--format` takes a Go template
@@ -1695,7 +1734,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # `(` separator (quality review on #262).
     if ((cmd_podman_profile == 0)) && ((idx + 1 < ${#words[@]})) &&
       [[ "${kinds[idx + 1]}" == sep && "${words[idx + 1]}" == '(' ]] &&
-      [[ "${raw_words[idx]}" == *[@+!?*] && "${raw_words[idx]}" != *[\'\"\\][@+!?*] ]]; then
+      word_ends_in_unquoted_extglob_op "${raw_words[idx]}"; then
       cmd_podman_profile=2
     fi
   fi
