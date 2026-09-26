@@ -878,6 +878,33 @@ require_claim "${RUBRIC_DOC}" "the BASH_SOURCE seam is why post-check.sh is cove
 assert_contains "post-check.sh still has that guard" \
     "$(cat "${REPO_ROOT}/build_files/post-check.sh")" 'if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then'
 
+# Section 6's prose names which build code the suite cannot reach. CONTRIBUTING.md,
+# quality.md and the pull request template say the same thing and each is joined
+# to the manifest; this copy once said "a `build_files/` change" and so told a
+# reviewer to discard the post-check.sh tests section 5 credits. Compare it to
+# the manifest's UNCOVERED build_files/ set both ways, and refuse a bare
+# directory, which reads as "all of it".
+unreachable_paragraph="$(awk '
+    /^"Tests pass" on / { found = 1 }
+    found && NF == 0 { exit }
+    found
+' "${RUBRIC_DOC}" | tr '\n' ' ' | tr -s ' ')"
+require_nonempty "section 6's claim about what the suite cannot reach" "${unreachable_paragraph}"
+unreachable_sentence="${unreachable_paragraph%%cannot reach that code*}"
+assert_eq "section 6's unreachable sentence still ends at 'cannot reach that code'" \
+    "0" "$([[ "${unreachable_sentence}" != "${unreachable_paragraph}" ]] && echo 0 || echo 1)"
+rubric_unreachable="$(grep -oE 'build_files/[a-z-]+\.sh' <<<"${unreachable_sentence}" |
+    LC_ALL=C sort -u | tr '\n' ' ')"
+assert_eq "section 6 names exactly the build_files scripts the manifest marks UNCOVERED" \
+    "${uncovered}" "${rubric_unreachable}"
+# shellcheck disable=SC2016
+assert_contains "and the Containerfile" "${unreachable_sentence}" '`Containerfile`'
+unreachable_dirs="$(code_spans "${unreachable_sentence}" | grep -E '/$' | tr '\n' ' ')"
+assert_eq "section 6's unreachable sentence names no whole directory" "" "${unreachable_dirs}"
+# shellcheck disable=SC2016
+assert_contains "section 6 names post-check.sh as the exception" \
+    "${unreachable_paragraph}" '`build_files/post-check.sh` is the partial exception'
+
 # Section 6: the evidence table. Every path in the left column resolves, and the
 # workflow run it asks for is a workflow this repo has under that display name.
 EVIDENCE_SECTION="$(doc_section "${RUBRIC_DOC}" "## 6. Was it verified, and could it have been?")"
