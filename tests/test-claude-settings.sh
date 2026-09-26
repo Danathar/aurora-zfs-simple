@@ -1845,6 +1845,9 @@ for rebuilt in "podman images --cpu-pro{f..f}ile cosign.pub" \
     "podman inspect ?-cpu-profile=cosign.pub foo" \
     "podman images *" \
     "podman images ~/x" \
+    "podman images @(--cpu-profile=cosign.pub)" \
+    "podman ps +(--memory-profile=cosign.pub)" \
+    "podman images fedora!(x)" \
     "git status; podman images --cpu-pro{f..f}ile cosign.pub"; do
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "a podman word bash rewrites is refused: ${rebuilt}" \
@@ -1852,9 +1855,21 @@ for rebuilt in "podman images --cpu-pro{f..f}ile cosign.pub" \
     assert_contains "and the refusal says bash rewrites it: ${rebuilt}" \
         "${PRE_ERR}" "bash rewrites this word of a podman invocation"
 done
+# A literal flag ahead of a rewritten word is refused for the flag: the
+# message names the write, not the rewrite (quality review on #262).
+run_pre "$(pre_payload_for "podman images --cpu-profile cosign.pub *")"
+assert_eq "a literal profile flag beside a glob is refused" "2" "${PRE_STATUS}"
+assert_contains "and for the flag rather than the glob" "${PRE_ERR}" "podman --cpu-profile FILE"
 # shellcheck disable=SC2016 # the spellings are handed to the hook, not run here
 for ok in "podman images 'fedora*'" \
     "podman inspect --format {{.Id}} foo" \
+    "podman inspect --format '{{.Id}},{{.Name}}' foo" \
+    'podman inspect --format "{{.Id}},{{.Name}}" foo' \
+    "podman images --format '{{.Repository}}:{{.Tag}}'" \
+    'podman images --cpu-pro"{f..f}"ile x' \
+    "podman images '{a,b}'" \
+    'podman images \{a,b\}' \
+    "podman images '@'(x)" \
     "echo --cpu-profil*"; do
     run_pre "$(pre_payload_for "${ok}")"
     assert_eq "a quoted pattern, a literal template brace, or a glob outside podman is left alone: ${ok}" \
