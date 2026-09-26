@@ -1855,6 +1855,12 @@ done
 # shellcheck disable=SC2016 # the spellings are handed to the hook, not run here
 for ok in "podman images 'fedora*'" \
     "podman inspect --format {{.Id}} foo" \
+    "podman inspect --format '{{.Id}},{{.Name}}' foo" \
+    'podman inspect --format "{{.Id}},{{.Name}}" foo' \
+    "podman images --format '{{.Repository}}:{{.Tag}}'" \
+    'podman images --cpu-pro"{f..f}"ile x' \
+    "podman images '{a,b}'" \
+    'podman images \{a,b\}' \
     "echo --cpu-profil*"; do
     run_pre "$(pre_payload_for "${ok}")"
     assert_eq "a quoted pattern, a literal template brace, or a glob outside podman is left alone: ${ok}" \
