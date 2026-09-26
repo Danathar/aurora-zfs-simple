@@ -1079,6 +1079,39 @@ word_bash_would_rewrite() {
   return 1
 }
 
+# Whether bash would brace-expand this word as typed. `brace_would_expand`
+# reads the word with its quotes and refuses a fully quoted brace as its
+# price; podman cannot pay that price, because `--format` takes a Go template
+# that is nothing but braces and a comma-separated one (`'{{.Id}},{{.Name}}'`)
+# is an ordinary listing (review on #262). Bash expands a brace only when the
+# `{`, the `}` and a `,` or `..` between them are all unquoted, so this walks
+# the word with the quote state `word_bash_would_rewrite` tracks and looks
+# only at the unquoted characters. `${` is refused elsewhere as a `$`.
+word_brace_would_expand() {
+  local raw="$1" quote='' escaped=0 i ch unquoted_run=''
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+    if ((escaped)); then
+      escaped=0
+      continue
+    fi
+    if [[ -n "${quote}" ]]; then
+      if [[ "${ch}" == "${quote}" ]]; then
+        quote=''
+      elif [[ "${quote}" == '"' && "${ch}" == $'\\' ]]; then
+        escaped=1
+      fi
+      continue
+    fi
+    case "${ch}" in
+    $'\\') escaped=1 ;;
+    "'" | '"') quote="${ch}" ;;
+    *) unquoted_run+="${ch}" ;;
+    esac
+  done
+  [[ "${unquoted_run}" == *'{'*','*'}'* || "${unquoted_run}" == *'{'*..*'}'* ]]
+}
+
 # Git's path_inside_repo, which decides on the *spelling* rather than on where
 # the path ends up. That distinction is the whole of this function, and folding
 # `..` before the comparison gets it backwards: `git diff --
@@ -1648,7 +1681,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     esac
     # The literal comparison reads the word as typed; a word bash rebuilds
     # before podman runs can turn into either option afterwards.
-    if ((cmd_podman_profile == 0)) && { brace_would_expand "${raw_words[idx]}" ||
+    if ((cmd_podman_profile == 0)) && { word_brace_would_expand "${raw_words[idx]}" ||
       word_bash_would_rewrite "${raw_words[idx]}"; }; then
       cmd_podman_profile=2
     fi
