@@ -342,6 +342,9 @@ BASH_READ_MSG='blocked: bash -n prints the line a syntax error stands on, so poi
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 XARGS_MSG='blocked: xargs adds words it reads from standard input (or from the file its -a option names) to the command it runs, so the operands git or the linter receive are not in this string and cannot be checked here: `printf '"'"'%s\n'"'"' /dev/null ./cosign.key | xargs git diff` hands git the two-operand plain-file read of the key while the git invocation this gate reads has no operand at all, and `xargs -a list.txt shellcheck` prints back whatever list.txt names. And Claude Code matches `xargs git diff` against the `Bash(git diff:*)` allow rule as readily as `git diff`, so nothing prompts either. xargs in front of git or an allow-listed command is refused, wherever it stands among other wrappers (`timeout 5 xargs git diff`); in front of any other command it is left to the permission rules. Name the operands in the command itself instead.'
 
+# shellcheck disable=SC2016 # the option spellings are what the reader has to see
+PODMAN_PROFILE_MSG='blocked: podman --cpu-profile FILE and --memory-profile FILE (and their =FILE forms) are persistent global options podman accepts after the subcommand too, so `podman images --cpu-profile cosign.pub` matches the Bash(podman ps:*), Bash(podman images:*) and Bash(podman inspect:*) allow rows on their subcommand prefix while podman opens the path for writing and dumps a pprof profile into it -- it truncates the trust anchor, .claude/settings.json, this hook or any file this uid can reach, and truncates the target even when the command then fails, with no Read(...) deny rule in its way. It is the write .claude/hooks/gate-git-diff.sh already refuses for `git --output` and for a `>` redirection on these commands, spelled as a podman option instead. These allow-listed podman verbs only read state; drop the flag. Profile podman under a verb that prompts on its own.'
+
 # Fail closed. This gate stands in front of the pre-approved commands that can
 # read a denied path, so a missing dependency must not quietly disable it:
 # AGENTS.md requires that setup of this kind fail closed, and a hook that lets
@@ -1325,6 +1328,12 @@ check_gated_command() {
   # git diff` as it matches `git diff`. Git counts, whichever subcommand.
   ((cmd_xargs && (cmd_gated || cmd_git))) && refuse "${XARGS_MSG}"
   ((cmd_gated && cmd_writes)) && refuse "${GATED_REDIRECT_MSG}"
+  # podman's --cpu-profile/--memory-profile are the same write by an option
+  # rather than a redirection: persistent globals podman takes after the
+  # subcommand too, so `podman images --cpu-profile cosign.pub` matches the
+  # `podman ps`/`images`/`inspect` allow row on its prefix and dumps a profile
+  # over the path, truncating it even when the run then fails.
+  ((cmd_gated && cmd_podman_profile)) && refuse "${PODMAN_PROFILE_MSG}"
   # A shellcheck invocation has its own scan for this, with the message that
   # names the operand; that one is left to say it.
   ((cmd_gated && cmd_subst)) && { [[ "${cmd_prefix}" != shellcheck* ]] || ((cmd_subst == 2)); } && refuse "${GATED_SUBST_MSG}"
@@ -1374,6 +1383,7 @@ reset_command() {
   cmd_named=0
   cmd_gated=0
   cmd_git=0
+  cmd_podman_profile=0
   cmd_export=0
   cmd_export_idx=-1
   cmd_xargs=0
@@ -1398,6 +1408,7 @@ cmd_bash=0    # its name is bash, so the +n and expansion rules apply once gated
 cmd_named=0   # the name has been seen; every later word belongs to it
 cmd_gated=0   # its leading words matched one of GATED_PREFIXES
 cmd_git=0     # its name is git, which the allow rows cover with their own `*`
+cmd_podman_profile=0 # a --cpu-profile/--memory-profile option stands in this podman command
 cmd_export=0  # 1: its name is export/declare/typeset/readonly, whose own words
               # assign; 2: it is `set`, whose -a arms every later assignment
 cmd_export_idx=-1 # the word that named it, so the name is not read as its own
@@ -1617,6 +1628,18 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # covers. Compared against the first exported assignment below, so that an
   # export written *after* the command it cannot reach is left alone.
   ((cmd_gated || cmd_git)) && gate_idx=${idx}
+  # podman's profile-writing globals, checked at each word rather than at the
+  # prefix because they stand after the subcommand `podman ps`/`images`/
+  # `inspect` the allow row matches (`podman images --cpu-profile cosign.pub`).
+  # `cmd_prefix` holds only the matched prefix, so the flag word is read here.
+  if ((cmd_gated)) && [[ "${cmd_prefix}" == podman\ * ]]; then
+    case "${words[idx]}" in
+    --cpu-profile | --cpu-profile=* | --memory-profile | --memory-profile=*)
+      cmd_podman_profile=1
+      ;;
+    *) ;;
+    esac
+  fi
   # A substitution or an expansion quoted into a word (`df -T "$(printf x
   # >cosign.pub)"`, `podman images $X`) is one the split above never opened,
   # and bash performs it all the same (review on arch-bootc#322).
