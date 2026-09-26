@@ -1797,6 +1797,40 @@ for heredoc in $'bash -n <<\'EOF\'\necho hi\nEOF' \
     assert_eq "a quoted here-document, or one on another command, is left alone: ${heredoc//$'\n'/ | }" \
         "0" "${PRE_STATUS}"
 done
+# podman's --cpu-profile/--memory-profile write the same way `git --output` and
+# a `>` redirection on a gated command do, but by an option: they are
+# persistent globals podman accepts after the subcommand `podman ps`/`images`/
+# `inspect` the allow row matches, so `podman images --cpu-profile cosign.pub`
+# opens the path for writing and dumps a pprof profile over it -- and truncates
+# the target even when the run then fails -- with the allow row seeing only its
+# prefix. Both flags, both the space and =FILE spellings, and behind a wrapper.
+for profiled in "podman images --cpu-profile cosign.pub" \
+    "podman images --cpu-profile=cosign.pub" \
+    "podman ps --cpu-profile .claude/settings.json" \
+    "podman ps --memory-profile cosign.pub" \
+    "podman inspect --memory-profile=.claude/hooks/gate-git-diff.sh foo" \
+    "podman inspect --cpu-profile out foo" \
+    "timeout 5 podman images --cpu-profile cosign.pub" \
+    "git status; podman images --cpu-profile cosign.pub"; do
+    run_pre "$(pre_payload_for "${profiled}")"
+    assert_eq "a podman profile flag that writes a file is refused: ${profiled}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the profile flag: ${profiled}" \
+        "${PRE_ERR}" "profile"
+done
+# The same podman verbs without the profile flag, and the flag words standing
+# in a command no allow row covers, stay unprompted: the refusal is scoped to a
+# podman invocation, not to the spelling wherever it appears.
+for ok in "podman ps" \
+    "podman images --format json" \
+    "podman inspect --format {{.Id}} foo" \
+    "podman ps -a --no-trunc" \
+    "echo podman images --cpu-profile x" \
+    "git log --grep=cpu-profile -1"; do
+    run_pre "$(pre_payload_for "${ok}")"
+    assert_eq "a podman verb with no profile flag, or the flag outside a podman command, is left alone: ${ok}" \
+        "0" "${PRE_STATUS}"
+done
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
 for substituted in "podman images >(cat >cosign.pub)" \
     ">(cat >cosign.pub) podman images" \
