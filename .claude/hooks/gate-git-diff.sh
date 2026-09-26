@@ -1685,6 +1685,19 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       word_bash_would_rewrite "${raw_words[idx]}"; }; then
       cmd_podman_profile=2
     fi
+    # An extglob pattern, `@(...)`, `+(...)`, `!(...)`, `?(...)` or `*(...)`,
+    # is one word to a bash with `shopt -s extglob` on (Fedora's
+    # bash-completion turns it on) and it matches files the way `*` does, so
+    # `podman images @(--cpu-profile=cosign.pub)` reaches podman as that
+    # option beside a file of that name. The split above ends the command at
+    # the unquoted `(`, so the pattern is read here as the word before it: a
+    # word ending in one of those five characters, unquoted, followed by a
+    # `(` separator (quality review on #262).
+    if ((cmd_podman_profile == 0)) && ((idx + 1 < ${#words[@]})) &&
+      [[ "${kinds[idx + 1]}" == sep && "${words[idx + 1]}" == '(' ]] &&
+      [[ "${raw_words[idx]}" == *[@+!?*] && "${raw_words[idx]}" != *[\'\"\\][@+!?*] ]]; then
+      cmd_podman_profile=2
+    fi
   fi
   # A substitution or an expansion quoted into a word (`df -T "$(printf x
   # >cosign.pub)"`, `podman images $X`) is one the split above never opened,
