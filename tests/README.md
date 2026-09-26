@@ -20,7 +20,7 @@ when present and skipped when not.
 | --------------------------- | ------------------------------------------------------------------------------------------ |
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
 | `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
-| `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database |
+| `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database, and the package lists they demand against the ones `kernel-akmods.sh` and `zfs.sh` erase, install and versionlock |
 | `test-containerfile.sh`     | the `Containerfile`'s build-stage wiring: the `--mount` destinations on each `RUN` against the absolute paths the `build_files/` scripts read, extracted from the scripts rather than restated, plus the order the four are invoked in and their place inside one `RUN` |
 | `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed; and that no tracked file is a shell script under some other name |
 | `test-coverage.sh`          | every shipped `*.sh` is declared covered by a named test or UNCOVERED with a reason        |
@@ -926,6 +926,15 @@ cannot show that, so this file backs `rpm` with a small text database — one
 against it. That also keeps the stub honest about a detail the script depends
 on: `rpm -qa 'libzfs[0-9]*'` returns full `NVRA` strings that are handed
 straight back to `rpm -q --qf`, so both forms have to resolve.
+
+The same file then holds the names those two stages demand against the build
+that installs them. The kernel set is written three more times in
+`kernel-akmods.sh` — the erase loop, the install globs and the `versionlock`
+line — and the OpenZFS set twice more, in `kernel-akmods.sh`'s erase of an
+inherited ZFS and in `zfs.sh`'s `ZFS_RPMS`, besides the second copy
+`check_zfs_packages` keeps for its version comparison. Each list is read out of
+its script and compared with `post-check.sh`'s, so a package added to one and
+not the others fails here instead of shipping unlocked or unchecked.
 
 ## Not covered
 
