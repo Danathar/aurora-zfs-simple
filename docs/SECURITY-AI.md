@@ -67,6 +67,41 @@ signature until they update.
 Nothing else in CI is secret. The registry push uses the run's own
 `github.token`, not a stored credential.
 
+## Kernel-module signing trust chain (Secure Boot / MOK)
+
+This is a second, separate trust chain from cosign image signing above — it
+governs whether `spl.ko`/`zfs.ko` load on a Secure Boot host, not whether the
+published image itself is authentic.
+
+- **Source.** `build_files/kernel-akmods.sh` extracts
+  `/etc/pki/akmods/certs/akmods-ublue.der` from the `ublue-os-akmods-addons` RPM
+  shipped in the `ghcr.io/ublue-os/akmods` image (the same image that supplies
+  the kernel and the common kmods). It is installed into the built image at
+  that same path.
+- **Verification at build time.** `build_files/post-check.sh`
+  (`check_module_signatures`) reads the certificate's `commonName` and each of
+  `spl.ko`/`zfs.ko`'s signer with `modinfo -F signer`, failing the build if a
+  module is unsigned or names a different signer. This closed the gap tracked
+  in issue #137/#138 for `kmod-zfs`, which ships from the separate
+  `akmods-zfs` image rather than the image the certificate itself comes from.
+- **Verification at enrollment time is the user's job, not this build's.** A
+  Secure Boot host must enroll this certificate into its Machine Owner Key
+  (MOK) list before the signed modules will load:
+
+  ```bash
+  sudo mokutil --import /etc/pki/akmods/certs/akmods-ublue.der
+  ```
+
+  `mokutil` then prompts for a one-time password and queues the import;
+  completing it requires selecting "Enroll MOK" in the firmware-level
+  MokManager screen on the next reboot and re-entering that password. Until
+  enrollment completes, `spl.ko`/`zfs.ko` will not load on a Secure Boot host,
+  independent of anything cosign verified.
+- **What this does not cover.** Nothing here re-checks that the *installed*
+  system's enrolled MOK still matches the certificate this image ships after
+  an upstream key rotation — that is the same class of drift `check_module_signatures`
+  guards against at build time, not at boot time on an already-deployed host.
+
 ## Labels carry authority — automation must not apply them
 
 This repository is connected to an external system ("Hive") that treats certain
