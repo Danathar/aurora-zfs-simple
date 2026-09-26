@@ -345,6 +345,9 @@ XARGS_MSG='blocked: xargs adds words it reads from standard input (or from the f
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 PODMAN_PROFILE_MSG='blocked: podman --cpu-profile FILE and --memory-profile FILE (and their =FILE forms) are persistent global options podman accepts after the subcommand too, so `podman images --cpu-profile cosign.pub` matches the Bash(podman ps:*), Bash(podman images:*) and Bash(podman inspect:*) allow rows on their subcommand prefix while podman opens the path for writing and dumps a pprof profile into it -- it truncates the trust anchor, .claude/settings.json, this hook or any file this uid can reach, and truncates the target even when the command then fails, with no Read(...) deny rule in its way. It is the write .claude/hooks/gate-git-diff.sh already refuses for `git --output` and for a `>` redirection on these commands, spelled as a podman option instead. These allow-listed podman verbs only read state; drop the flag. Profile podman under a verb that prompts on its own.'
 
+# shellcheck disable=SC2016 # the spellings are what the reader has to see
+PODMAN_EXPAND_MSG='blocked: bash rewrites this word of a podman invocation before podman sees it, and the profile-option check above reads words as typed, so it cannot tell whether the result is --cpu-profile or --memory-profile: `podman images --cpu-pro{f..f}ile cosign.pub` is a brace bash expands to --cpu-profile with no file needed, and `podman images --cpu-profil*` becomes --cpu-profile=cosign.pub as soon as a file of that name exists in the working directory -- either way podman dumps a pprof profile over cosign.pub with no prompt. An expanding brace, an unquoted glob character (*, ? or a bracket) or an unquoted leading ~ in a word of a gated podman command is refused rather than expanded. Quote a pattern podman should see literally (`podman images '"'"'fedora*'"'"'`), or write the words out.'
+
 # Fail closed. This gate stands in front of the pre-approved commands that can
 # read a denied path, so a missing dependency must not quietly disable it:
 # AGENTS.md requires that setup of this kind fail closed, and a hook that lets
@@ -1333,7 +1336,11 @@ check_gated_command() {
   # subcommand too, so `podman images --cpu-profile cosign.pub` matches the
   # `podman ps`/`images`/`inspect` allow row on its prefix and dumps a profile
   # over the path, truncating it even when the run then fails.
-  ((cmd_gated && cmd_podman_profile)) && refuse "${PODMAN_PROFILE_MSG}"
+  ((cmd_gated && cmd_podman_profile == 1)) && refuse "${PODMAN_PROFILE_MSG}"
+  # A word bash rewrites could become either option after this scan has read
+  # it: a brace (`--cpu-pro{f..f}ile`) with no precondition, a glob
+  # (`--cpu-profil*`) once a file of that name exists.
+  ((cmd_gated && cmd_podman_profile == 2)) && refuse "${PODMAN_EXPAND_MSG}"
   # A shellcheck invocation has its own scan for this, with the message that
   # names the operand; that one is left to say it.
   ((cmd_gated && cmd_subst)) && { [[ "${cmd_prefix}" != shellcheck* ]] || ((cmd_subst == 2)); } && refuse "${GATED_SUBST_MSG}"
@@ -1639,6 +1646,12 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       ;;
     *) ;;
     esac
+    # The literal comparison reads the word as typed; a word bash rebuilds
+    # before podman runs can turn into either option afterwards.
+    if ((cmd_podman_profile == 0)) && { brace_would_expand "${raw_words[idx]}" ||
+      word_bash_would_rewrite "${raw_words[idx]}"; }; then
+      cmd_podman_profile=2
+    fi
   fi
   # A substitution or an expansion quoted into a word (`df -T "$(printf x
   # >cosign.pub)"`, `podman images $X`) is one the split above never opened,
