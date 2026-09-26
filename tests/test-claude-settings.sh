@@ -1831,6 +1831,35 @@ for ok in "podman ps" \
     assert_eq "a podman verb with no profile flag, or the flag outside a podman command, is left alone: ${ok}" \
         "0" "${PRE_STATUS}"
 done
+# A word bash rebuilds before podman runs can become either option after the
+# literal comparison has read it: a brace expands with no precondition, and a
+# glob does once a file named like the option exists in the working
+# directory, so `--cpu-profil*` beside a file `--cpu-profile=cosign.pub`
+# overwrote cosign.pub with a profile when run for real.
+# shellcheck disable=SC2016 # the spellings are handed to the hook, not run here
+for rebuilt in "podman images --cpu-pro{f..f}ile cosign.pub" \
+    "podman images --{cpu,memory}-profile cosign.pub" \
+    "podman images --cpu-profile{,}=cosign.pub" \
+    "podman images --cpu-profil*" \
+    "podman ps [-]-memory-profile=cosign.pub" \
+    "podman inspect ?-cpu-profile=cosign.pub foo" \
+    "podman images *" \
+    "podman images ~/x" \
+    "git status; podman images --cpu-pro{f..f}ile cosign.pub"; do
+    run_pre "$(pre_payload_for "${rebuilt}")"
+    assert_eq "a podman word bash rewrites is refused: ${rebuilt}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal says bash rewrites it: ${rebuilt}" \
+        "${PRE_ERR}" "bash rewrites this word of a podman invocation"
+done
+# shellcheck disable=SC2016 # the spellings are handed to the hook, not run here
+for ok in "podman images 'fedora*'" \
+    "podman inspect --format {{.Id}} foo" \
+    "echo --cpu-profil*"; do
+    run_pre "$(pre_payload_for "${ok}")"
+    assert_eq "a quoted pattern, a literal template brace, or a glob outside podman is left alone: ${ok}" \
+        "0" "${PRE_STATUS}"
+done
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
 for substituted in "podman images >(cat >cosign.pub)" \
     ">(cat >cosign.pub) podman images" \
