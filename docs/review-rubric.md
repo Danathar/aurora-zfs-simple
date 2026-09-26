@@ -77,8 +77,11 @@ offered":
 | Workflows                       | Reason carefully; a workflow change is often only testable by merging                            |
 | Docs                            | Read the code it describes                                                                       |
 
-"Tests pass" on a `build_files/` change means nothing — the suite cannot reach
-that code. A PR that says "not verified, here is why" is more useful than one
+"Tests pass" on a change to `build_files/build.sh`, `build_files/kernel-akmods.sh`,
+`build_files/zfs.sh` or the `Containerfile` means nothing — the suite cannot
+reach that code. `build_files/post-check.sh` is the partial exception from
+section 5: the suite reaches its helpers and some of its stages, and the rest
+only run in a real build. A PR that says "not verified, here is why" is more useful than one
 that implies coverage it does not have.
 
 ## 7. Secrets and signing
