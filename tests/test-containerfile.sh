@@ -535,4 +535,27 @@ for index in "${installing_runs[@]}"; do
         "${mounts}" $'cache\t/var/log\t-'
 done
 
+# The cache mounts do not cover everything an install writes. dnf5 leaves
+# /run/dnf and per-repo countme files under /var/lib/dnf/repos, the kernel's
+# scriptlets leave /var/lib/rpm-state/kernel and /boot/symvers-*.xz, and
+# `bootc container lint` reported all four as warnings on main after the mounts
+# above were in place. Each installing RUN removes them as the last thing its
+# command does, so nothing that runs before can put them back. The same derived
+# set of RUNs is used, so an inline `RUN dnf5 -y install ...` is held to it too.
+cleanup="rm -rf /run/dnf /var/lib/dnf/repos /var/lib/rpm-state && find /boot -mindepth 1 -delete"
+for index in "${installing_runs[@]}"; do
+    body="${RUN_BODIES[index]}"
+    label="$(run_scripts "${body}" | sed 's|^/ctx/||' | paste -sd+ -)"
+    label="${label:-inline RUN #$((index + 1))}"
+    # Continuation lines keep their indentation when folded; squeeze it out.
+    command="$(run_command "${body}" | tr -s '[:space:]' ' ')"
+    command="${command% }"
+    if [[ "${command}" == *"&& ${cleanup}" ]]; then
+        _pass "${label}'s RUN ends by removing dnf5 and kernel scriptlet leftovers"
+    else
+        _fail "${label}'s RUN ends by removing dnf5 and kernel scriptlet leftovers" \
+            "expected the command to end with: && ${cleanup}"
+    fi
+done
+
 finish

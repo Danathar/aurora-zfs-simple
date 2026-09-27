@@ -26,6 +26,11 @@ ARG AURORA_TAG
 RUN test "$(rpm -E %fedora)" = "${FEDORA_VERSION}" || \
     { echo "ERROR: ${AURORA_IMAGE}:${AURORA_TAG} is Fedora $(rpm -E %fedora), but FEDORA_VERSION=${FEDORA_VERSION}"; exit 1; }
 
+# The cache mounts below keep dnf5's cache and log out of the image, but dnf5
+# and the kernel's RPM scriptlets also write outside them: /run/dnf, per-repo
+# countme state under /var/lib/dnf/repos, /var/lib/rpm-state, and
+# /boot/symvers-<kernel>.xz. `bootc container lint` reports each as a warning,
+# so every RUN that installs packages removes them before its layer is taken.
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
@@ -35,13 +40,17 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=akmods,src=/rpms/ublue-os,dst=/tmp/rpms/ublue-os \
     --mount=type=bind,from=akmods-zfs,src=/rpms/kmods/zfs,dst=/tmp/rpms/kmods/zfs \
     /ctx/kernel-akmods.sh && \
-    /ctx/zfs.sh
+    /ctx/zfs.sh && \
+    rm -rf /run/dnf /var/lib/dnf/repos /var/lib/rpm-state && \
+    find /boot -mindepth 1 -delete
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
-    /ctx/build.sh
+    /ctx/build.sh && \
+    rm -rf /run/dnf /var/lib/dnf/repos /var/lib/rpm-state && \
+    find /boot -mindepth 1 -delete
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/post-check.sh
