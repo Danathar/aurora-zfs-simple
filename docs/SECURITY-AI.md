@@ -175,6 +175,33 @@ and are repeated because the consequence is security-relevant, not just social:
   rather than the prose tier the rest of `.claude/` sits in. Narrowing the
   boundary — a new refusal, a removed allow row — is ordinary work.
 
+The gate's job is narrower than "block bad commands": every allow row it
+matches is a command this repo trusts to be safe by itself, so the gate exists
+to refuse the ways an allow-listed command's own options or environment turn
+it into something else. Categories worth knowing, since each is a case where
+the command name alone would have looked fine:
+
+- **a write hidden in an option.** `podman --cpu-profile FILE` /
+  `--memory-profile FILE` (and their `=FILE` forms) dump a pprof profile into
+  an arbitrary path even on an allow-listed read-only podman verb — the same
+  kind of write the gate already refuses for `git --output` or a shell
+  redirection, spelled as a podman flag instead.
+- **an allow-listed check re-enabling execution.** `bash -n` is allow-listed
+  because `-n` only reads a script's syntax, but a later `+n` or `+o noexec`
+  on the same command line turns execution back on, so `bash -n +n -c
+  COMMAND` would run whatever it names under the syntax-check allow rule.
+- **a git command driven to run a program via config or environment.**
+  `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, `git -c diff.external=prog diff`,
+  `--config-env=...`, `--exec-path`, `--upload-pack`/`--receive-pack`, and
+  config keys such as `core.sshCommand`, `core.hooksPath`,
+  `uploadpack.packObjectsHook`, and `credential.helper` all turn an
+  allow-listed `git diff`/`log`/`show` into arbitrary code execution.
+- **a wrapper command that hands its argument to a shell.** `flock -c
+  COMMAND` (and `--command=COMMAND`) passes that string to a shell rather
+  than as an ordinary command word, which would let a gated command hide
+  inside it — e.g. `flock /tmp/l -c 'cat ./cosign.key'` reading a
+  `Read`-denied file while only `flock` itself is checked against allow rows.
+
 Never, under any circumstances:
 
 - push directly to `main`, or force-push a shared branch
