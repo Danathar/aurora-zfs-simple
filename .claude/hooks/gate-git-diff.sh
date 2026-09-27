@@ -254,7 +254,9 @@
 # once it has started. A `shellcheck -x` run whose target file names an outside
 # file in a `source` directive is in that last category -- the operands are
 # checked, what the tool then opens on their behalf is not, and `.shellcheckrc`
-# sets `external-sources=true` repository-wide. A git argument built at runtime
+# sets `external-sources=true` repository-wide. Following a directive reports
+# nothing from the file followed into unless --check-sourced (-a) asks for it,
+# and that flag is refused (SHELLCHECK_SOURCED_MSG). A git argument built at runtime
 # is no longer waved through -- the expansion characters that build it are
 # refused -- but that is a refusal, not an inspection. This re-gates the
 # pre-approved commands that reach past the deny list; it is not a sandbox.
@@ -291,6 +293,9 @@ SHELLCHECK_EXPAND_MSG='blocked: bash rewrites this word before shellcheck sees i
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 SHELLCHECK_READ_MSG='blocked: shellcheck reads standard input when its operand is `-`, and it prints the source line above every diagnostic it reports, so `shellcheck - < .env` prints the file back exactly as `shellcheck ./.env` does -- and the operand scan says nothing, because the path sits behind the `<` rather than in the argv. The target of a bare `<` on a shellcheck invocation is checked the way an operand is: it must be inside the working tree, must not be one of the secret-shaped names the Read(...) deny rules in .claude/settings.json list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519), and must be spelled out -- no brace, no leading ~, no glob, since those are words bash rewrites before shellcheck opens anything. Redirecting from a script inside the checkout is unaffected, and so is </dev/null. Describe such a file with ls -l or wc -c instead.'
+
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+SHELLCHECK_SOURCED_MSG='blocked: shellcheck --check-sourced (-a) reports the diagnostics it finds in a file pulled in by a `source` or `.` directive of the script it lints, and it prints the source line above every diagnostic, so `shellcheck -a - <<< '"'"'source ./.env'"'"'` -- or a script inside the checkout whose body is `. ./.env` -- prints every NAME=value line of the .env back past the Read(...) deny rules in .claude/settings.json, though .env is never named on the command line and the operand scan sees only the script or `-`. Following the directive needs no -x here, because .shellcheckrc sets external-sources=true; -x on its own follows it to resolve names and reports nothing from the file it follows into, so the lint runs this repository performs are unaffected -- none of them passes -a. A short cluster carries a as its own option letter (`-xa` is `-x -a`) until one of the value-taking shorts (-i -e -f -o -P -s -S -W) consumes the rest, and shellcheck accepts any unambiguous prefix of a long option, so --check-sourced is refused in every spelling from --ch up. Lint the sourced script directly if its own diagnostics are wanted, and drop --check-sourced.'
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 GIT_STDIN_MSG='blocked: git log, git show and git diff take revisions from standard input under --stdin, one per line, and the first line that is not a revision ends the run with fatal: bad revision followed by that line, so `git log --stdin <.env` prints the first line of the file back past the Read(...) deny rules in .claude/settings.json. The target of a bare < on a git invocation is therefore checked the way a shellcheck one is: it must be inside the working tree, must not be one of the secret-shaped names those rules list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519), and must be spelled out -- no brace, no leading ~, no glob. Put the revisions in a file inside the checkout (`git log --stdin <revs.txt`), or name them on the command line. </dev/null, here-strings and <&N are unaffected.'
@@ -2012,7 +2017,27 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       ;;
     # Stdin, not a file on disk.
     -) continue ;;
-    -*) continue ;;
+    # --check-sourced makes shellcheck print lines from the files a `source`
+    # directive pulls in, which no operand names (see SHELLCHECK_SOURCED_MSG).
+    # Haskell's getOpt accepts any unambiguous prefix of a long option, and
+    # `--c` is ambiguous with --color, so `--ch` is the shortest spelling that
+    # reaches it; `--ch*` also covers the attached `--check-sourced=...` form.
+    --ch*) refuse "${SHELLCHECK_SOURCED_MSG}" ;;
+    --*) continue ;;
+    # A short cluster is read letter by letter the way getOpt reads it: `a`
+    # is the flag wherever it stands until a value-taking letter consumes the
+    # rest of the word, so `-xa` refuses and `-sa` (shell `a`) does not.
+    -?*)
+      sc_cluster="${word#-}"
+      for ((sc_i = 0; sc_i < ${#sc_cluster}; sc_i++)); do
+        case "${sc_cluster:sc_i:1}" in
+        a) refuse "${SHELLCHECK_SOURCED_MSG}" ;;
+        i | e | f | o | P | s | S | W) break ;;
+        *) ;;
+        esac
+      done
+      continue
+      ;;
     *) ;;
     esac
     # A moved working directory makes every operand undecidable rather than
