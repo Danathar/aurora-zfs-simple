@@ -1545,13 +1545,13 @@ assert_eq "a here-document delimiter is not a path" "0" "${PRE_STATUS}"
 # first, both halves, against a synthetic pair so no real secret is involved.
 if command -v shellcheck >/dev/null 2>&1; then
     printf '#!/bin/bash\n. ./dotenv\n' >"${SC_WORK}/lint-me.sh"
-    sc_sourced_out="$(cd "${SC_WORK}" && shellcheck -x -a lint-me.sh 2>&1 || true)"
+    sc_sourced_out="$(cd "${SC_WORK}" || exit 1; shellcheck -x -a lint-me.sh 2>&1 || true)"
     assert_contains "shellcheck --check-sourced prints the file a source directive names" \
         "${sc_sourced_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
-    sc_prefix_out="$(cd "${SC_WORK}" && shellcheck -x --ch lint-me.sh 2>&1 || true)"
+    sc_prefix_out="$(cd "${SC_WORK}" || exit 1; shellcheck -x --ch lint-me.sh 2>&1 || true)"
     assert_contains "and so does --ch, a prefix of it shellcheck accepts" \
         "${sc_prefix_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
-    sc_follow_out="$(cd "${SC_WORK}" && shellcheck -x lint-me.sh 2>&1 || true)"
+    sc_follow_out="$(cd "${SC_WORK}" || exit 1; shellcheck -x lint-me.sh 2>&1 || true)"
     assert_not_contains "shellcheck -x alone prints nothing from the sourced file" \
         "${sc_follow_out}" "NOT-A-REAL-KEY"
 fi
