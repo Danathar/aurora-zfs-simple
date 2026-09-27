@@ -1535,6 +1535,57 @@ done
 run_pre "$(pre_payload_for "$(printf "shellcheck - <<'EOF'\necho hi\nEOF\n")")"
 assert_eq "a here-document delimiter is not a path" "0" "${PRE_STATUS}"
 
+# 8d'''. a file nothing on the command line names. With --check-sourced (-a),
+# ShellCheck reports the diagnostics it finds in a file a `source` directive
+# pulls in, each under its source line, and .shellcheckrc's
+# external-sources=true follows the directive without -x. So
+# `shellcheck -a - <<< 'source ./.env'` printed the .env back while the
+# operand scan saw only `-` and the here-string carries content, not a path.
+# -x alone follows the directive and prints nothing from the file; shown
+# first, both halves, against a synthetic pair so no real secret is involved.
+if command -v shellcheck >/dev/null 2>&1; then
+    printf '#!/bin/bash\n. ./dotenv\n' >"${SC_WORK}/lint-me.sh"
+    sc_sourced_out="$(cd "${SC_WORK}" && shellcheck -x -a lint-me.sh 2>&1 || true)"
+    assert_contains "shellcheck --check-sourced prints the file a source directive names" \
+        "${sc_sourced_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
+    sc_prefix_out="$(cd "${SC_WORK}" && shellcheck -x --ch lint-me.sh 2>&1 || true)"
+    assert_contains "and so does --ch, a prefix of it shellcheck accepts" \
+        "${sc_prefix_out}" "AWS_SECRET_ACCESS_KEY=NOT-A-REAL-KEY-0123456789"
+    sc_follow_out="$(cd "${SC_WORK}" && shellcheck -x lint-me.sh 2>&1 || true)"
+    assert_not_contains "shellcheck -x alone prints nothing from the sourced file" \
+        "${sc_follow_out}" "NOT-A-REAL-KEY"
+fi
+for sourced in "shellcheck -a - <<< 'source ./.env'" \
+    "shellcheck --check-sourced - <<< 'source ./.env'" \
+    "shellcheck --ch - <<< 'source ./.env'" \
+    "shellcheck --check - <<< 'source ./.env'" \
+    "shellcheck --check-sourced=true tests/run-tests.sh" \
+    "shellcheck -x -a tests/run-tests.sh" \
+    "shellcheck -xa tests/run-tests.sh" \
+    "shellcheck -ax tests/run-tests.sh" \
+    "shellcheck -s bash -x -a - <<< '. ./.env'" \
+    "timeout 5 shellcheck -a tests/run-tests.sh" \
+    "git status; shellcheck -a tests/run-tests.sh"; do
+    run_pre "$(pre_payload_for "${sourced}")"
+    assert_eq "a shellcheck --check-sourced run is refused: ${sourced}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the flag: ${sourced}" \
+        "${PRE_ERR}" "check-sourced"
+done
+# -x is the lint run this repository performs, `a` after a value-taking short
+# is that option's value (`-sa` is shell `a`), and --color shares the `--c`
+# prefix without reaching --check-sourced.
+for sourcedok in "shellcheck -x tests/run-tests.sh" \
+    "shellcheck -x - <<< 'source ./.env'" \
+    "shellcheck -sa tests/run-tests.sh" \
+    "shellcheck -S style tests/run-tests.sh" \
+    "shellcheck --color=always tests/run-tests.sh" \
+    "shellcheck --shell=bash -x tests/run-tests.sh"; do
+    run_pre "$(pre_payload_for "${sourcedok}")"
+    assert_eq "a shellcheck run without --check-sourced is left alone: ${sourcedok}" \
+        "0" "${PRE_STATUS}"
+done
+
 # 8d''. git reads standard input too. Under --stdin, git log, git show and
 # git diff take revisions from it, one per line, and the first line that is
 # not a revision ends the run with `fatal: bad revision '<that line>'`, so
