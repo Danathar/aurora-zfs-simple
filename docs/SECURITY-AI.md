@@ -79,9 +79,14 @@ published image itself is authentic.
   the kernel and the common kmods). It is installed into the built image at
   that same path.
 - **Verification at build time.** `build_files/post-check.sh`
-  (`check_module_signatures`) reads the certificate's `commonName` and each of
-  `spl.ko`/`zfs.ko`'s signer with `modinfo -F signer`, failing the build if a
-  module is unsigned or names a different signer. This closed the gap tracked
+  (`check_module_signatures`) reads the certificate's `commonName`, its serial
+  number and, when present, its subject key identifier, then checks each of
+  `spl.ko`/`zfs.ko` twice: `modinfo -F signer` must name that `commonName`, and
+  `modinfo -F sig_key` must match the serial number or subject key identifier.
+  The build fails if a module is unsigned, names a different signer, or was
+  signed by a different key under the same name — the name alone survives an
+  upstream key rotation, so the key is what binds the modules to the
+  certificate a user enrolls. This closed the gap tracked
   in issue #137/#138 for `kmod-zfs`, which ships from the separate
   `akmods-zfs` image rather than the image the certificate itself comes from.
 - **Verification at enrollment time is the user's job, not this build's.** A
