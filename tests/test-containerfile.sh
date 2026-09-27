@@ -449,10 +449,18 @@ done
 # var-log warnings.
 #
 # The set of such RUNs is derived, not typed in: a RUN installs packages when
-# its own body calls dnf/dnf5 in command position, or when a /ctx script it
-# runs does so on a line that is not a comment. A list naming today's two RUNs
-# only protects the RUNs that already carry the mounts; an inline
+# its own body calls a package installer in command position, or when a /ctx
+# script it runs does so on a line that is not a comment. A list naming today's
+# two RUNs only protects the RUNs that already carry the mounts; an inline
 # `RUN dnf5 -y install ...` added later would pass it.
+#
+# "A package installer" is more than the bare word dnf5. `/usr/bin/dnf5`,
+# `xargs dnf5`, `rpm -ivh` and `rpm-ostree install` all run the same RPM
+# transaction and its scriptlets, so they leave the same cache, log,
+# rpm-state and /boot files behind; each one passed this check while it
+# matched only `dnf`/`dnf5`. rpm's query and verify modes (`rpm -E`, `rpm -q`,
+# `rpm -V`), which the first RUN and post-check.sh use, install nothing and
+# must not be counted.
 
 # The shell command a RUN hands to /bin/sh: the instruction with `RUN` and its
 # `--mount=`/`--network=` style flags removed.
@@ -460,11 +468,21 @@ run_command() {
     sed -E 's/^RUN[[:space:]]+//; s/--[a-z-]+=[^[:space:]]+[[:space:]]*//g' <<<"$1"
 }
 
-# Prints the input's non-comment lines that call dnf or dnf5 as a command:
-# at the start of a line or after `;`, `&`, `|`, `(`, `{`, `!` or `then`/`do`.
-dnf_calls() {
+# Prints the input's non-comment lines that call a package installer as a
+# command: at the start of a line or after `;`, `&`, `|`, `(`, `{`, `!` or
+# `then`/`do`/`else`, optionally behind `sudo`/`env`/`xargs`, their flags and
+# `NAME=value` assignments, spelled bare or by absolute path. The installers are dnf, dnf5, yum and
+# microdnf in any mode, `rpm` in install/upgrade/freshen/reinstall mode, and
+# `rpm-ostree install`/`override`.
+install_calls() {
+    local position='(^|[;&|({!]|[[:space:]](then|do|else))[[:space:]]*'
+    local prefix='((sudo|env|xargs|-[^[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*'
+    local path='(/usr)?(/s?bin/)?'
+    local installer='((dnf5?|yum|microdnf)[[:space:]]'
+    installer+='|rpm[[:space:]]+(-[iUF][[:alpha:]]*|--(install|upgrade|freshen|reinstall))([[:space:]]|$)'
+    installer+='|rpm-ostree[[:space:]]+(install|override)[[:space:]])'
     grep -vE '^[[:space:]]*#' |
-        grep -E '(^|[;&|({!]|[[:space:]](then|do|else))[[:space:]]*(sudo[[:space:]]+)?dnf5?[[:space:]]'
+        grep -E "${position}${prefix}${path}${installer}"
 }
 
 cat >"${fixture_dir}/dnf.sh" <<'FIXTURE'
@@ -479,13 +497,64 @@ rm -f /var/cache/dnf5
 mydnf5 install x
 FIXTURE
 
-assert_eq "the dnf detector finds calls in command position and skips comments and words" \
-    "4" "$(dnf_calls <"${fixture_dir}/dnf.sh" | wc -l | tr -d ' ')"
-inline_bare="$(dnf_calls <<<"$(run_command 'RUN dnf5 -y install htop')" | wc -l | tr -d ' ')"
-inline_mounted="$(dnf_calls <<<"$(run_command \
+assert_eq "the installer detector finds dnf calls in command position and skips comments and words" \
+    "4" "$(install_calls <"${fixture_dir}/dnf.sh" | wc -l | tr -d ' ')"
+inline_bare="$(install_calls <<<"$(run_command 'RUN dnf5 -y install htop')" | wc -l | tr -d ' ')"
+inline_mounted="$(install_calls <<<"$(run_command \
     'RUN --mount=type=bind,from=ctx,source=/,target=/ctx dnf5 -y install htop')" | wc -l | tr -d ' ')"
 assert_eq "and finds an inline RUN dnf5, with or without mounts in front" \
     "1 1" "${inline_bare} ${inline_mounted}"
+
+# One line per spelling, so a spelling the detector drops is named by the
+# failure rather than lost in a count.
+while IFS= read -r spelling; do
+    [[ -z "${spelling}" ]] && continue
+    if [[ -n "$(install_calls <<<"${spelling}")" ]]; then
+        _pass "the installer detector finds: ${spelling}"
+    else
+        _fail "the installer detector finds: ${spelling}" "not matched"
+    fi
+done <<'SPELLINGS'
+/usr/bin/dnf5 -y install htop
+/bin/dnf -y install htop
+xargs dnf5 -y install </ctx/packages
+xargs -r -n1 /usr/bin/dnf5 -y install </ctx/packages
+env LANG=C dnf5 -y install htop
+LANG=C dnf5 -y install htop
+sudo -E dnf5 -y install htop
+yum -y install htop
+microdnf -y install htop
+rpm -ivh /tmp/rpms/htop.rpm
+rpm -Uvh --replacefiles /tmp/kernel-rpms/kernel-core.rpm
+rpm -F /tmp/rpms/htop.rpm
+rpm --install /tmp/rpms/htop.rpm
+rpm --upgrade /tmp/rpms/htop.rpm
+rpm --reinstall /tmp/rpms/htop.rpm
+/usr/bin/rpm -i /tmp/rpms/htop.rpm
+true && rpm -ivh /tmp/rpms/htop.rpm
+rpm-ostree install htop
+rpm-ostree override replace /tmp/rpms/kernel-core.rpm
+SPELLINGS
+
+while IFS= read -r spelling; do
+    [[ -z "${spelling}" ]] && continue
+    if [[ -z "$(install_calls <<<"${spelling}")" ]]; then
+        _pass "the installer detector skips: ${spelling}"
+    else
+        _fail "the installer detector skips: ${spelling}" "matched as an install"
+    fi
+done <<'SPELLINGS'
+test "$(rpm -E %fedora)" = "44"
+rpm -qa
+rpm -qi kernel-core
+rpm -q --qf '%{VERSION}' kmod-zfs
+rpm -V kmod-zfs
+verify_output=$(rpm -V "${pkg}" 2>&1 || true)
+rpm-ostree status
+echo "run rpm -ivh by hand"
+# rpm -ivh /tmp/rpms/htop.rpm
+myrpm -ivh x.rpm
+SPELLINGS
 
 # build.sh installs nothing today, but it is the slot its own comments tell a
 # user to add `dnf5 install` lines to, so its RUN is held to the same rule by
@@ -503,12 +572,12 @@ installing_runs=()
 for index in "${!RUN_BODIES[@]}"; do
     body="${RUN_BODIES[index]}"
     installs=""
-    [[ -n "$(dnf_calls <<<"$(run_command "${body}")")" ]] && installs="inline dnf"
+    [[ -n "$(install_calls <<<"$(run_command "${body}")")" ]] && installs="inline"
     while IFS= read -r script; do
         [[ -z "${script}" ]] && continue
         file="${REPO_ROOT}/build_files/${script#/ctx/}"
         [[ -f "${file}" ]] || continue
-        if [[ -n "$(dnf_calls <"${file}")" || "${script}" == "/ctx/build.sh" ]]; then
+        if [[ -n "$(install_calls <"${file}")" || "${script}" == "/ctx/build.sh" ]]; then
             installs="${script#/ctx/}"
         fi
     done < <(run_scripts "${body}")
@@ -523,6 +592,20 @@ assert_contains "the kernel/ZFS RUN is found as a package-installing RUN" \
     "${joined_installing}" "/ctx/kernel-akmods.sh /ctx/zfs.sh "
 assert_contains "and so is build.sh's RUN" \
     "${joined_installing}" "/ctx/build.sh "
+# The other RUNs call rpm too, in query and verify modes. Counting them would
+# demand cache mounts and the cleanup where nothing is installed.
+assert_not_contains "post-check.sh's RUN, which runs rpm -q and rpm -V, is not one" \
+    "${joined_installing}" "/ctx/post-check.sh"
+fedora_check_runs=0
+for body in "${RUN_BODIES[@]}"; do
+    [[ "${body}" == *"rpm -E %fedora"* ]] && fedora_check_runs=$((fedora_check_runs + 1))
+done
+assert_eq "the Containerfile has one RUN that checks rpm -E %fedora" "1" "${fedora_check_runs}"
+fedora_check_installs="no"
+for index in "${installing_runs[@]}"; do
+    [[ "${RUN_BODIES[index]}" == *"rpm -E %fedora"* ]] && fedora_check_installs="yes"
+done
+assert_eq "and it is not a package-installing RUN" "no" "${fedora_check_installs}"
 
 for index in "${installing_runs[@]}"; do
     body="${RUN_BODIES[index]}"
