@@ -353,6 +353,9 @@ PODMAN_PROFILE_MSG='blocked: podman --cpu-profile FILE and --memory-profile FILE
 # shellcheck disable=SC2016 # the spellings are what the reader has to see
 PODMAN_EXPAND_MSG='blocked: bash rewrites this word of a podman invocation before podman sees it, and the profile-option check above reads words as typed, so it cannot tell whether the result is --cpu-profile or --memory-profile: `podman images --cpu-pro{f..f}ile cosign.pub` is a brace bash expands to --cpu-profile with no file needed, and `podman images --cpu-profil*` becomes --cpu-profile=cosign.pub as soon as a file of that name exists in the working directory -- either way podman dumps a pprof profile over cosign.pub with no prompt. An expanding brace, an unquoted glob character (*, ? or a bracket) or an unquoted leading ~ in a word of a gated podman command is refused rather than expanded. Quote a pattern podman should see literally (`podman images '"'"'fedora*'"'"'`), or write the words out.'
 
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+GH_JQ_ENV_MSG='blocked: gh evaluates its --jq (-q) filter with gojq, which gives the filter the whole process environment through the `env` builtin and `$ENV`, so `gh pr view 1 --json number --jq env` prints every variable this shell holds -- GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY and whatever else is exported -- under the Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh run view:*) and Bash(gh run list:*) allow rows with no prompt. Those rows are there to read pull requests and runs, not the environment, and no Read(...) deny rule stands in front of a variable. A filter word `env` is refused wherever it stands in the filter, a quoted string included, and so is a filter bash rewrites before gh sees it (a brace, a glob, an extglob pattern, a leading ~), since `{e,}nv` reaches gh as env. Name the fields you want instead: --jq .title, --jq .jobs[].conclusion.'
+
 # Fail closed. This gate stands in front of the pre-approved commands that can
 # read a denied path, so a missing dependency must not quietly disable it:
 # AGENTS.md requires that setup of this kind fail closed, and a hook that lets
@@ -1474,6 +1477,15 @@ check_gated_command() {
   return 0
 }
 
+# Whether a jq filter names gojq's `env` builtin: the word `env` with no
+# identifier character on either side and no `.` before it, since `.env` is a
+# field of the JSON gh fetched rather than the environment. A string literal
+# is not told apart from code (`select(.name == "env")` is refused too),
+# because telling them apart means parsing jq here.
+jq_filter_reads_env() {
+  [[ "$1" =~ (^|[^A-Za-z0-9_.$])env([^A-Za-z0-9_]|$) ]]
+}
+
 reset_command() {
   cmd_prefix=''
   cmd_writes=0
@@ -1487,6 +1499,7 @@ reset_command() {
   cmd_gated=0
   cmd_git=0
   cmd_podman_profile=0
+  cmd_gh_jq=0
   cmd_export=0
   cmd_export_idx=-1
   cmd_xargs=0
@@ -1512,6 +1525,7 @@ cmd_named=0   # the name has been seen; every later word belongs to it
 cmd_gated=0   # its leading words matched one of GATED_PREFIXES
 cmd_git=0     # its name is git, which the allow rows cover with their own `*`
 cmd_podman_profile=0 # a --cpu-profile/--memory-profile option stands in this podman command
+cmd_gh_jq=0   # the next word of this gh command is its --jq/-q filter
 cmd_export=0  # 1: its name is export/declare/typeset/readonly, whose own words
               # assign; 2: it is `set`, whose -a arms every later assignment
 cmd_export_idx=-1 # the word that named it, so the name is not read as its own
@@ -1767,6 +1781,41 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # of that name.
     if ((cmd_podman_profile == 0)) && word_opens_extglob "${idx}"; then
       cmd_podman_profile=2
+    fi
+  fi
+  # gh's --jq filter runs in gojq, whose `env` builtin is the process
+  # environment: `gh pr view 1 --json number --jq env` prints GH_TOKEN and
+  # every other exported variable under the gh allow rows. `$ENV` carries a
+  # `$` and is already a substitution below, so the bare builtin is what is
+  # left. gh parses its flags with pflag: `--jq V`, `--jq=V`, `-q V`, `-qV`,
+  # `-q=V`, and `-q` last in a cluster of other one-letter flags (`-wq V`).
+  if ((cmd_gated)) && [[ "${cmd_prefix}" == gh\ * ]]; then
+    gh_filter=''
+    gh_filter_here=0
+    if ((cmd_gh_jq)); then
+      gh_filter="${words[idx]}"
+      gh_filter_here=1
+      cmd_gh_jq=0
+    fi
+    case "${words[idx]}" in
+    --jq) cmd_gh_jq=1 ;;
+    --jq=*)
+      gh_filter="${words[idx]#--jq=}"
+      gh_filter_here=1
+      ;;
+    -q* | -[!-]*q*)
+      gh_filter="${words[idx]#*q}"
+      gh_filter="${gh_filter#=}"
+      if [[ -n "${gh_filter}" ]]; then gh_filter_here=1; else cmd_gh_jq=1; fi
+      ;;
+    *) ;;
+    esac
+    if ((gh_filter_here)); then
+      jq_filter_reads_env "${gh_filter}" && refuse "${GH_JQ_ENV_MSG}"
+      if brace_would_expand "${raw_words[idx]}" || word_bash_would_rewrite "${raw_words[idx]}" ||
+        word_opens_extglob "${idx}"; then
+        refuse "${GH_JQ_ENV_MSG}"
+      fi
     fi
   fi
   # A substitution or an expansion quoted into a word (`df -T "$(printf x
