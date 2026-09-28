@@ -289,7 +289,7 @@ SHELLCHECK_MSG='blocked: shellcheck prints the source line above every diagnosti
 SHELLCHECK_OPTS_MSG='blocked: SHELLCHECK_OPTS is not a list of options -- shellcheck splits it and prepends it to its own argv, operands included, so SHELLCHECK_OPTS=./.env shellcheck tests/run-tests.sh lints the .env as well and prints its lines back, with no path in the argv this gate scans. The += append spelling sets it just the same, since appending to an unset variable creates it. Nothing in this repository sets the variable, so it is refused outright. Pass options after the command name instead.'
 
 # shellcheck disable=SC2016 # the literal $HOME is what the reader has to see
-SHELLCHECK_EXPAND_MSG='blocked: bash rewrites this word before shellcheck sees it, and this gate reads the words as typed, so the path checked here is not the path shellcheck would open: shellcheck {tests/run-tests.sh,/etc/shadow} is one word to the operand scan here and two files to shellcheck -- the second of which it would print back; an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to the gate (shellcheck ~/.aws/credentials); an unquoted glob character (*, ? or a bracket) is what bash expands into files this gate never saw (shellcheck .env*); and a $, a backtick or a process substitution supplies operands at runtime. Expanding them correctly means reimplementing bash inside a hook, so they are refused instead. Spell every path out in full, relative to the checkout.'
+SHELLCHECK_EXPAND_MSG='blocked: bash rewrites this word before shellcheck sees it, and this gate reads the words as typed, so the path checked here is not the path shellcheck would open: shellcheck {tests/run-tests.sh,/etc/shadow} is one word to the operand scan here and two files to shellcheck -- the second of which it would print back; an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to the gate (shellcheck ~/.aws/credentials); an unquoted glob character (*, ? or a bracket), or an extglob pattern such as @(...) or !(...), is what bash expands into files this gate never saw (shellcheck .env*, shellcheck @(.env)); and a $, a backtick or a process substitution supplies operands at runtime. Expanding them correctly means reimplementing bash inside a hook, so they are refused instead. Spell every path out in full, relative to the checkout.'
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 SHELLCHECK_READ_MSG='blocked: shellcheck reads standard input when its operand is `-`, and it prints the source line above every diagnostic it reports, so `shellcheck - < .env` prints the file back exactly as `shellcheck ./.env` does -- and the operand scan says nothing, because the path sits behind the `<` rather than in the argv. The target of a bare `<` on a shellcheck invocation is checked the way an operand is: it must be inside the working tree, must not be one of the secret-shaped names the Read(...) deny rules in .claude/settings.json list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519), and must be spelled out -- no brace, no leading ~, no glob, since those are words bash rewrites before shellcheck opens anything. Redirecting from a script inside the checkout is unaffected, and so is </dev/null. Describe such a file with ls -l or wc -c instead.'
@@ -336,7 +336,7 @@ WRAPPER_PATH_MSG='blocked: a wrapper (nohup, timeout, nice, env, xargs, ...) is 
 BASH_NOEXEC_MSG='blocked: `bash -n` is allow-listed because -n reads a script without running it, and a later +n or +o noexec on the same command line turns that off again, so `bash -n +n -c COMMAND` and `bash -n +o noexec script.sh` run whatever they name under the linter'"'"'s allow rule with no prompt. A word beginning with + in a bash -n invocation is refused. Check syntax with bash -n FILE and nothing else; to run a script, run it as itself so the permission rules see it.'
 
 # shellcheck disable=SC2016 # the literal ${VAR} and $(...) are what the reader has to see
-BASH_EXPAND_MSG='blocked: a brace bash could expand, an unquoted glob character (*, ? or a bracket), an unquoted leading ~, a $ or a backtick in a word of a bash -n invocation is refused rather than expanded (a process substitution is refused by GATED_SUBST_MSG), for the reason EXPAND_MSG gives for git: bash rewrites the words before the inner bash sees them, so `{+,+}n` matches no spelling here and reaches bash as +n, which turns noexec off, `?n` does the same when a file named +n exists in the working directory, and $(...), ${VAR} and a backtick supply a word this gate never saw. Write the command out in full.'
+BASH_EXPAND_MSG='blocked: a brace bash could expand, an unquoted glob character (*, ? or a bracket), an extglob pattern such as @(...) or !(...), an unquoted leading ~, a $ or a backtick in a word of a bash -n invocation is refused rather than expanded (a process substitution is refused by GATED_SUBST_MSG), for the reason EXPAND_MSG gives for git: bash rewrites the words before the inner bash sees them, so `{+,+}n` matches no spelling here and reaches bash as +n, which turns noexec off, `?n` and `@(+n)` do the same when a file named +n exists in the working directory, and $(...), ${VAR} and a backtick supply a word this gate never saw. Write the command out in full.'
 
 # shellcheck disable=SC2016 # the backticks quote command spellings for the reader
 BASH_ECHO_MSG='blocked: this bash -n invocation carries an option that makes bash print or copy what it reads, and -n stops bash running a script, not printing it: -v (and -o verbose) prints every line as bash reads it, so `bash -n -v ./cosign.key` prints the whole key past the Read(...) deny rules in .claude/settings.json; -D prints every $"..." string in the script; -o history and -i copy every line into ~/.bash_history when bash exits; -i and -l read ~/.bashrc and the login profiles and print the line a syntax error in them stands on, and so does a login shell started without -l: exec -l, or exec -a / env -a (--argv0) naming a zeroth argument that begins with -. -x (and -o xtrace) prints what bash runs, which under -n is nothing; it is refused with the rest because a syntax check has no use for it. bash reads a cluster of letters as separate options (-nv is -n -v) and takes the value of -o from the next word (-no verbose is -n -o verbose), and so does this gate. Check syntax with bash -n FILE and nothing else.'
@@ -1123,6 +1123,21 @@ word_ends_in_unquoted_extglob_op() {
   ((last_unquoted)) && [[ "${last}" == [@+!?*] ]]
 }
 
+# Whether the word at index $1 opens an extglob pattern: `@(...)`, `+(...)`,
+# `!(...)`, `?(...)` or `*(...)` is one word to a bash with `shopt -s extglob`
+# on (Fedora's bash-completion turns it on), and it matches files the way `*`
+# does. The split ends the command at the unquoted `(`, so the path inside the
+# pattern is read as a new command and never reaches the operand checks; the
+# pattern is caught here as the word before it -- a word ending in one of those
+# five characters, unquoted, followed by a `(` separator (quality review on
+# #262; the same rewrite reached `bash -n` and shellcheck, issue #281).
+word_opens_extglob() {
+  local i="$1"
+  ((i + 1 < ${#words[@]})) &&
+    [[ "${kinds[i + 1]}" == sep && "${words[i + 1]}" == '(' ]] &&
+    word_ends_in_unquoted_extglob_op "${raw_words[i]}"
+}
+
 # Whether bash would brace-expand this word as typed. `brace_would_expand`
 # reads the word with its quotes and refuses a fully quoted brace as its
 # price; podman cannot pay that price, because `--format` takes a Go template
@@ -1221,13 +1236,17 @@ denied_read_shape() {
 #
 # The target is judged on both spellings, as an operand is: the word as typed
 # for the rewrites bash performs before shellcheck opens anything, and the
-# quote-stripped word for where the path lands.
+# quote-stripped word for where the path lands. An extglob pattern is one of
+# those rewrites: `shellcheck - < @(.env)` feeds shellcheck the .env the
+# pattern matches, and the split ends the command at the `(`, so the target is
+# the `@` before it and `$4` is its index (Codex on #282).
 redirection_reads_a_denied_path() {
-  local op="$1" word="$2" raw="$3"
+  local op="$1" word="$2" raw="$3" i="$4"
   [[ "${op}" == '<' ]] || return 1
   [[ "${word}" == '/dev/null' ]] && return 1
   brace_would_expand "${raw}" && return 0
   word_bash_would_rewrite "${raw}" && return 0
+  word_opens_extglob "${i}" && return 0
   path_inside_worktree "${word}" || return 0
   denied_read_shape "${word}"
 }
@@ -1308,7 +1327,7 @@ for ((idx = 0; idx < ${#raw_words[@]}; idx++)); do
     if brace_would_expand "${raw_word}" ||
       [[ "${raw_word}" == '<(' || "${raw_word}" == '>(' ||
       "${raw_word}" == *'$'* || "${raw_word}" == *'`'* ]] ||
-      word_bash_would_rewrite "${raw_word}"; then
+      word_bash_would_rewrite "${raw_word}" || word_opens_extglob "${idx}"; then
       refuse "${SHELLCHECK_EXPAND_MSG}"
     fi
   fi
@@ -1501,6 +1520,7 @@ bash_options=0 # a gated bash is still reading option words, as bash itself does
 bash_optvals='' # one letter per -o/-O still waiting for its value, in order
 cmd_argv0=0   # an exec/env option before the name set bash's zeroth argument
 cmd_stack=()  # the outer command's state, while a `$(...)` is being read
+cmd_stack_subst=() # per cmd_stack entry: 1 opened by a substitution, 0 by an extglob pattern
 export_idx=-1 # the first word at which an export-family command arms a variable
 gate_idx=-1   # the last word at which a gated command or git is running
 reset_command
@@ -1570,11 +1590,23 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # a `(` separator; the command around it is saved there and restored at
     # the `)`, like a `$(...)`, so `>(cat >cosign.pub) df -T` still reaches
     # its name with the substitution remembered.
+    # An extglob pattern's `(` is saved the same way, since the pattern is
+    # one word of the command around it: `< @(.env) shellcheck -` is
+    # `shellcheck - < .env`, and without the save its read target was dropped
+    # at the `(` before the name was seen (Codex on #282). The command so far
+    # is still decided at the `(`, as before, so what its words already set
+    # outside the saved state (the podman profile) is not lost. The body runs
+    # nothing, so the resumed command is not marked as holding a substitution.
+    extglob_open=0
+    [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
+      word_opens_extglob $((idx - 1)) && extglob_open=1
+    ((extglob_open)) && check_gated_command
     # shellcheck disable=SC2016 # the literal `$(` is the separator's name
-    if [[ "${words[idx]}" == '$(' ]] ||
+    if [[ "${words[idx]}" == '$(' ]] || ((extglob_open)) ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
       cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_git} ${cmd_export} ${cmd_export_idx} ${cmd_xargs} ${cmd_prefix}")
+      cmd_stack_subst+=($((1 - extglob_open)))
       reset_command
       continue
     fi
@@ -1584,7 +1616,8 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
-      ((cmd_subst)) || cmd_subst=1
+      ((cmd_stack_subst[-1])) && ((cmd_subst == 0)) && cmd_subst=1
+      unset 'cmd_stack_subst[-1]'
       continue
     fi
     check_gated_command
@@ -1599,7 +1632,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # which skips a redirection's target -- saw nothing (#212). Recorded for
     # the command rather than refused here, because the redirection may be
     # written before the name.
-    redirection_reads_a_denied_path "${redirects[idx]}" "${words[idx]}" "${raw_words[idx]}" && cmd_reads=1
+    redirection_reads_a_denied_path "${redirects[idx]}" "${words[idx]}" "${raw_words[idx]}" "${idx}" && cmd_reads=1
     # `df -T < <(printf x >cosign.pub)`: the substitution is a target, and
     # its body still runs (review on arch-bootc#322). So does one quoted
     # into the target of an input redirection or a here-string
@@ -1729,17 +1762,10 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       word_bash_would_rewrite "${raw_words[idx]}"; }; then
       cmd_podman_profile=2
     fi
-    # An extglob pattern, `@(...)`, `+(...)`, `!(...)`, `?(...)` or `*(...)`,
-    # is one word to a bash with `shopt -s extglob` on (Fedora's
-    # bash-completion turns it on) and it matches files the way `*` does, so
-    # `podman images @(--cpu-profile=cosign.pub)` reaches podman as that
-    # option beside a file of that name. The split above ends the command at
-    # the unquoted `(`, so the pattern is read here as the word before it: a
-    # word ending in one of those five characters, unquoted, followed by a
-    # `(` separator (quality review on #262).
-    if ((cmd_podman_profile == 0)) && ((idx + 1 < ${#words[@]})) &&
-      [[ "${kinds[idx + 1]}" == sep && "${words[idx + 1]}" == '(' ]] &&
-      word_ends_in_unquoted_extglob_op "${raw_words[idx]}"; then
+    # An extglob pattern reaches podman as whatever file it matches, so
+    # `podman images @(--cpu-profile=cosign.pub)` is that option beside a file
+    # of that name.
+    if ((cmd_podman_profile == 0)) && word_opens_extglob "${idx}"; then
       cmd_podman_profile=2
     fi
   fi
@@ -1777,9 +1803,11 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # A glob is the third rebuild: with a file named `+n` in the working
   # directory, `?n` and `[+]n` reach bash as `+n` (review on
   # aurora-zfs-simple#211), so the rewrite test the shellcheck operands are
-  # held to applies here as well.
+  # held to applies here as well -- an extglob pattern included: `@(+n)` is
+  # `+n` beside that file, and `@(.env)` is the .env the operand check refuses
+  # by name (issue #281).
   if brace_would_expand "${raw_words[idx]}" || [[ "${raw_words[idx]}" == *'$'* ]] ||
-    word_bash_would_rewrite "${raw_words[idx]}"; then
+    word_bash_would_rewrite "${raw_words[idx]}" || word_opens_extglob "${idx}"; then
     refuse "${BASH_EXPAND_MSG}"
   fi
   # What the inner bash reads and prints, decided the way bash reads its own
