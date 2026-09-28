@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Exercises the Chunkah custom manager against both checked-in pin syntaxes,
-# then the division of labour between the two dependency bots: which of
-# renovate.json and .github/dependabot.yml owns each ecosystem.
+# Exercises the Chunkah custom manager against every checked-in pin (workflow,
+# e2e script, README) and the ignorePaths that could hide one, then the division
+# of labour between the two dependency bots: which of renovate.json and
+# .github/dependabot.yml owns each ecosystem.
 #
 # Renovate uses RE2's JavaScript-style named captures; Python's equivalent is
 # substituted below so the repository's existing Python dependency can run the
@@ -29,6 +30,7 @@ fi
 
 analysis=""
 if analysis=$(python3 - "${CONFIG}" "${REPO_ROOT}" <<'PY'
+import fnmatch
 import json
 import pathlib
 import re
@@ -49,17 +51,41 @@ if len(managers) != 1:
 
 manager = managers[0]
 match_strings = manager.get("matchStrings", [])
-if len(match_strings) != 1:
-    raise SystemExit(f"expected one Chunkah match string, found {len(match_strings)}")
+if not match_strings:
+    raise SystemExit("expected at least one Chunkah match string, found none")
 
 # Python and JavaScript spell named capture groups differently. The rest of
-# this expression uses syntax common to Python's re and Renovate's RE2 engine.
-expression = re.sub(
-    r"\(\?<([A-Za-z][A-Za-z0-9_]*)>",
-    r"(?P<\1>",
-    match_strings[0],
+# each expression uses syntax common to Python's re and Renovate's RE2 engine.
+# Renovate's default matchStringsStrategy ("any") runs every string against
+# every selected file, so the combined alternation is what a file sees.
+matcher = re.compile(
+    "|".join(
+        "(?:"
+        + re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", expression).replace(
+            "(?P<currentValue>", f"(?P<currentValue{index}>"
+        )
+        + ")"
+        for index, expression in enumerate(match_strings)
+    )
 )
-matcher = re.compile(expression)
+
+
+def current_value_group(match):
+    return next(name for name, value in match.groupdict().items() if value is not None)
+
+
+# A file matched by ignorePaths is skipped before any manager runs, so a pin
+# file under an ignored directory is never updated, whatever managerFilePatterns
+# says. repository-level ignorePaths replaces the preset's list (mergeable:
+# false); without one, config:best-practices ignores **/tests/** among others.
+ignore_paths = config.get("ignorePaths")
+if ignore_paths is None:
+    ignore_paths = ["**/tests/**"]
+
+
+def ignored(relative_path):
+    # fnmatch's * crosses "/", so a leading "/" lets **/tests/** match tests/.
+    return any(fnmatch.fnmatch("/" + relative_path, pattern) for pattern in ignore_paths)
 
 file_patterns = []
 for raw_pattern in manager.get("managerFilePatterns", []):
@@ -73,16 +99,19 @@ files = (
         "tests/e2e/run-e2e.sh",
         'CHUNKAH_IMAGE="${CHUNKAH_IMAGE:-quay.io/coreos/chunkah:v9.8.7}"',
     ),
+    ("README.md", "`quay.io/coreos/chunkah:v9.8.7`"),
 )
 
 for relative_path, expected_replacement in files:
     text = (repo_root / relative_path).read_text()
     matches = list(matcher.finditer(text))
-    eligible = any(pattern.search(relative_path) for pattern in file_patterns)
-    values = ",".join(match.group("currentValue") for match in matches)
+    eligible = any(pattern.search(relative_path) for pattern in file_patterns) and not ignored(
+        relative_path
+    )
+    values = ",".join(match.group(current_value_group(match)) for match in matches)
 
     def replace_version(match):
-        start, end = match.span("currentValue")
+        start, end = match.span(current_value_group(match))
         return match.group(0)[: start - match.start()] + "v9.8.7" + match.group(0)[end - match.start() :]
 
     updated = matcher.sub(replace_version, text)
@@ -105,7 +134,7 @@ else
 fi
 
 mapfile -t rows <<<"${analysis}"
-assert_eq "both Chunkah pin files were analyzed" "2" "${#rows[@]}"
+assert_eq "all three Chunkah pin files were analyzed" "3" "${#rows[@]}"
 
 IFS=$'\t' read -r workflow_path workflow_eligible workflow_matches workflow_value workflow_replaced <<<"${rows[0]}"
 assert_eq "first result is the workflow pin" ".github/workflows/build.yml" "${workflow_path}"
@@ -115,10 +144,17 @@ assert_eq "workflow replacement changes only the version capture" "true" "${work
 
 IFS=$'\t' read -r script_path script_eligible script_matches script_value script_replaced <<<"${rows[1]}"
 assert_eq "second result is the e2e script pin" "tests/e2e/run-e2e.sh" "${script_path}"
-assert_eq "e2e script path is selected by managerFilePatterns" "true" "${script_eligible}"
+assert_eq "e2e script path is selected by managerFilePatterns and not ignored" "true" "${script_eligible}"
 assert_eq "e2e script contains exactly one Chunkah match" "1" "${script_matches}"
 assert_eq "e2e replacement preserves Bash parameter expansion" "true" "${script_replaced}"
 assert_eq "workflow and e2e Chunkah pins agree" "${workflow_value}" "${script_value}"
+
+IFS=$'\t' read -r readme_path readme_eligible readme_matches readme_value readme_replaced <<<"${rows[2]}"
+assert_eq "third result is the README pin" "README.md" "${readme_path}"
+assert_eq "README path is selected by managerFilePatterns and not ignored" "true" "${readme_eligible}"
+assert_eq "README contains exactly one Chunkah match" "1" "${readme_matches}"
+assert_eq "README replacement keeps the backticked pin" "true" "${readme_replaced}"
+assert_eq "workflow and README Chunkah pins agree" "${workflow_value}" "${readme_value}"
 
 # =============================================================================
 # Who updates what: renovate.json against .github/dependabot.yml
