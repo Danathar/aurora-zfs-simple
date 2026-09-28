@@ -403,6 +403,21 @@ for ((index = last_ctx_run + 1; index < ${#RUN_BODIES[@]}; index++)); do
 done
 assert_eq "and bootc container lint runs after it" "1" "${lint_after_post_check}"
 
+# Without --fatal-warnings the lint exits 0 on warnings, so it gates only
+# errors. Four warnings (nonempty-boot, nonempty-run-tmp, var-log,
+# var-tmpfiles) shipped on every main build that way until the installing RUNs
+# were made to clean up after themselves. docs/quality.md lists the lint as a
+# gate that blocks the build, which is only true with the flag.
+lint_runs="$(printf '%s\n' "${RUN_BODIES[@]}" | grep -E '(^|[[:space:]])bootc container lint' || true)"
+assert_eq "the Containerfile runs bootc container lint exactly once" \
+    "1" "$(grep -c . <<<"${lint_runs}")"
+if [[ " ${lint_runs} " == *" --fatal-warnings "* ]]; then
+    _pass "bootc container lint fails the build on warnings (--fatal-warnings)"
+else
+    _fail "bootc container lint fails the build on warnings (--fatal-warnings)" \
+        "got: ${lint_runs}"
+fi
+
 # --- 4. the specific joins, named -------------------------------------------
 #
 # The loops above are generic: if an extractor regressed to returning nothing
