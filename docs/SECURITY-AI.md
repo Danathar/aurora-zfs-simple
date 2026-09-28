@@ -238,6 +238,17 @@ the command name alone would have looked fine:
   `--namespace`, `--super-prefix`, or `--attr-source` changes what a relative
   operand actually opens while the containment check still runs against the
   checkout, so every operand can look local and not be.
+- **an extglob pattern standing in for a path.** With `extglob` on (Fedora's
+  bash-completion turns it on), bash replaces `@(.env)` — and `+(...)`,
+  `?(...)`, `*(...)` and `!(...)` — with the files it matches before the
+  command runs, so the gate would check a different word from the path the
+  command opens. `shellcheck @(.env)`, `shellcheck - < @(.env)`,
+  `git log --stdin < @(.env)` and `bash -n @(+n) -c COMMAND` all reach a file
+  the gate never saw, and `podman images @(--cpu-profile=cosign.pub)` becomes
+  the profile write above. Such a pattern is refused wherever it would reach
+  podman, shellcheck, `bash -n` or `git --stdin`, as an operand or as the
+  target of a `<`; a quoted (`'@(x)'`) or escaped (`\@(x)`) one is a literal
+  and unaffected.
 
 Never, under any circumstances:
 
