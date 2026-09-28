@@ -206,6 +206,38 @@ the command name alone would have looked fine:
   than as an ordinary command word, which would let a gated command hide
   inside it — e.g. `flock /tmp/l -c 'cat ./cosign.key'` reading a
   `Read`-denied file while only `flock` itself is checked against allow rows.
+- **`git diff`'s plain-file mode.** When one of two paths is outside the
+  checkout, git switches to `--no-index` without the flag, so
+  `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`
+  deny rules — describe such a file with `ls -l` or `wc -c` instead.
+- **an unquoted leading `~`.** bash expands it to `$HOME`, while the gate
+  reads it as a directory inside the checkout.
+  `git diff -- ~/.aws/credentials ~/.bashrc` looked local to the gate, and git
+  printed both files out of the home directory. A word of a git invocation
+  beginning with an unquoted `~` is refused rather than expanded; a tilde
+  inside a word (`HEAD~1`) or a quoted one is a literal and unaffected.
+- **shellcheck echoing the file it lints.** shellcheck prints the source line
+  above every diagnostic, so pointing it at a secret-shaped path — directly,
+  via `shellcheck - < FILE` stdin redirection, or via `--check-sourced`/`-a`
+  reporting on a file a linted script `source`s — prints that file back past
+  the `Read(...)` deny rules.
+- **`bash -n` echoing the line it stops on.** `-n` stops bash running a
+  script, not reporting a syntax error in it, and the error quotes the line it
+  stands on, so `bash -n .env` prints a `NAME=value` line whose value holds a
+  `(` past the `Read(...)` deny rules.
+- **a redirection into a gated read.** `git log`/`show`/`diff --stdin < FILE`
+  takes revisions from standard input and prints the first line that is not a
+  revision back in its error, and `bash -n - < FILE` prints the offending
+  line the same way — both past the `Read(...)` deny rules for a file never
+  named on the command line.
+- **`git --output=FILE`.** Writes the diff or log to the path it names
+  instead of stdout, overwriting any file this uid can reach — `cosign.pub`,
+  `.claude/settings.json`, this hook itself — with no deny rule in its way.
+- **moving the directory operands resolve against.** A `cd`/`pushd` before
+  the command, `env -C DIR`, or git's own `-C`, `--git-dir`, `--work-tree`,
+  `--namespace`, `--super-prefix`, or `--attr-source` changes what a relative
+  operand actually opens while the containment check still runs against the
+  checkout, so every operand can look local and not be.
 
 Never, under any circumstances:
 
