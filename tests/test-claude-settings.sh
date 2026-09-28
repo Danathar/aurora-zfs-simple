@@ -1391,6 +1391,12 @@ for rewritten in "shellcheck ~/.aws/credentials" \
     "shellcheck tests/*.sh" \
     "shellcheck -x tests/run-tests.sh ~/.netrc" \
     "shellcheck ~/.ssh/id_ed25519" \
+    "shellcheck @(.env)" \
+    "shellcheck -- @(.env)" \
+    "shellcheck ''@(.env)" \
+    'shellcheck ""@(.env)' \
+    "shellcheck tests/!(x)" \
+    "shellcheck tests/run-tests.sh @(.env)" \
     "git log -1 && shellcheck ~/.aws/credentials"; do
     run_pre "$(pre_payload_for "${rewritten}")"
     assert_eq "a tilde or glob in a shellcheck operand is refused: ${rewritten}" \
@@ -1402,9 +1408,13 @@ for literal in "shellcheck 'tests/*.sh'" \
     "shellcheck \"tests/*.sh\"" \
     "shellcheck tests/\\*.sh" \
     "shellcheck tests/run-tests.sh~" \
-    "shellcheck 'tests/run-tests.sh'"; do
+    "shellcheck 'tests/run-tests.sh'" \
+    "shellcheck '@(x)'" \
+    "shellcheck \\@(x)" \
+    "shellcheck tests/run-tests.sh; (echo hi)" \
+    "bash -n tests/run-tests.sh && (shellcheck tests/run-tests.sh)"; do
     run_pre "$(pre_payload_for "${literal}")"
-    assert_eq "a quoted glob or a non-leading ~ is the literal word: ${literal}" \
+    assert_eq "a quoted glob or extglob, a non-leading ~, or a ( that opens a subshell is left alone: ${literal}" \
         "0" "${PRE_STATUS}"
 done
 
@@ -2104,6 +2114,13 @@ glob_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -c \
     "bash -n ?n -c 'printf RAN-VIA-GLOB'" 2>/dev/null </dev/null || true)"
 assert_eq "bash -n ?n -c COMMAND runs the command when a file named +n exists" \
     "RAN-VIA-GLOB" "${glob_out}"
+# An extglob pattern is the same rebuild under `shopt -s extglob` (issue
+# #281): `@(+n)` matches the file named `+n`, and the split here ends the
+# command at its `(`, so the word the checks below read is the `@` before it.
+extglob_out="$(cd "${GATED_WORK}" || exit 1; bash --norc --noprofile -O extglob -c \
+    "bash -n @(+n) -c 'printf RAN-VIA-EXTGLOB'" 2>/dev/null </dev/null || true)"
+assert_eq "bash -n @(+n) -c COMMAND runs the command under extglob when a file named +n exists" \
+    "RAN-VIA-EXTGLOB" "${extglob_out}"
 # shellcheck disable=SC2016 # the substitutions are spellings handed to the hook, not run here
 for rebuilt in "bash -n {+,+}n -c id" \
     'bash -n $X tests/run-tests.sh' \
@@ -2112,7 +2129,13 @@ for rebuilt in "bash -n {+,+}n -c id" \
     "bash -n --norc {+,+}n -c id" \
     "bash -n ?n -c id" \
     "bash -n [+]n -c id" \
-    "bash -n tests/*.sh"; do
+    "bash -n tests/*.sh" \
+    "bash -n @(+n) -c id" \
+    "bash -n ''@(+n) -c id" \
+    "bash -n @(.env)" \
+    "bash -n @(-v) tests/run-tests.sh" \
+    "bash -n tests/run-tests.sh @(.env)" \
+    "bash -n tests/!(x)"; do
     run_pre "$(pre_payload_for "${rebuilt}")"
     assert_eq "an expansion in a bash -n invocation is refused: ${rebuilt}" \
         "2" "${PRE_STATUS}"
@@ -2124,6 +2147,8 @@ for plain in "bash -n tests/run-tests.sh" \
     "bash -n build_files/post-check.sh tests/run-tests.sh" \
     "bash -n -- tests/run-tests.sh" \
     "bash -n '?n'" \
+    "bash -n '@(x)'" \
+    "bash -n tests/run-tests.sh && (echo hi)" \
     "bash +n -c id" \
     'echo $x; bash -n tests/run-tests.sh'; do
     run_pre "$(pre_payload_for "${plain}")"
@@ -2465,6 +2490,8 @@ corpus_row refuse "3 rewrite: a glob in a shellcheck operand" "shellcheck .env*"
 corpus_row refuse "3 rewrite: a tilde in a shellcheck operand" "shellcheck ~/.bashrc"
 corpus_row refuse "3 rewrite: a brace rebuilds +n" "bash -n {+,+}n -c id"
 corpus_row refuse "3 rewrite: a glob rebuilds +n" "bash -n ?n -c id"
+corpus_row refuse "3 rewrite: an extglob rebuilds +n" "bash -n @(+n) -c id"
+corpus_row refuse "3 rewrite: an extglob in a shellcheck operand" "shellcheck @(.env)"
 # shellcheck disable=SC2016 # the substitutions are spellings handed to the hook
 corpus_row refuse "3 rewrite: a command substitution" \
     'git diff $(printf "/dev/null ./cosign.key")'
