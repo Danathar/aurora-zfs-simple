@@ -404,6 +404,36 @@ skopeo inspect --raw docker://ghcr.io/ublue-os/aurora-dx:stable \
   | jq '.layers | length'
 ```
 
+### bootc container lint: a warning fails the build
+
+Symptom, in `Build Image`, after `post-check: all checks passed`:
+
+```
+Lint warning: <name>: <what it found>
+...
+Warnings: 1
+```
+
+followed by a failed `RUN bootc container lint --fatal-warnings`. This is not
+skew; `zfs.sh` and `post-check.sh` already passed. The lint runs with
+`--fatal-warnings` because without it a warning exits 0, and four of them
+(`nonempty-boot`, `nonempty-run-tmp`, `var-log`, `var-tmpfiles`) shipped on
+every build until someone read the log.
+
+The warning names what was left behind and where. Work out who wrote it:
+
+- **This repo's RUN steps.** A package, script or scriptlet left something in
+  `/boot`, `/run`, `/tmp` or `/var`. Remove it at the end of the RUN that
+  created it, the way the installing RUNs already remove `/run/dnf`,
+  `/var/lib/dnf/repos`, `/var/lib/rpm-state` and `/boot`'s contents, and extend
+  `tests/test-containerfile.sh` to match.
+- **The Aurora base image.** Run the same lint against
+  `ghcr.io/ublue-os/aurora-dx:stable` on its own:
+  `podman run --rm ghcr.io/ublue-os/aurora-dx:stable bootc container lint`. If
+  it warns there too, the cause is upstream. Clean it up here, or drop
+  `--fatal-warnings` for as long as upstream takes, and record which warning and
+  why in the incident log below, so the flag is put back.
+
 ## Incident log
 
 Keep this appended to; the recurrence pattern is the useful part.

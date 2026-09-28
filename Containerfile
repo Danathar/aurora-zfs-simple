@@ -56,5 +56,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/post-check.sh
 
 ### LINTING
-## Verify final image and contents are correct.
-RUN bootc container lint
+## Verify final image and contents are correct. --fatal-warnings makes a
+## warning fail the build too: without it the lint exits 0 on warnings, and the
+## four dnf5/kernel leftovers above shipped on every build before anyone read
+## the log. See AGENTS.md, "bootc container lint: a warning fails the build".
+RUN bootc container lint --fatal-warnings
