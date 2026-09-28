@@ -206,16 +206,16 @@ the command name alone would have looked fine:
   than as an ordinary command word, which would let a gated command hide
   inside it — e.g. `flock /tmp/l -c 'cat ./cosign.key'` reading a
   `Read`-denied file while only `flock` itself is checked against allow rows.
-- **`git diff`'s plain-file mode.** Given two operands, `--no-index` needs no
-  flag to trigger, so `git diff cosign.key .env` prints both files whole past
-  the `Read(...)` deny rules — describe such a file with `ls -l` or `wc -c`
-  instead.
-- **an unquoted leading `~`.** bash expands it to `$HOME`, not a directory
-  inside the checkout, so `git diff -- ~/.aws/credentials ~/.bashrc` resolved
-  both operands inside the working tree and printed both files out of the
-  home directory. A word of a git invocation beginning with an unquoted `~`
-  is refused rather than expanded; a tilde inside a word (`HEAD~1`) or a
-  quoted one is a literal and unaffected.
+- **`git diff`'s plain-file mode.** When one of two paths is outside the
+  checkout, git switches to `--no-index` without the flag, so
+  `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`
+  deny rules — describe such a file with `ls -l` or `wc -c` instead.
+- **an unquoted leading `~`.** bash expands it to `$HOME`, while the gate
+  reads it as a directory inside the checkout.
+  `git diff -- ~/.aws/credentials ~/.bashrc` looked local to the gate, and git
+  printed both files out of the home directory. A word of a git invocation
+  beginning with an unquoted `~` is refused rather than expanded; a tilde
+  inside a word (`HEAD~1`) or a quoted one is a literal and unaffected.
 - **shellcheck echoing the file it lints.** shellcheck prints the source line
   above every diagnostic, so pointing it at a secret-shaped path — directly,
   via `shellcheck - < FILE` stdin redirection, or via `--check-sourced`/`-a`
