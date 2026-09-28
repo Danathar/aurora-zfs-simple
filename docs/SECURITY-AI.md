@@ -221,6 +221,10 @@ the command name alone would have looked fine:
   via `shellcheck - < FILE` stdin redirection, or via `--check-sourced`/`-a`
   reporting on a file a linted script `source`s — prints that file back past
   the `Read(...)` deny rules.
+- **`bash -n` echoing the line it stops on.** `-n` stops bash running a
+  script, not reporting a syntax error in it, and the error quotes the line it
+  stands on, so `bash -n .env` prints a `NAME=value` line whose value holds a
+  `(` past the `Read(...)` deny rules.
 - **a redirection into a gated read.** `git log`/`show`/`diff --stdin < FILE`
   takes revisions from standard input and prints the first line that is not a
   revision back in its error, and `bash -n - < FILE` prints the offending
