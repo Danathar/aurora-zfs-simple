@@ -1236,13 +1236,17 @@ denied_read_shape() {
 #
 # The target is judged on both spellings, as an operand is: the word as typed
 # for the rewrites bash performs before shellcheck opens anything, and the
-# quote-stripped word for where the path lands.
+# quote-stripped word for where the path lands. An extglob pattern is one of
+# those rewrites: `shellcheck - < @(.env)` feeds shellcheck the .env the
+# pattern matches, and the split ends the command at the `(`, so the target is
+# the `@` before it and `$4` is its index (Codex on #282).
 redirection_reads_a_denied_path() {
-  local op="$1" word="$2" raw="$3"
+  local op="$1" word="$2" raw="$3" i="$4"
   [[ "${op}" == '<' ]] || return 1
   [[ "${word}" == '/dev/null' ]] && return 1
   brace_would_expand "${raw}" && return 0
   word_bash_would_rewrite "${raw}" && return 0
+  word_opens_extglob "${i}" && return 0
   path_inside_worktree "${word}" || return 0
   denied_read_shape "${word}"
 }
@@ -1516,6 +1520,7 @@ bash_options=0 # a gated bash is still reading option words, as bash itself does
 bash_optvals='' # one letter per -o/-O still waiting for its value, in order
 cmd_argv0=0   # an exec/env option before the name set bash's zeroth argument
 cmd_stack=()  # the outer command's state, while a `$(...)` is being read
+cmd_stack_subst=() # per cmd_stack entry: 1 opened by a substitution, 0 by an extglob pattern
 export_idx=-1 # the first word at which an export-family command arms a variable
 gate_idx=-1   # the last word at which a gated command or git is running
 reset_command
@@ -1585,11 +1590,23 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # a `(` separator; the command around it is saved there and restored at
     # the `)`, like a `$(...)`, so `>(cat >cosign.pub) df -T` still reaches
     # its name with the substitution remembered.
+    # An extglob pattern's `(` is saved the same way, since the pattern is
+    # one word of the command around it: `< @(.env) shellcheck -` is
+    # `shellcheck - < .env`, and without the save its read target was dropped
+    # at the `(` before the name was seen (Codex on #282). The command so far
+    # is still decided at the `(`, as before, so what its words already set
+    # outside the saved state (the podman profile) is not lost. The body runs
+    # nothing, so the resumed command is not marked as holding a substitution.
+    extglob_open=0
+    [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
+      word_opens_extglob $((idx - 1)) && extglob_open=1
+    ((extglob_open)) && check_gated_command
     # shellcheck disable=SC2016 # the literal `$(` is the separator's name
-    if [[ "${words[idx]}" == '$(' ]] ||
+    if [[ "${words[idx]}" == '$(' ]] || ((extglob_open)) ||
       { [[ "${words[idx]}" == '(' ]] && ((idx > 0)) && [[ "${kinds[idx - 1]}" != sep ]] &&
         [[ "${words[idx - 1]}" == '<(' || "${words[idx - 1]}" == '>(' ]]; }; then
       cmd_stack+=("${cmd_writes} ${cmd_reads} ${cmd_subst} ${cmd_heredoc} ${cmd_assign} ${cmd_bash} ${cmd_named} ${cmd_gated} ${cmd_git} ${cmd_export} ${cmd_export_idx} ${cmd_xargs} ${cmd_prefix}")
+      cmd_stack_subst+=($((1 - extglob_open)))
       reset_command
       continue
     fi
@@ -1599,7 +1616,8 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       unset 'cmd_stack[-1]'
       # The command that resumes here contains a substitution, whether or
       # not its name has been seen yet (`$(touch cosign.pub) df -T`).
-      ((cmd_subst)) || cmd_subst=1
+      ((cmd_stack_subst[-1])) && ((cmd_subst == 0)) && cmd_subst=1
+      unset 'cmd_stack_subst[-1]'
       continue
     fi
     check_gated_command
@@ -1614,7 +1632,7 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # which skips a redirection's target -- saw nothing (#212). Recorded for
     # the command rather than refused here, because the redirection may be
     # written before the name.
-    redirection_reads_a_denied_path "${redirects[idx]}" "${words[idx]}" "${raw_words[idx]}" && cmd_reads=1
+    redirection_reads_a_denied_path "${redirects[idx]}" "${words[idx]}" "${raw_words[idx]}" "${idx}" && cmd_reads=1
     # `df -T < <(printf x >cosign.pub)`: the substitution is a target, and
     # its body still runs (review on arch-bootc#322). So does one quoted
     # into the target of an input redirection or a here-string

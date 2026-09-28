@@ -1499,6 +1499,9 @@ if command -v shellcheck >/dev/null 2>&1; then
 fi
 # The descriptor, the attached operator, the prefix form bash allows before the
 # command name, and the four rewrites 8b and 8b'' cover, each on the target.
+# An extglob target is the fifth (Codex on #282): under `shopt -s extglob`
+# `< @(.env)` reads the .env the pattern matches, and the split ends the
+# command at its `(`, so the target this rule reads is the `@` before it.
 for fed in "shellcheck - < .env" \
     "shellcheck - <.env" \
     "shellcheck -s bash - <./cosign.key" \
@@ -1512,6 +1515,11 @@ for fed in "shellcheck - < .env" \
     "shellcheck - < .env*" \
     "shellcheck -x tests/run-tests.sh < ./.env" \
     "shellcheck - < './.env'" \
+    "shellcheck - < @(.env)" \
+    "shellcheck - <@(.env)" \
+    "shellcheck - 0< @(.env)" \
+    "shellcheck - < ''@(.env)" \
+    "< @(.env) shellcheck -" \
     "< .env shellcheck -" \
     "command -p shellcheck - < .env" \
     "git status; shellcheck - < .env"; do
@@ -1532,6 +1540,9 @@ for fedok in "shellcheck - < tests/run-tests.sh" \
     "shellcheck - <<< 'echo hi'" \
     "shellcheck - <&3" \
     "shellcheck - < 'tests/*.sh'" \
+    "shellcheck - < '@(x)'" \
+    "shellcheck - < \\@(x)" \
+    "gh pr list < @(.env)" \
     "cat .env | shellcheck -" \
     "gh pr list < .env" \
     "echo x < .env; shellcheck tests/run-tests.sh"; do
@@ -1613,6 +1624,8 @@ for fed in "git log --stdin <.env" \
     "git log --stdin < /etc/shadow" \
     "git log --stdin < ~/.netrc" \
     "git log --stdin < .en?" \
+    "git log --stdin < @(.env)" \
+    "<@(.env) git show --stdin" \
     "git log --stdin 3<.env <&3" \
     "timeout 5 git log --stdin <.env" \
     "cd /etc && git log --stdin <shadow" \
@@ -2154,6 +2167,19 @@ for plain in "bash -n tests/run-tests.sh" \
     run_pre "$(pre_payload_for "${plain}")"
     assert_eq "a syntax check, and a bash no allow rule covers, are left alone: ${plain}" \
         "0" "${PRE_STATUS}"
+done
+# The same pattern as the target of a bare `<` (Codex on #282): bash -n reads
+# its script from stdin, so `bash -n - < @(.env)` is `bash -n - < .env`,
+# written before the name or after it.
+for fed in "bash -n - < @(.env)" \
+    "bash -n < @(.env)" \
+    "bash -n - < ''@(.env)" \
+    "< @(.env) bash -n -"; do
+    run_pre "$(pre_payload_for "${fed}")"
+    assert_eq "an extglob on bash -n's stdin is refused: ${fed}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the read: ${fed}" \
+        "${PRE_ERR}" "bash -n prints the line a syntax error stands on"
 done
 
 # 9f'. what `bash -n` prints (issue #233). `-n` stops bash running a script,
