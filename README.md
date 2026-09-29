@@ -237,14 +237,14 @@ layer reuse and update resumability; it does not change the files installed in
 the image.
 
 The workflow pins Chunkah to an explicit stable release tag, for example
-`quay.io/coreos/chunkah:v0.6.0`, instead of the floating `latest` tag. A custom
+`quay.io/coreos/chunkah:v0.7.0`, instead of the floating `latest` tag. A custom
 manager in [`renovate.json`](renovate.json) matches that `CHUNKAH_IMAGE:` line
 and opens a PR when a newer stable `vX.Y.Z` is published.
 
 The pin is the semver tag only — there is no `@sha256:...` digest on it, and
 `renovate.json` explicitly disables digest and pin updates for
 `quay.io/coreos/chunkah`. So the guarantee here is "a named upstream release",
-not "these exact bytes": Chunkah could in principle re-push `v0.6.0`.
+not "these exact bytes": Chunkah could in principle re-push `v0.7.0`.
 
 Nothing downstream re-checks the result, either. `build_files/post-check.sh` and
 `bootc container lint` run *inside* the `Containerfile`, so they validate the
