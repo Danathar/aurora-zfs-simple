@@ -1871,6 +1871,49 @@ for heredoc in $'bash -n <<\'EOF\'\necho hi\nEOF' \
     assert_eq "a quoted here-document, or one on another command, is left alone: ${heredoc//$'\n'/ | }" \
         "0" "${PRE_STATUS}"
 done
+# gh evaluates its --jq filter with gojq, and gojq's `env` builtin is the
+# process environment, so `gh pr view 1 --json number --jq env` printed
+# GH_TOKEN and every other exported variable under the gh allow rows (checked
+# against gh 2.101.0: `env|length` and `env|has("GH_TOKEN")` came back from
+# pr view, run view and run list). Every pflag spelling of the filter, behind
+# a wrapper, and a filter bash rewrites into `env` before gh reads it.
+# shellcheck disable=SC2016 # the filters are handed to the hook, not run here
+for filtered in "gh pr view 1 --json number --jq env" \
+    "gh pr view 1 --json number --jq=env" \
+    "gh pr view 1 --json number -q env.GH_TOKEN" \
+    "gh pr list --json number -qenv" \
+    "gh pr list --json number -q=env" \
+    "gh pr view 1 -wq env" \
+    "gh run view 1 --json jobs -q '[env]'" \
+    "gh run list --json databaseId --jq 'env|to_entries[]|.key'" \
+    "gh pr view 1 --json number --jq 'e'nv" \
+    "gh pr view 1 --json number --jq {e,}nv" \
+    "gh pr view 1 --json number --jq e?v" \
+    "gh pr view 1 --json number --jq @(env)" \
+    "timeout 5 gh pr view 1 --json number --jq env" \
+    "git status; gh run list --json name --jq env"; do
+    run_pre "$(pre_payload_for "${filtered}")"
+    assert_eq "a gh --jq filter that reads the environment is refused: ${filtered}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the env builtin: ${filtered}" \
+        "${PRE_ERR}" "gives the filter the whole process environment"
+done
+# A filter that names fields, `.env` as a field of the fetched JSON, and the
+# word env anywhere outside a filter stay unprompted.
+# shellcheck disable=SC2016 # the filters are handed to the hook, not run here
+for ok in "gh pr view 1 --json number --jq .number" \
+    "gh pr view 1 --json title --jq .env" \
+    "gh pr view 1 --json number -q .number" \
+    "gh pr list --json title --jq '.[].title'" \
+    "gh run view 1 --json jobs --jq '.jobs[]|select(.conclusion==\"failure\")|.name'" \
+    "gh run list --branch env --limit 5" \
+    "gh pr list --search env" \
+    "gh run view 1 --log" \
+    "echo gh pr view 1 --jq env"; do
+    run_pre "$(pre_payload_for "${ok}")"
+    assert_eq "a gh filter that does not name env, or env outside a filter, is left alone: ${ok}" \
+        "0" "${PRE_STATUS}"
+done
 # podman's --cpu-profile/--memory-profile write the same way `git --output` and
 # a `>` redirection on a gated command do, but by an option: they are
 # persistent globals podman accepts after the subcommand `podman ps`/`images`/
@@ -2748,6 +2791,10 @@ corpus_row allow "5 option: --output-indicator-new is a marker" \
     "git diff --output-indicator-new=% HEAD"
 corpus_row allow "5 option: a git option that loads nothing" \
     "git --no-pager diff HEAD"
+corpus_row refuse "5 option: gh --jq env prints the environment" \
+    "gh pr view 1 --json number --jq env"
+corpus_row allow "5 option: gh --jq naming a field" \
+    "gh pr view 1 --json number --jq .number"
 # A `(...)` subshell's `cd` cannot reach the shell around it, so it must not
 # taint a command outside the subshell either -- the bug this pair pins:
 # `worktree_moved` used to latch for the rest of the string once a `cd`
@@ -3040,6 +3087,11 @@ mutation "holding a file on git's stdin to the same test" \
 mutation "refusing a login shell set up by exec -l or a dashed zeroth argument" \
     '((${argv0_words[idx]:-0})) && ((cmd_gated == 0)) && cmd_argv0=1' ':' \
     "exec -l bash -n tests/run-tests.sh"
+
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "refusing gojq's env builtin in a gh --jq filter" \
+    'jq_filter_reads_env "${gh_filter}" && refuse "${GH_JQ_ENV_MSG}"' ':' \
+    "gh pr view 1 --json number --jq env"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"
