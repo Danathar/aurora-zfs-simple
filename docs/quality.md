@@ -54,6 +54,11 @@ suite is not evidence for a change to any of them.
 `build_files/post-check.sh` is the exception: its `BASH_SOURCE`-guarded entry
 point lets the suite source and exercise its helpers.
 
+`bootc container lint` runs with `--fatal-warnings`, so a warning blocks the
+build as well as an error. Without the flag the lint exits 0 on warnings, and it
+reported four on every build (`nonempty-boot`, `nonempty-run-tmp`, `var-log`,
+`var-tmpfiles`) while every build stayed green.
+
 `post-check.sh` and `bootc container lint` are `RUN` steps, so they validate the
 image **before** the workflow hands it to Chunkah. The re-layered archive that
 comes back is loaded, tagged, pushed and signed with neither running again.
