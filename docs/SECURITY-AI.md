@@ -230,6 +230,13 @@ the command name alone would have looked fine:
   revision back in its error, and `bash -n - < FILE` prints the offending
   line the same way — both past the `Read(...)` deny rules for a file never
   named on the command line.
+- **a gh filter reading the environment.** gh evaluates `--jq` (`-q`) with
+  gojq, whose `env` builtin is the whole process environment, so
+  `gh pr view 1 --json number --jq env` prints `GH_TOKEN` and every other
+  exported variable under the allow-listed `gh pr`/`gh run` view and list
+  rows. A filter word `env` is refused wherever it stands in the filter, as is
+  a filter bash rewrites first (`{e,}nv` reaches gh as `env`); a filter that
+  names fields (`--jq .title`) is unaffected.
 - **`git --output=FILE`.** Writes the diff or log to the path it names
   instead of stdout, overwriting any file this uid can reach — `cosign.pub`,
   `.claude/settings.json`, this hook itself — with no deny rule in its way.

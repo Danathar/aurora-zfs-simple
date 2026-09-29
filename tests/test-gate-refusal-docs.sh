@@ -86,6 +86,9 @@ a redirection into a gated read.|GIT_STDIN_MSG|`git log`/`show`/`diff --stdin < 
 a redirection into a gated read.|GIT_STDIN_MSG|`git log`/`show`/`diff --stdin < FILE`|git show --stdin < .env
 a redirection into a gated read.|GIT_STDIN_MSG|`git log`/`show`/`diff --stdin < FILE`|git diff --stdin < .env
 a redirection into a gated read.|BASH_READ_MSG|`bash -n - < FILE`|bash -n - < .env
+a gh filter reading the environment.|GH_JQ_ENV_MSG|`gh pr view 1 --json number --jq env`|gh pr view 1 --json number --jq env
+a gh filter reading the environment.|GH_JQ_ENV_MSG|(`-q`)|gh run list -q env
+a gh filter reading the environment.|GH_JQ_ENV_MSG|`{e,}nv`|gh run view 1 --jq {e,}nv
 `git --output=FILE`.|OUT_MSG|`git --output=FILE`|git --output=cosign.pub diff HEAD
 `git --output=FILE`.|OUT_MSG|Writes the diff or log|git log --output=cosign.pub
 moving the directory operands resolve against.|MOVED_MSG|A `cd`/`pushd` before|cd /tmp && git diff -- .bashrc .profile
@@ -112,6 +115,7 @@ EOF
 # lead | needle in that bullet | command the page says the hook lets through
 ALLOWED="$(
     cat <<'EOF'
+a gh filter reading the environment.|(`--jq .title`) is unaffected|gh pr view 1 --json title --jq .title
 an unquoted leading `~`.|a tilde inside a word (`HEAD~1`)|git diff HEAD~1
 an unquoted leading `~`.|or a quoted one is a literal|git diff HEAD -- '~/.bashrc'
 an extglob pattern standing in for a path.|a quoted (`'@(x)'`)|shellcheck '@(x)'
