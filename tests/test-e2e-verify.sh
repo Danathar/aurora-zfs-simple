@@ -116,6 +116,11 @@ if [[ "${argv}" == *"/post-check.sh"* ]]; then
     exit "${STUB_POSTCHECK_STATUS:-0}"
 fi
 if [[ "${argv}" == *"bootc container lint"* ]]; then
+    # Like bootc: an image with only warnings lints clean (exit 0) unless the
+    # call asks for --fatal-warnings.
+    if [[ -n "${STUB_LINT_WARNINGS:-}" && " ${argv} " == *" --fatal-warnings "* ]]; then
+        exit 1
+    fi
     exit "${STUB_LINT_STATUS:-0}"
 fi
 if [[ "${argv}" == *"/usr/lib/modules"* ]]; then
@@ -237,6 +242,32 @@ assert_contains "and names the image it ran against" \
 # post-check.sh and this one, so the hint is the diagnosis.
 assert_contains "and points at the rechunk as the difference" \
     "${STDOUT}" "the rechunk changed the image"
+
+# --- a lint warning fails the run, as it fails the build -------------------
+
+# The Containerfile lints with --fatal-warnings because without it a warning
+# exits 0. This lint is the only one after the rechunk, so a warning the rechunk
+# leaves behind is exactly what it is here to catch.
+new_case lint_warning_only
+E2E_ENV=(STUB_LINT_WARNINGS=1)
+run_e2e
+assert_eq "an image whose lint finds only warnings exits 1" 1 "${STATUS}"
+assert_contains "and names the lint as the failed check" \
+    "${STDOUT}" "FAIL bootc container lint passes against the final image"
+
+# Same arguments as the Containerfile's lint, both ways: a flag added to one and
+# not the other means the image is held to a different standard after the
+# rechunk than before it.
+lint_args() {
+    sed -n 's/.*bootc container lint\(.*\)$/\1/p' <<<"$1" |
+        sed -E 's/;.*$//; s/[[:space:]]+/ /g; s/^ //; s/ $//' | head -1
+}
+containerfile_lint="$(lint_args "$(grep -E '^RUN .*bootc container lint' "${REPO_ROOT}/Containerfile")")"
+e2e_lint="$(lint_args "$(grep -E 'podman run .*bootc container lint' "${SCRIPT}")")"
+assert_contains "the Containerfile's lint has --fatal-warnings" \
+    " ${containerfile_lint} " " --fatal-warnings "
+assert_eq "the e2e lint passes the Containerfile's lint arguments" \
+    "${containerfile_lint}" "${e2e_lint}"
 
 # --- the checks are pointed at the image, mounting the script in ------------
 

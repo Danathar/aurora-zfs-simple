@@ -284,7 +284,9 @@ fi
 # them. post-check.sh looks at kernel and ZFS content; bootc container lint
 # checks filesystem invariants a re-layering could plausibly disturb. Running
 # only the first would report a fully passing rechunk that bootc would reject.
-if podman run --rm "${TARGET}" bootc container lint; then
+# --fatal-warnings as in the Containerfile: without it the lint exits 0 on
+# warnings, and a warning left behind by the rechunk would pass.
+if podman run --rm "${TARGET}" bootc container lint --fatal-warnings; then
     pass "bootc container lint passes against the final image"
 else
     fail "bootc container lint passes against the final image" \
