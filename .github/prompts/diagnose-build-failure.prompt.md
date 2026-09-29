@@ -75,8 +75,8 @@ window that matters — after a patch PR merges, before the floating tag rebuild
 Check which step failed and match it against
 [Other failure modes](../../AGENTS.md#other-failure-modes). The known ones:
 Chunkah exiting 126 with `Argument list too long`, `post-check.sh` rejecting the
-finished image, and the `Containerfile`'s Fedora guard firing because
-`aurora-dx:stable` moved release.
+finished image, `bootc container lint` failing on a warning, and the
+`Containerfile`'s Fedora guard firing because `aurora-dx:stable` moved release.
 
 ## 5. Report
 
