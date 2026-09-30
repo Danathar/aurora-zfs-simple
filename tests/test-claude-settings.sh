@@ -1884,6 +1884,7 @@ for filtered in "gh pr view 1 --json number --jq env" \
     "gh pr list --json number -qenv" \
     "gh pr list --json number -q=env" \
     "gh pr view 1 -wq env" \
+    "gh pr view 1 --json number -qenv.q" \
     "gh run view 1 --json jobs -q '[env]'" \
     "gh run list --json databaseId --jq 'env|to_entries[]|.key'" \
     "gh pr view 1 --json number --jq 'e'nv" \
@@ -1898,6 +1899,19 @@ for filtered in "gh pr view 1 --json number --jq env" \
     assert_contains "and the refusal names the env builtin: ${filtered}" \
         "${PRE_ERR}" "gives the filter the whole process environment"
 done
+# gojq's other door to the environment is `$ENV`. Nothing in the filter
+# check above names it: a quoted `$ENV` is refused only because the
+# substitution check reads a `$` in a gated word as a substitution even inside
+# single quotes, where bash leaves it alone. Pin that here, so a later change
+# that stops counting a quoted `$` cannot reopen the environment through gh.
+# shellcheck disable=SC2016 # the filters are handed to the hook, not run here
+for filtered in "gh pr view 1 --json number --jq '\$ENV'" \
+    "gh run view 1 --json jobs -q '\$ENV.GH_TOKEN'" \
+    "gh pr list --json number --jq \"\\\$ENV|keys\""; do
+    run_pre "$(pre_payload_for "${filtered}")"
+    assert_eq "a gh --jq filter that reads \$ENV is refused: ${filtered}" \
+        "2" "${PRE_STATUS}"
+done
 # A filter that names fields, `.env` as a field of the fetched JSON, and the
 # word env anywhere outside a filter stay unprompted.
 # shellcheck disable=SC2016 # the filters are handed to the hook, not run here
@@ -1907,6 +1921,9 @@ for ok in "gh pr view 1 --json number --jq .number" \
     "gh pr list --json title --jq '.[].title'" \
     "gh run view 1 --json jobs --jq '.jobs[]|select(.conclusion==\"failure\")|.name'" \
     "gh run list --branch env --limit 5" \
+    "gh run list --json name --jq .name --branch env" \
+    "gh run list --json name --jq '.[]|select(.name|startswith(\"environment\"))|.name'" \
+    "podman images -q localhost/env" \
     "gh pr list --search env" \
     "gh run view 1 --log" \
     "echo gh pr view 1 --jq env"; do
