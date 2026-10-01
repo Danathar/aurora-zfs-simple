@@ -146,6 +146,26 @@ else
     _fail ".claude/settings.json registers a PreToolUse hook for Bash"
 fi
 
+# The rows run in a scratch repository with two commits and a copy of .claude/,
+# not in this checkout. CI checks this repository out at depth 1, where HEAD~1
+# names no commit, so the gate reads `git diff HEAD~1 HEAD` as two plain-file
+# operands and refuses it -- correctly for that checkout, but it fails the
+# allow-diff-range row, whose verdict assumes the history an agent's working
+# clone has.
+project="$(mktemp -d)"
+cp -R "${REPO_ROOT}/.claude" "${project}/.claude"
+(
+    cd "${project}" || exit 1
+    git init -q . &&
+        git -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m first &&
+        git -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false commit -q --allow-empty -m second
+) </dev/null >/dev/null 2>&1
+if [[ "$(git -C "${project}" rev-list --count HEAD 2>/dev/null)" == 2 ]]; then
+    _pass "the scratch repository the rows run in has a HEAD~1"
+else
+    _fail "the scratch repository the rows run in has a HEAD~1"
+fi
+
 applied=0
 while IFS= read -r row; do
     id="$(jq -r '.id' <<<"${row}")"
@@ -163,7 +183,7 @@ while IFS= read -r row; do
     out_file="$(mktemp)"
     err_file="$(mktemp)"
     jq -cn --arg c "${command}" '{tool_name: "Bash", tool_input: {command: $c}}' |
-        (cd "${REPO_ROOT}" && CLAUDE_PROJECT_DIR="${REPO_ROOT}" bash -c "${hook}") \
+        (cd "${project}" && CLAUDE_PROJECT_DIR="${project}" bash -c "${hook}") \
             >"${out_file}" 2>"${err_file}"
     rc=$?
     stdout="$(cat "${out_file}")"
@@ -185,6 +205,7 @@ while IFS= read -r row; do
         _fail "row ${id}: ${verdict} ${command}" "the gate reached ${got}: ${why}"
     fi
 done < <(jq -c '.rows[]' "${CORPUS}")
+rm -rf "${project}"
 
 # If the allow list stopped covering `git diff`, every row would be skipped and
 # the verdict checks above would pass on nothing.
