@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Exercises the Chunkah custom manager against every checked-in pin (workflow,
-# e2e script, README) and the ignorePaths that could hide one, then the division
+# e2e script, README; the set is re-derived from the tracked files) and the
+# ignorePaths that could hide one, then the division
 # of labour between the two dependency bots: which of renovate.json and
 # .github/dependabot.yml owns each ecosystem.
 #
@@ -30,7 +31,7 @@ fi
 
 analysis=""
 if analysis=$(python3 - "${CONFIG}" "${REPO_ROOT}" <<'PY'
-import fnmatch
+import subprocess
 import json
 import pathlib
 import re
@@ -83,9 +84,60 @@ if ignore_paths is None:
     ignore_paths = ["**/tests/**"]
 
 
+def glob_regex(pattern):
+    # The subset of minimatch (dot: true) that an ignorePaths entry here uses:
+    # "**" as a whole segment spans any number of directories, "*" and "?" stay
+    # inside one segment, and every other character is literal. Anything this
+    # does not model raises, so a new entry cannot be misread as "not ignored".
+    if re.search(r"[\[\]{}()!+@\\]", pattern):
+        raise SystemExit(f"ignorePaths entry outside the modeled glob subset: {pattern!r}")
+    segments = pattern.split("/")
+    out = ""
+    for index, segment in enumerate(segments):
+        last = index == len(segments) - 1
+        if segment == "**":
+            out += ".*" if last else "(?:[^/]+/)*"
+            continue
+        out += "".join(
+            "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
+            for char in segment
+        )
+        if not last:
+            out += "/"
+    return re.compile(out + r"\Z")
+
+
+def entry_matches(pattern, relative_path):
+    # Renovate documents an ignorePaths entry as "a string or glob pattern".
+    # A path counts as ignored under either reading: as a glob matched against
+    # the whole repository-relative path, or as a plain string it contains.
+    return pattern in relative_path or bool(glob_regex(pattern).match(relative_path))
+
+
 def ignored(relative_path):
-    # fnmatch's * crosses "/", so a leading "/" lets **/tests/** match tests/.
-    return any(fnmatch.fnmatch("/" + relative_path, pattern) for pattern in ignore_paths)
+    return any(entry_matches(pattern, relative_path) for pattern in ignore_paths)
+
+
+# Known answers, so the matcher above cannot drift into calling everything
+# "not ignored". Each glob row is minimatch(path, pattern, {dot: true})'s own
+# answer; "e2e/" is the one row that only the plain-string reading matches.
+for pattern, path, expected in (
+    ("e2e/", "tests/e2e/run-e2e.sh", True),
+    ("**/*.md", "README.md", True),
+    (".github/**", ".github/workflows/build.yml", True),
+    ("*.md", "docs/x.md", False),
+    ("tests/*", "tests/e2e/run-e2e.sh", False),
+    ("**/tests/**", "tests/e2e/run-e2e.sh", True),
+    ("tests/e2e/**", "tests/e2e/run-e2e.sh", True),
+    ("tests/**", "tests/e2e/run-e2e.sh", True),
+    ("README.md", "README.md", True),
+    ("**/test/**", "tests/e2e/run-e2e.sh", False),
+    ("**/__tests__/**", "tests/e2e/run-e2e.sh", False),
+    ("**/tests/**", "README.md", False),
+    ("**/vendor/**", ".github/workflows/build.yml", False),
+):
+    if entry_matches(pattern, path) is not expected:
+        raise SystemExit(f"glob model disagrees with minimatch: {pattern!r} on {path!r}")
 
 file_patterns = []
 for raw_pattern in manager.get("managerFilePatterns", []):
@@ -124,6 +176,28 @@ for relative_path, expected_replacement in files:
         str(replacement_preserved_syntax).lower(),
         sep="\t",
     )
+
+# The three files above are a hand-typed list. Derive the real one: every
+# tracked file that names a versioned Chunkah image is a pin Renovate has to
+# move, and one missing from the list above is a pin nothing checks. This file
+# is exempt by name, because its replacement fixtures name v9.8.7.
+EXEMPT = "tests/test-renovate.sh"
+pin_reference = re.compile(r"quay\.io/coreos/chunkah:v\d+\.\d+\.\d+")
+tracked = subprocess.run(
+    ["git", "-C", str(repo_root), "ls-files", "-z"],
+    check=True,
+    capture_output=True,
+).stdout.decode().split("\0")
+pinning = sorted(
+    path
+    for path in tracked
+    if path
+    and (repo_root / path).is_file()
+    and pin_reference.search((repo_root / path).read_text(errors="ignore"))
+)
+print("@pin-files", ",".join(path for path in pinning if path != EXEMPT), sep="\t")
+print("@listed-files", ",".join(sorted(path for path, _ in files)), sep="\t")
+print("@exempt-still-pins", str(EXEMPT in pinning).lower(), sep="\t")
 PY
 ); then
     _pass "Chunkah manager can be evaluated"
@@ -133,8 +207,18 @@ else
     exit
 fi
 
-mapfile -t rows <<<"${analysis}"
+mapfile -t rows < <(grep -v '^@' <<<"${analysis}")
 assert_eq "all three Chunkah pin files were analyzed" "3" "${#rows[@]}"
+
+declare -A DERIVED=()
+while IFS=$'\t' read -r derived_key derived_value; do
+    DERIVED["${derived_key}"]="${derived_value}"
+done < <(grep '^@' <<<"${analysis}")
+
+assert_eq "every tracked file pinning a Chunkah version is one this test checks" \
+    "${DERIVED[@listed-files]}" "${DERIVED[@pin-files]}"
+assert_eq "the fixture exemption still applies to a file that names a version" \
+    "true" "${DERIVED[@exempt-still-pins]}"
 
 IFS=$'\t' read -r workflow_path workflow_eligible workflow_matches workflow_value workflow_replaced <<<"${rows[0]}"
 assert_eq "first result is the workflow pin" ".github/workflows/build.yml" "${workflow_path}"
