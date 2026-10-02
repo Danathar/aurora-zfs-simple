@@ -335,6 +335,25 @@ assert_eq "a size change fails" 1 "${STATUS}"
 assert_contains "reported as a payload change" \
     "${OUTPUT}" "RPM verification found payload changes for kmod-zfs"
 
+# The other payload columns, one case each. S and 5 are covered above; these
+# are the four a regression in the column window or the failure-letter class
+# would drop silently. Mode, device numbers, a symlink's target and file
+# capabilities all describe the shipped file itself, not metadata the image
+# assembly normalizes.
+for column in "M|.M.......|mode" "D|...D.....|device numbers" "L|....L....|link target" "P|........P|capabilities"; do
+    IFS='|' read -r letter flags what <<<"${column}"
+    new_case "payload-${letter}-changed"
+    stub_command rpm
+    exits rpm 1
+    canned rpm <<EOF
+${flags}    /usr/lib/modules/6.1.0-1.fc44.x86_64/extra/zfs/zfs.ko.xz
+EOF
+    run_helper verify_rpm_payload kmod-zfs
+    assert_eq "a changed ${what} (${letter}) fails" 1 "${STATUS}"
+    assert_contains "reported as a payload change (${letter})" \
+        "${OUTPUT}" "RPM verification found payload changes for kmod-zfs"
+done
+
 new_case payload-missing-file
 stub_command rpm
 exits rpm 1
@@ -445,6 +464,20 @@ canned rpm <<'EOF'
 EOF
 run_helper verify_rpm_payload kmod-zfs
 assert_eq "a short flag window fails rather than being read as flags" 1 "${STATUS}"
+
+new_case payload-long-flag-window
+# And neither is one with more than nine. A tenth column is what a future rpm
+# adding a test would print, and reading the first nine of it as though nothing
+# changed is the fail-open the parse check is there to stop.
+stub_command rpm
+exits rpm 1
+canned rpm <<'EOF'
+..........  /usr/lib/modules/6.1.0-1.fc44.x86_64/extra/zfs/zfs.ko.xz
+EOF
+run_helper verify_rpm_payload kmod-zfs
+assert_eq "a ten-column flag window fails rather than being read as nine" 1 "${STATUS}"
+assert_contains "and says it could not be parsed" \
+    "${OUTPUT}" "unrecognised rpm -V output for kmod-zfs"
 
 new_case payload-attribute-marker-still-parses
 # The real format: nine columns, then the attribute marker column rpm uses for
@@ -654,6 +687,22 @@ canned_field sig_key <<'EOF'
 EOF
 run_helper require_module_signed 6.1.0-1.fc44.x86_64 zfs "${CERT_CN}" "00${CERT_SERIAL}" ""
 assert_eq "case, separators and a leading pad byte are not a mismatch" 0 "${STATUS}"
+
+# canonical_key_id on its own, for the spellings the comparison above relies
+# on it to erase. openssl prints a subjectKeyIdentifier indented on a line of
+# its own, and a hex value may arrive with a 0x prefix; neither is part of the
+# key.
+new_case canonical-key-id-spellings
+for row in \
+    "7D:F8:7A|7DF87A" \
+    "    2C:25:06:15  |2C250615" \
+    "0x7df87a|7DF87A" \
+    "0X00ab|AB" \
+    "0000AB|AB"; do
+    IFS='|' read -r raw want <<<"${row}"
+    run_helper canonical_key_id "${raw}"
+    assert_eq "canonical_key_id '${raw}' is ${want}" "${want}" "${OUTPUT}"
+done
 
 new_case module-unsigned
 # `modinfo -F signer` prints nothing for a module with no signature.

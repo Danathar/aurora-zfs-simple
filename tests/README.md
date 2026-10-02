@@ -20,7 +20,7 @@ when present and skipped when not.
 | --------------------------- | ------------------------------------------------------------------------------------------ |
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
 | `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
-| `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database, and the package lists they demand against the ones `kernel-akmods.sh` and `zfs.sh` erase, install and versionlock |
+| `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database; `check_zfs_modules`, `check_module_signatures` and `check_initramfs`, with `require_file` and `require_glob` pointed at a scratch root and `depmod`, `modinfo`, `lsinitrd` and `openssl` stubbed, failure branch by failure branch; and the package lists they demand against the ones `kernel-akmods.sh` and `zfs.sh` erase, install and versionlock |
 | `test-containerfile.sh`     | the `Containerfile`'s build-stage wiring: the `--mount` destinations on each `RUN` against the absolute paths the `build_files/` scripts read, extracted from the scripts rather than restated, plus the order the four are invoked in and their place inside one `RUN` |
 | `test-shell-syntax.sh`      | `bash -n`, shebang and exec bit on every `*.sh`; `shellcheck -x` when installed; and that no tracked file is a shell script under some other name |
 | `test-coverage.sh`          | every shipped `*.sh` is declared covered by a named test or UNCOVERED with a reason        |
@@ -941,12 +941,14 @@ not the others fails here instead of shipping unlocked or unchecked.
 
 ## Not covered
 
-`check_zfs_modules`, `check_zfs_userspace` and `check_initramfs` read absolute
-paths under `/usr/lib` and require `zfs`/`zpool`/`zdb`/`zed` on `PATH`. On any
-host that is not the finished image they fail before reaching the logic worth
-checking — the `spl`/`zfs` vermagic comparison, the `modules-load.d` content
-match and the `lsinitrd` listing — so covering them needs an injectable root
-prefix in the script itself.
+`check_zfs_userspace` requires `zfs`/`zpool`/`zdb`/`zed` on `PATH` and greps
+`/usr/lib/modules-load.d/zfs.conf` directly rather than through `require_file`.
+The other file-reading stages — `check_zfs_modules`, `check_module_signatures`
+and `check_initramfs` — read only through `require_file` and `require_glob`, so
+`test-post-check-checks.sh` points those two helpers at a scratch root and runs
+them; this one has a read no wrapper reaches, so its `modules-load.d` content
+match and its unit-file list are still only exercised by a real build. Covering
+it needs an injectable root prefix in the script itself.
 
 `check_rpm_payloads` needs no such prefix — it is one call to
 `verify_rpm_payload`, and which package it names is the whole of it, so
@@ -1006,10 +1008,10 @@ untested. Their contract with the `Containerfile` is a different claim and is
 checked: `test-containerfile.sh` holds each mount destination against the
 absolute paths the script reads.
 
-The gaps above this list are not paths. `check_zfs_modules`,
-`check_zfs_userspace` and `check_initramfs` are functions inside a covered file,
-and the `uses:` steps of `build_push` are third-party actions with no path in
-this repository, so neither can be listed or joined that way.
+The gaps above this list are not paths. `check_zfs_userspace` is a function
+inside a covered file, and the `uses:` steps of `build_push` are third-party
+actions with no path in this repository, so neither can be listed or joined
+that way.
 
 ## The agent settings file
 

@@ -74,10 +74,13 @@ fi
 
 so sourcing it defines the helpers without running a check, and
 `test-post-check.sh` calls them directly with `rpm`, `ldd` and `find` stubbed.
-Two of the seven `check_*` stages are reached as well: `test-post-check-checks.sh`
-runs `check_kernel_tree` and `check_zfs_packages` against stubbed `rpm` and
-`find` output. The other five read paths or tools only the finished image has,
-and are still only exercised by a real build.
+Five of the seven `check_*` stages are reached as well: `test-post-check-checks.sh`
+runs `check_kernel_tree`, `check_zfs_packages`, `check_zfs_modules`,
+`check_module_signatures` and `check_initramfs` against stubbed `rpm`, `find`,
+`depmod`, `modinfo`, `lsinitrd` and `openssl`, with the files the last three
+read laid down under a scratch root. The other two read paths or tools only the
+finished image has, or are covered through their one call, and are otherwise
+only exercised by a real build.
 
 So: if you change `build_files/` or the `Containerfile`, a green suite is not
 evidence. Say in the PR how you verified it, or say that you did not. A green

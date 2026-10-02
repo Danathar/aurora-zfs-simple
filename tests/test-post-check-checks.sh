@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
-# Tests for the two check_* stages of build_files/post-check.sh that decide
-# purely from what rpm(1) and find(1) report: check_kernel_tree and
-# check_zfs_packages.
+# Tests for five of the seven check_* stages of build_files/post-check.sh:
+# check_kernel_tree and check_zfs_packages, which decide purely from what
+# rpm(1) and find(1) report, and check_zfs_modules, check_module_signatures and
+# check_initramfs, which read files only the finished image has through
+# require_file and require_glob.
 #
 # tests/test-post-check.sh drives the small require_*/verify_* helpers one call
 # at a time with a stub that ignores its arguments. The stages above them are a
@@ -12,14 +14,13 @@
 # every query identically cannot show any of that, so this file backs rpm with a
 # small text database instead and lets the real queries run against it.
 #
-# The remaining five stages are not reachable from here. check_zfs_modules,
-# check_zfs_userspace and check_initramfs read absolute paths under /usr/lib and
-# require zfs/zpool/zdb/zed on PATH, so on any host that is not the finished
-# image they fail before reaching the logic worth checking; check_rpm_payloads
-# is one call to verify_rpm_payload, already covered, and
-# check_module_signatures reads /etc/pki/akmods/certs/akmods-ublue.der, which
-# only the built image has -- its comparison lives in require_module_signed,
-# covered in tests/test-post-check.sh.
+# The three file-reading stages are reached by pointing require_file and
+# require_glob at a scratch root (see run_check and stage_case); the real
+# helpers still do the checking. The remaining two are not run here.
+# check_zfs_userspace greps /usr/lib/modules-load.d/zfs.conf directly rather
+# than through a helper, so no root can be put under it without changing the
+# script; check_rpm_payloads is one call to verify_rpm_payload, and
+# tests/test-post-check.sh covers it by asserting that call's argument.
 #
 # The last section is static: it reads the package names these two stages
 # demand and holds them against the lists kernel-akmods.sh and zfs.sh erase,
@@ -39,6 +40,8 @@ WORK_ROOT="$(mktemp -d)"
 trap 'rm -rf "${WORK_ROOT}"' EXIT
 
 case_dir=""
+STAGE_ROOT=""
+STAGE_KERNEL=""
 STATUS=0
 OUTPUT=""
 
@@ -47,6 +50,8 @@ new_case() {
     case_dir="${WORK_ROOT}/$1"
     mkdir -p "${case_dir}/bin"
     : >"${case_dir}/rpmdb"
+    STAGE_ROOT=""
+    STAGE_KERNEL=""
 }
 
 # find(1) is only ever called one way here -- list the kernel module
@@ -152,11 +157,24 @@ rpmdb() { cat >"${case_dir}/rpmdb"; }
 
 # Source post-check.sh and run one check_* stage. $0 is deliberately not the
 # script's path, so the entry-point guard keeps main() from running.
+#
+# When a case sets STAGE_ROOT (stage_case does), require_file and require_glob
+# are wrapped to look under that directory instead of /, and KERNEL is set to
+# STAGE_KERNEL as check_kernel_tree would have left it. The wrappers call the
+# real helpers with the prefixed path, so what is checked and what a failure
+# says are still post-check.sh's own; the stage under test builds the path.
 run_check() {
     OUTPUT="$(
-        PATH="${case_dir}/bin:${PATH}" bash -c '
+        PATH="${case_dir}/bin:${PATH}" STAGE_ROOT="${STAGE_ROOT}" STAGE_KERNEL="${STAGE_KERNEL}" bash -c '
             source "$1"
             shift
+            if [[ -n "${STAGE_ROOT}" ]]; then
+                eval "real_$(declare -f require_file)"
+                eval "real_$(declare -f require_glob)"
+                require_file() { real_require_file "${STAGE_ROOT}$1"; }
+                require_glob() { real_require_glob "$1" "${STAGE_ROOT}$2"; }
+                KERNEL="${STAGE_KERNEL}"
+            fi
             "$@"
         ' "${TEST_NAME}" "${SCRIPT}" "$@" 2>&1
     )"
@@ -485,6 +503,412 @@ run_check check_zfs_packages
 assert_eq "an image with no ZFS at all fails" 1 "${STATUS}"
 assert_contains "and fails on the first required package, not on the version count" \
     "${OUTPUT}" "required RPM is not installed: zfs"
+
+# ---------------------------------------------------------------------------
+# check_zfs_modules, check_module_signatures and check_initramfs
+# ---------------------------------------------------------------------------
+#
+# These three stages read files the finished image has and a host does not:
+# the module tree under /usr/lib/modules/KERNEL, its initramfs.img, and the
+# certificate at /etc/pki/akmods/certs/akmods-ublue.der. Every one of those
+# reads goes through require_file or require_glob, so run_check can point the
+# two helpers at a scratch root (stage_case below) and the real helpers still
+# do the checking -- only the leading directory changes. The commands the
+# stages call (depmod, modinfo, lsinitrd, openssl) are stubs on PATH.
+#
+# What these cases are for is each stage's failure branches. A real image build
+# runs every stage, but only on an image that passes, so a guard deleted from
+# one of them -- the vermagic comparison, the zfs.ko grep, the commonName read
+# -- still leaves the build green.
+
+# Values of the real certificate, as tests/test-post-check.sh records them.
+CERT_CN="ublue kernel"
+CERT_SERIAL="7DF87AF5DEE738D9FAC2F8A38219374BE0A180A7"
+CERT_SKID="2C:25:06:15:58:B5:02:0C:4B:0D:9C:A5:60:62:E0:0C:6C:DB:04:6A"
+MODULE_SIG_KEY="7D:F8:7A:F5:DE:E7:38:D9:FA:C2:F8:A3:82:19:37:4B:E0:A1:80:A7"
+OTHER_UBLUE_KEY="17:6E:3C:E6:72:DA:64:B6:F4:27:2F:73:92:F5:A4:6F:3C:CE:86:36"
+MODULE_DIR="usr/lib/modules/${KERNEL_DIR}/extra/zfs"
+CERT_PATH="etc/pki/akmods/certs/akmods-ublue.der"
+
+# modinfo is asked three things here: whether it can find a module at all
+# (`modinfo -k K spl`), and a module's vermagic, signer and sig_key fields.
+# Answers are per module and per field -- modinfo.<module>.<field>.out, and
+# modinfo.<module>.status for the plain lookup -- because a gate that checked
+# only one of spl and zfs is the case worth catching. A field no case
+# registered prints nothing, which is what modinfo does for a field a module
+# does not carry.
+stub_stage_modinfo() {
+    cat >"${case_dir}/bin/modinfo" <<'STUB'
+#!/usr/bin/env bash
+dir="$(dirname "$0")/.."
+field=""
+module=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    -k) shift 2 ;;
+    -F)
+        field=$2
+        shift 2
+        ;;
+    *)
+        module=$1
+        shift
+        ;;
+    esac
+done
+if [[ -z "${field}" ]]; then
+    [[ -f "${dir}/modinfo.${module}.status" ]] && exit "$(cat "${dir}/modinfo.${module}.status")"
+    exit 0
+fi
+[[ -f "${dir}/modinfo.${module}.${field}.out" ]] && cat "${dir}/modinfo.${module}.${field}.out"
+exit 0
+STUB
+    chmod +x "${case_dir}/bin/modinfo"
+}
+
+module_field() { printf '%s\n' "$3" >"${case_dir}/modinfo.$1.$2.out"; }
+module_lookup_fails() { printf '1\n' >"${case_dir}/modinfo.$1.status"; }
+
+# openssl is asked for the certificate's subject, serial and subjectKeyIdentifier,
+# each by its own option. Each answer is a file; an absent one makes that query
+# fail, which is how `-ext subjectKeyIdentifier` answers for a certificate
+# without the extension.
+stub_openssl() {
+    cat >"${case_dir}/bin/openssl" <<'STUB'
+#!/usr/bin/env bash
+dir="$(dirname "$0")/.."
+query=""
+for arg in "$@"; do
+    case "${arg}" in
+    -subject) query=subject ;;
+    -serial) query=serial ;;
+    subjectKeyIdentifier) query=skid ;;
+    esac
+done
+if [[ -f "${dir}/openssl.${query}.out" ]]; then
+    cat "${dir}/openssl.${query}.out"
+    exit 0
+fi
+printf 'openssl stub: no %s\n' "${query}" >&2
+exit 1
+STUB
+    chmod +x "${case_dir}/bin/openssl"
+}
+
+cert_answer() { cat >"${case_dir}/openssl.$1.out"; }
+
+# A fresh case whose stages read from a scratch root. Stubs are installed for
+# every command the three stages call; each case then lays down only the files
+# and answers it needs.
+stage_case() {
+    new_case "$1"
+    STAGE_ROOT="${case_dir}/root"
+    STAGE_KERNEL="${KERNEL_DIR}"
+    mkdir -p "${STAGE_ROOT}"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${case_dir}/bin/depmod"
+    chmod +x "${case_dir}/bin/depmod"
+    cat >"${case_dir}/bin/lsinitrd" <<'STUB'
+#!/usr/bin/env bash
+cat "$(dirname "$0")/../lsinitrd.out"
+STUB
+    chmod +x "${case_dir}/bin/lsinitrd"
+    : >"${case_dir}/lsinitrd.out"
+    stub_stage_modinfo
+    stub_openssl
+}
+
+# Lay a file down under the scratch root.
+root_file() {
+    mkdir -p "$(dirname "${STAGE_ROOT}/$1")"
+    : >"${STAGE_ROOT}/$1"
+}
+
+# Both modules on disk and built for the selected kernel.
+coherent_modules() {
+    root_file "${MODULE_DIR}/spl.ko.xz"
+    root_file "${MODULE_DIR}/zfs.ko.xz"
+    module_field spl vermagic "${KERNEL_DIR} SMP preempt mod_unload modversions"
+    module_field zfs vermagic "${KERNEL_DIR} SMP preempt mod_unload modversions"
+}
+
+# The certificate the image installs, answered as openssl prints it.
+installed_certificate() {
+    root_file "${CERT_PATH}"
+    cert_answer subject <<EOF
+subject=
+    organizationName          = Universal Blue
+    organizationalUnitName    = kernel signing
+    commonName                = ${CERT_CN}
+EOF
+    cert_answer serial <<EOF
+serial=${CERT_SERIAL}
+EOF
+    cert_answer skid <<EOF
+X509v3 Subject Key Identifier:
+    ${CERT_SKID}
+EOF
+}
+
+# spl and zfs both signed by that certificate's key, identified by serial.
+signed_modules() {
+    local module
+    for module in spl zfs; do
+        module_field "${module}" signer "${CERT_CN}"
+        module_field "${module}" sig_key "${MODULE_SIG_KEY}"
+    done
+}
+
+# --- check_zfs_modules ------------------------------------------------------
+
+stage_case zfs-modules-coherent
+coherent_modules
+run_check check_zfs_modules
+assert_eq "both modules present and built for the selected kernel passes" 0 "${STATUS}"
+assert_contains "the stage announces itself in the build log" \
+    "${OUTPUT}" "post-check: checking ZFS kernel modules"
+
+stage_case zfs-modules-compressed-either-way
+# The globs accept a module compressed or not, and the two need not agree.
+root_file "${MODULE_DIR}/spl.ko"
+root_file "${MODULE_DIR}/zfs.ko.zst"
+module_field spl vermagic "${KERNEL_DIR} SMP preempt mod_unload modversions"
+module_field zfs vermagic "${KERNEL_DIR} SMP preempt mod_unload modversions"
+run_check check_zfs_modules
+assert_eq "an uncompressed spl.ko beside a zstd zfs.ko passes" 0 "${STATUS}"
+
+stage_case zfs-modules-spl-missing
+root_file "${MODULE_DIR}/zfs.ko.xz"
+module_field spl vermagic "${KERNEL_DIR} SMP"
+module_field zfs vermagic "${KERNEL_DIR} SMP"
+run_check check_zfs_modules
+assert_eq "no spl.ko for the selected kernel fails" 1 "${STATUS}"
+assert_contains "the failure names the module and the kernel's path" \
+    "${OUTPUT}" "required spl kernel module not found matching: ${STAGE_ROOT}/${MODULE_DIR}/spl.ko*"
+
+stage_case zfs-modules-zfs-missing
+root_file "${MODULE_DIR}/spl.ko.xz"
+module_field spl vermagic "${KERNEL_DIR} SMP"
+module_field zfs vermagic "${KERNEL_DIR} SMP"
+run_check check_zfs_modules
+assert_eq "no zfs.ko for the selected kernel fails" 1 "${STATUS}"
+assert_contains "the failure names the module and the kernel's path" \
+    "${OUTPUT}" "required zfs kernel module not found matching: ${STAGE_ROOT}/${MODULE_DIR}/zfs.ko*"
+
+stage_case zfs-modules-under-another-kernel
+# Modules built and installed for the previous kernel: the files exist, just
+# not under the tree this image boots.
+root_file "usr/lib/modules/6.17.3-200.fc43.x86_64/extra/zfs/spl.ko.xz"
+root_file "usr/lib/modules/6.17.3-200.fc43.x86_64/extra/zfs/zfs.ko.xz"
+run_check check_zfs_modules
+assert_eq "modules under another kernel's tree fail" 1 "${STATUS}"
+assert_contains "and are reported as missing for this one" \
+    "${OUTPUT}" "required spl kernel module not found matching: ${STAGE_ROOT}/${MODULE_DIR}/spl.ko*"
+
+stage_case zfs-modules-modinfo-cannot-find-spl
+coherent_modules
+module_lookup_fails spl
+run_check check_zfs_modules
+assert_eq "a module modinfo cannot resolve after depmod fails" 1 "${STATUS}"
+assert_contains "the failure names the module and the kernel" \
+    "${OUTPUT}" "modinfo cannot find spl for ${KERNEL_DIR}"
+
+stage_case zfs-modules-modinfo-cannot-find-zfs
+coherent_modules
+module_lookup_fails zfs
+run_check check_zfs_modules
+assert_eq "the same for zfs" 1 "${STATUS}"
+assert_contains "the failure names zfs" \
+    "${OUTPUT}" "modinfo cannot find zfs for ${KERNEL_DIR}"
+
+stage_case zfs-modules-zfs-vermagic-skew
+# The file is where it should be and modinfo finds it, but it was built for the
+# previous kernel -- the case that passes every check above and then fails to
+# load at boot.
+coherent_modules
+module_field zfs vermagic "6.17.3-200.fc43.x86_64 SMP preempt mod_unload modversions"
+run_check check_zfs_modules
+assert_eq "a zfs.ko built for another kernel fails" 1 "${STATUS}"
+assert_contains "the failure quotes the vermagic and names the kernel" \
+    "${OUTPUT}" "zfs vermagic '6.17.3-200.fc43.x86_64 SMP preempt mod_unload modversions' does not match kernel ${KERNEL_DIR}"
+
+stage_case zfs-modules-spl-vermagic-skew
+coherent_modules
+module_field spl vermagic "6.17.3-200.fc43.x86_64 SMP preempt mod_unload modversions"
+run_check check_zfs_modules
+assert_eq "an spl.ko built for another kernel fails too" 1 "${STATUS}"
+assert_contains "the failure names spl" \
+    "${OUTPUT}" "spl vermagic '6.17.3-200.fc43.x86_64 SMP"
+
+stage_case zfs-modules-vermagic-longer-release
+# The release field has to equal the kernel, not merely start with it: a
+# +debug or -rt build of the same version is a different kernel to the loader.
+coherent_modules
+module_field zfs vermagic "${KERNEL_DIR}+debug SMP preempt mod_unload modversions"
+run_check check_zfs_modules
+assert_eq "a vermagic release that only starts with the kernel's fails" 1 "${STATUS}"
+assert_contains "and is reported as a mismatch" \
+    "${OUTPUT}" "zfs vermagic '${KERNEL_DIR}+debug"
+
+stage_case zfs-modules-vermagic-empty
+# A module with no vermagic field at all has not been shown to match anything.
+coherent_modules
+: >"${case_dir}/modinfo.zfs.vermagic.out"
+run_check check_zfs_modules
+assert_eq "a missing vermagic fails rather than passing" 1 "${STATUS}"
+assert_contains "and is reported as a mismatch" \
+    "${OUTPUT}" "zfs vermagic '' does not match kernel ${KERNEL_DIR}"
+
+# --- check_module_signatures ------------------------------------------------
+
+stage_case module-signatures-coherent
+installed_certificate
+signed_modules
+run_check check_module_signatures
+assert_eq "both modules signed by the installed certificate's key passes" 0 "${STATUS}"
+assert_contains "the certificate's name, serial and key id are logged" \
+    "${OUTPUT}" "post-check: akmods signing certificate: ${CERT_CN} (serial ${CERT_SERIAL}, subject key id ${CERT_SKID})"
+
+stage_case module-signatures-by-subject-key-id
+# A signature that names its signer by subjectKeyIdentifier rather than serial.
+# This passes only if the stage hands the SKID it read to the comparison, not
+# just the serial.
+installed_certificate
+for module in spl zfs; do
+    module_field "${module}" signer "${CERT_CN}"
+    module_field "${module}" sig_key "${CERT_SKID}"
+done
+run_check check_module_signatures
+assert_eq "modules identifying the key by subjectKeyIdentifier pass" 0 "${STATUS}"
+
+stage_case module-signatures-no-skid-extension
+# subjectKeyIdentifier is an optional extension. A certificate without one still
+# offers its serial, and is not an error.
+installed_certificate
+rm "${case_dir}/openssl.skid.out"
+signed_modules
+run_check check_module_signatures
+assert_eq "a certificate without a subjectKeyIdentifier passes on its serial" 0 "${STATUS}"
+assert_contains "and the log names the serial alone" \
+    "${OUTPUT}" "post-check: akmods signing certificate: ${CERT_CN} (serial ${CERT_SERIAL})"
+
+stage_case module-signatures-certificate-absent
+signed_modules
+cert_answer subject <<EOF
+subject=
+    commonName                = ${CERT_CN}
+EOF
+cert_answer serial <<<"serial=${CERT_SERIAL}"
+run_check check_module_signatures
+assert_eq "an image without the certificate fails" 1 "${STATUS}"
+assert_contains "the failure names the path users are told to enroll" \
+    "${OUTPUT}" "required file not found: ${STAGE_ROOT}/${CERT_PATH}"
+
+stage_case module-signatures-subject-unreadable
+installed_certificate
+rm "${case_dir}/openssl.subject.out"
+signed_modules
+run_check check_module_signatures
+assert_eq "a certificate openssl cannot read fails" 1 "${STATUS}"
+assert_contains "the failure says the subject could not be read" \
+    "${OUTPUT}" "could not read the subject of /${CERT_PATH}"
+
+stage_case module-signatures-no-common-name
+# Without a commonName there is no name to compare the modules' signer against.
+installed_certificate
+cert_answer subject <<'EOF'
+subject=
+    organizationName          = Universal Blue
+    organizationalUnitName    = kernel signing
+EOF
+signed_modules
+run_check check_module_signatures
+assert_eq "a certificate subject with no commonName fails" 1 "${STATUS}"
+assert_contains "the failure says so" \
+    "${OUTPUT}" "no commonName in the subject of /${CERT_PATH}"
+
+stage_case module-signatures-serial-unreadable
+installed_certificate
+rm "${case_dir}/openssl.serial.out"
+signed_modules
+run_check check_module_signatures
+assert_eq "a certificate whose serial cannot be read fails" 1 "${STATUS}"
+assert_contains "the failure says the serial could not be read" \
+    "${OUTPUT}" "could not read the serial number of /${CERT_PATH}"
+
+stage_case module-signatures-no-key-identifier
+# openssl answers, but with an empty serial and no subjectKeyIdentifier: the
+# certificate yields no key the modules could be tied to.
+installed_certificate
+cert_answer serial <<<"serial="
+rm "${case_dir}/openssl.skid.out"
+signed_modules
+run_check check_module_signatures
+assert_eq "a certificate yielding no key identifier fails" 1 "${STATUS}"
+assert_contains "and fails at the certificate, before any module is compared" \
+    "${OUTPUT}" "no key identifier could be read from /${CERT_PATH}"
+
+stage_case module-signatures-spl-other-key
+# zfs.ko signed by the installed key, spl.ko by a second key of the same
+# vendor. Both modules have to be checked: a Secure Boot host that cannot load
+# spl cannot load zfs either.
+installed_certificate
+signed_modules
+module_field spl sig_key "${OTHER_UBLUE_KEY}"
+run_check check_module_signatures
+assert_eq "spl signed by another key fails even when zfs is right" 1 "${STATUS}"
+assert_contains "the failure names spl and the key that signed it" \
+    "${OUTPUT}" "spl is signed by key 176E3CE672DA64B6F4272F7392F5A46F3CCE8636"
+
+stage_case module-signatures-zfs-other-key
+installed_certificate
+signed_modules
+module_field zfs sig_key "${OTHER_UBLUE_KEY}"
+run_check check_module_signatures
+assert_eq "zfs signed by another key fails" 1 "${STATUS}"
+assert_contains "the failure names zfs" \
+    "${OUTPUT}" "zfs is signed by key 176E3CE672DA64B6F4272F7392F5A46F3CCE8636"
+
+# --- check_initramfs --------------------------------------------------------
+
+stage_case initramfs-carries-both-modules
+root_file "usr/lib/modules/${KERNEL_DIR}/initramfs.img"
+cat >"${case_dir}/lsinitrd.out" <<EOF
+-rw-r--r--   1 root root  1830104 Jan  1 00:00 usr/lib/modules/${KERNEL_DIR}/extra/zfs/spl.ko.xz
+-rw-r--r--   1 root root  4002120 Jan  1 00:00 usr/lib/modules/${KERNEL_DIR}/extra/zfs/zfs.ko.xz
+EOF
+run_check check_initramfs
+assert_eq "an initramfs listing both modules passes" 0 "${STATUS}"
+assert_contains "the stage announces itself in the build log" \
+    "${OUTPUT}" "post-check: checking initramfs contents"
+
+stage_case initramfs-absent
+run_check check_initramfs
+assert_eq "no initramfs for the selected kernel fails" 1 "${STATUS}"
+assert_contains "the failure names the kernel's initramfs path" \
+    "${OUTPUT}" "required file not found: ${STAGE_ROOT}/usr/lib/modules/${KERNEL_DIR}/initramfs.img"
+
+stage_case initramfs-without-zfs
+# The case the stage exists for: RPMs and modules on disk, and a boot image that
+# cannot import a root pool.
+root_file "usr/lib/modules/${KERNEL_DIR}/initramfs.img"
+cat >"${case_dir}/lsinitrd.out" <<EOF
+-rw-r--r--   1 root root  1830104 Jan  1 00:00 usr/lib/modules/${KERNEL_DIR}/extra/zfs/spl.ko.xz
+-rw-r--r--   1 root root    20480 Jan  1 00:00 usr/lib/dracut/hooks/zfs-load-module.sh
+EOF
+run_check check_initramfs
+assert_eq "an initramfs without zfs.ko fails" 1 "${STATUS}"
+assert_contains "the failure names zfs.ko" \
+    "${OUTPUT}" "initramfs does not contain zfs.ko"
+
+stage_case initramfs-without-spl
+root_file "usr/lib/modules/${KERNEL_DIR}/initramfs.img"
+cat >"${case_dir}/lsinitrd.out" <<EOF
+-rw-r--r--   1 root root  4002120 Jan  1 00:00 usr/lib/modules/${KERNEL_DIR}/extra/zfs/zfs.ko.xz
+EOF
+run_check check_initramfs
+assert_eq "an initramfs without spl.ko fails" 1 "${STATUS}"
+assert_contains "the failure names spl.ko" \
+    "${OUTPUT}" "initramfs does not contain spl.ko"
 
 # --- the package sets these stages demand, against the build that installs them
 #
