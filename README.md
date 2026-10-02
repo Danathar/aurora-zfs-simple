@@ -338,6 +338,48 @@ later pull. What does that is
 `--enforce-container-sigpolicy`, which applies the check to the rebase and to
 every `bootc upgrade` after it.
 
+## Project Continuity & Trust
+
+Upstream Aurora is removing ZFS support starting with its Fedora 45 images
+([ublue-os/aurora#1765](https://github.com/ublue-os/aurora/issues/1765)), and
+this repository, along with its sibling
+[`zfs-kinoite-complex`](https://github.com/Danathar/zfs-kinoite-complex), is
+being pointed to from that upstream thread as a continuation path for ZFS
+users being displaced by that change. That means people arriving here may not
+already know or trust the maintainer, and are moving involuntarily because
+their previous setup is breaking. That's a reasonable thing to be cautious
+about, and a reasonable question was already raised publicly about it:
+[a prospective user asked](https://github.com/ublue-os/aurora/issues/1765#issuecomment-5515718757)
+why they should give a single individual control over what gets installed on
+their operating system, independent of whether the image is signed. This
+section is the answer to that question.
+
+**What signing does and does not prove.** [Signature
+verification](#signature-verification) proves the image you pulled was signed
+with this repository's private key. It does not prove which commit,
+`Containerfile`, or build run produced that image. If you want that stronger
+guarantee, build it yourself: this repository's
+[`Containerfile`](Containerfile) and
+[build workflow](.github/workflows/build.yml) are both plain, readable inputs
+with no hidden build step, and you can fork the repository and publish your
+own signed image from your own key, from the same source, at any time.
+
+**Maintenance model.** This is a single-maintainer project, assisted by AI
+agents as described below in [Maintained with Hive
+(ACMM L5)](#maintained-with-hive-acmm-l5); every change an agent proposes is
+held for human review before it merges. There is currently no co-maintainer
+and no succession plan if the maintainer becomes unavailable. If that matters
+to your use case, the lowest-risk path is to fork this repository now, while
+it is small and easy to read, rather than depend on it staying maintained
+indefinitely.
+
+**If this repository stops being updated**, the published `:latest` image
+does not stop working; it stops receiving new kernel/ZFS compatibility fixes
+(see [If The Kernel Moves Ahead Of
+Aurora](#if-the-kernel-moves-ahead-of-aurora)). Watch the **last good build**
+badge at the top of this file — if it stops advancing, treat that as the
+signal to switch back to upstream Aurora or to a fork you control.
+
 ## About this project
 
 > [!NOTE]
