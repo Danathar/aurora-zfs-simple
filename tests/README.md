@@ -369,22 +369,30 @@ executing:
   as an out-of-disk part-way through the rechunk.
 
 For the rechunk itself the assertions are about the sequence and the argv, since
-that is where its two recorded fixes live. `podman inspect --format
+that is where its three recorded fixes live. `podman inspect --format
 '{{json .Config}}'` is deliberate: the full inspect grows with the base image's
 layer count, and at 256 layers it crossed `MAX_ARG_STRLEN` and exec failed with
 `E2BIG`, so the stub honours the format string and the exported
 `CHUNKAH_CONFIG_STR` is checked to carry no per-layer content. The
-buffer-to-archive, `podman image prune -af`, `TMPDIR=/mnt/tmp podman load`
-ordering is what keeps two unpacked copies of the image off one disk, so the
-calls are asserted in order rather than as a set — and a failing chunkah run is
-asserted to reach neither the prune nor the load, because the prune deletes the
-source image the job would otherwise still have. A failing `podman inspect` is
-covered for the same reason: it is what the separate `export
-CHUNKAH_CONFIG_STR` line buys, since folding it into the assignment would return
-`export`'s status and rechunk with an empty config. The closing
-`for tag in ${TAGS}` is unquoted on purpose — the metadata step sets
-`sep-tags: " "` — so the tag loop is driven with a three-tag list and the
-resulting `podman tag` calls are counted.
+`--label "ostree.linux=..."` is deliberate too: that `.Config` is inherited from
+`aurora-dx`, whose kernel `kernel-akmods.sh` erases, so the inherited label
+named Aurora's kernel rather than the one this image ships
+([#310](https://github.com/Danathar/aurora-zfs-simple/issues/310)). The step
+asks the built image for its `kernel-core` with `podman run --entrypoint rpm`,
+so the stub answers that query from a file, and the chunkah argv is asserted to
+carry the answer as the label. The query failing, or answering with two
+kernels, is asserted to end the step before chunkah runs, since either would
+publish a label as wrong as the inherited one. The buffer-to-archive, `podman
+image prune -af`, `TMPDIR=/mnt/tmp podman load` ordering is what keeps two
+unpacked copies of the image off one disk, so the calls are asserted in order
+rather than as a set — and a failing chunkah run is asserted to reach neither
+the prune nor the load, because the prune deletes the source image the job
+would otherwise still have. A failing `podman inspect` is covered for the same
+reason: it is what the separate `export CHUNKAH_CONFIG_STR` line buys, since
+folding it into the assignment would return `export`'s status and rechunk with
+an empty config. The closing `for tag in ${TAGS}` is unquoted on purpose — the
+metadata step sets `sep-tags: " "` — so the tag loop is driven with a three-tag
+list and the resulting `podman tag` calls are counted.
 
 ## The AI fix workflow
 

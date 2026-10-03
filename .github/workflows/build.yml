@@ -203,6 +203,22 @@ jobs:
           export CHUNKAH_CONFIG_STR
           CHUNKAH_CONFIG_STR="$(podman inspect --format '{{json .Config}}' "${source_image}")"
 
+          # kernel-akmods.sh erases Aurora's kernel and installs the one from
+          # the akmods image, but the `.Config` above is inherited from
+          # aurora-dx, so its `ostree.linux` label names Aurora's kernel.
+          # Whenever the akmods stream is ahead of Aurora stable (the normal
+          # state, see AGENTS.md) that label is wrong for this image. Read
+          # the kernel actually installed in the built image and label it
+          # with that. The query is pinned to kernel-core rather than the
+          # upstream akmods tag, which can move between the build and now.
+          shipped_kernel="$(podman run --rm --entrypoint rpm "${source_image}" \
+            -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)"
+          if [ -z "${shipped_kernel}" ] || [ "$(printf '%s\n' "${shipped_kernel}" | wc -l)" -ne 1 ]; then
+            echo "expected exactly one kernel-core in ${source_image}, got: '${shipped_kernel}'" >&2
+            exit 1
+          fi
+          echo "==> Shipped kernel: ${shipped_kernel}"
+
           echo "==> Disk usage before rechunk" && df -h / /mnt
 
           podman run --rm \
@@ -215,6 +231,7 @@ jobs:
               --prune /sysroot/ \
               --label ostree.commit- \
               --label ostree.final-diffid- \
+              --label "ostree.linux=${shipped_kernel}" \
               --tag "${chunked_image}" > "${archive}"
 
           # The archive is self-contained, so nothing left in container

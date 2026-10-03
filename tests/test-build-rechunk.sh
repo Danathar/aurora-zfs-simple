@@ -35,10 +35,15 @@
 #      `containers/containers` instead, podman keeps using /, and the step still
 #      exits 0. The failure surfaces much later as an out-of-disk mid-rechunk.
 #
-#   3. `Rechunk Image with Chunkah` carries two fixes its own comments record.
+#   3. `Rechunk Image with Chunkah` carries three fixes its own comments record.
 #      `podman inspect --format '{{json .Config}}'` is deliberate: the full
 #      inspect grows with the base image's layer count, and at 256 layers it
-#      crossed MAX_ARG_STRLEN and exec failed with E2BIG. And the
+#      crossed MAX_ARG_STRLEN and exec failed with E2BIG. The
+#      `--label "ostree.linux=..."` is deliberate too: that `.Config` is
+#      inherited from aurora-dx, whose kernel kernel-akmods.sh erases, so the
+#      inherited label names a kernel this image does not ship whenever the
+#      akmods stream is ahead (#310). The step reads `kernel-core` out of the
+#      built image and overrides the label with that. And the
 #      buffer-to-archive / `podman image prune -af` / `TMPDIR=/mnt/tmp podman
 #      load` sequence is what keeps two unpacked copies of the image off one
 #      disk. The ordering is a safety property, not a style: the prune deletes
@@ -469,8 +474,12 @@ trap 'rm -rf "${TMP_ROOT}" "${ARCHIVE}"' EXIT
 #
 # Records every argv into <dir>/calls, one line per call, so the order the
 # archive/prune/load band runs in can be asserted. `inspect` prints a config
-# document; `run` writes the fake archive to stdout, which the step redirects to
-# a file; `load` records the TMPDIR it was given and the archive's content.
+# document; `run --entrypoint rpm` answers the kernel-core query with whatever
+# <dir>/kernel-query holds (one kernel by default); any other `run` is the
+# chunkah container and writes the fake archive to stdout, which the step
+# redirects to a file; `load` records the TMPDIR it was given and the archive's
+# content.
+SHIPPED_KERNEL="7.2.5-200.fc44.x86_64"
 make_podman() {
     local dir=$1
     mkdir -p "${dir}/bin"
@@ -478,6 +487,7 @@ make_podman() {
     : >"${dir}/run-config"
     : >"${dir}/load-tmpdir"
     : >"${dir}/load-payload"
+    [[ -e "${dir}/kernel-query" ]] || printf '%s\n' "${SHIPPED_KERNEL}" >"${dir}/kernel-query"
 
     cat >"${dir}/bin/podman" <<PY
 #!/usr/bin/env bash
@@ -501,6 +511,16 @@ inspect)
     esac
     ;;
 run)
+    case " \$* " in
+    *" --entrypoint rpm "*)
+        if [ -e "\${dir}/kernel-query-fails" ]; then
+            echo "package kernel-core is not installed" >&2
+            exit 1
+        fi
+        cat "\${dir}/kernel-query"
+        exit 0
+        ;;
+    esac
     printf '%s' "\${CHUNKAH_CONFIG_STR-}" >"\${dir}/run-config"
     if [ -e "\${dir}/run-fails" ]; then
         echo "Error: chunkah exited 1" >&2
@@ -534,6 +554,7 @@ run_rechunk() {
     make_df "${dir}"
     [[ -e "${dir}/fail-run" ]] && : >"${dir}/run-fails"
     [[ -e "${dir}/fail-inspect" ]] && : >"${dir}/inspect-fails"
+    [[ -e "${dir}/fail-kernel-query" ]] && : >"${dir}/kernel-query-fails"
 
     PATH="${dir}/bin:${PATH}" \
         IMAGE_NAME="${IMAGE_NAME}" \
@@ -576,7 +597,19 @@ assert_contains "the config document is exported to the chunkah container" \
 assert_not_contains "the exported config carries no per-layer content" \
     "${config_seen}" "RootFS"
 
-run_call="$(grep -m1 '^run ' "${ok_dir}/calls")"
+# The kernel is read from the built image itself, not from the upstream akmods
+# tag: that tag floats and can move between the build and this step.
+kernel_call="$(grep -m1 '^run .*--entrypoint rpm' "${ok_dir}/calls")"
+assert_contains "it asks the built image which kernel-core it installed" \
+    "${kernel_call}" "--entrypoint rpm localhost/${IMAGE_NAME}:${DEFAULT_TAG}"
+assert_contains "the kernel query is formatted as the ostree.linux value, not an NVR" \
+    "${kernel_call}" "--qf %{VERSION}-%{RELEASE}.%{ARCH}"
+assert_contains "the kernel query names kernel-core" \
+    "${kernel_call}" " kernel-core"
+assert_contains "it reports the kernel it found" \
+    "$(cat "${ok_dir}/out")" "Shipped kernel: ${SHIPPED_KERNEL}"
+
+run_call="$(grep -m1 "^run .*${CHUNKAH_IMAGE}" "${ok_dir}/calls")"
 assert_contains "it mounts the built image into the chunkah container" \
     "${run_call}" "--mount=type=image,src=localhost/${IMAGE_NAME}:${DEFAULT_TAG},target=/chunkah"
 assert_contains "it passes the config through the environment, not the argv" \
@@ -591,6 +624,11 @@ assert_contains "it drops the inherited ostree.commit label" \
     "${run_call}" "--label ostree.commit-"
 assert_contains "it drops the inherited ostree.final-diffid label" \
     "${run_call}" "--label ostree.final-diffid-"
+# The inherited ostree.linux is Aurora's kernel, which kernel-akmods.sh erased.
+# `--label KEY=VALUE` overrides the config's value in chunkah; the value has to
+# be the one the query returned, with no trailing newline folded in.
+assert_contains "it labels the image with the kernel it ships" \
+    "${run_call}" "--label ostree.linux=${SHIPPED_KERNEL} "
 assert_contains "it asks chunkah for a compressed archive" \
     "${run_call}" "--compressed"
 assert_contains "it tags the chunked result locally" \
@@ -601,12 +639,14 @@ assert_contains "it tags the chunked result locally" \
 # filesystem alive at once, which is what exhausted / intermittently.
 assert_contains "the first call reads the source image's config" \
     "$(nth_call "${ok_dir}" 1)" "inspect"
-assert_contains "the second call is the chunkah run that writes the archive" \
-    "$(nth_call "${ok_dir}" 2)" "run"
-assert_eq "the third call empties container storage, tagged images included" \
-    "image prune -af" "$(nth_call "${ok_dir}" 3)"
-assert_contains "the fourth call loads the buffered archive back" \
-    "$(nth_call "${ok_dir}" 4)" "load -i /tmp/chunkah-oci.tar"
+assert_contains "the second call reads the shipped kernel out of the built image" \
+    "$(nth_call "${ok_dir}" 2)" "run --rm --entrypoint rpm"
+assert_contains "the third call is the chunkah run that writes the archive" \
+    "$(nth_call "${ok_dir}" 3)" "run --rm --mount=type=image"
+assert_eq "the fourth call empties container storage, tagged images included" \
+    "image prune -af" "$(nth_call "${ok_dir}" 4)"
+assert_contains "the fifth call loads the buffered archive back" \
+    "$(nth_call "${ok_dir}" 5)" "load -i /tmp/chunkah-oci.tar"
 
 # podman unpacks the archive into TMPDIR before applying it. Left on /var/tmp
 # that lands on the same disk the prune just freed, which is the disk the load's
@@ -678,6 +718,42 @@ else
 fi
 assert_not_contains "a failed inspect never starts the chunkah container" \
     "$(calls_of "${inspect_fail_dir}/calls")" "--mount=type=image"
+rm -f "${ARCHIVE}"
+
+# C4. the kernel query has to answer with exactly one kernel.
+#
+# A failed `rpm -q` would otherwise set `ostree.linux=` to nothing, and two
+# installed kernels would fold into one label with a newline in it. Either way
+# the image would publish a label as wrong as the inherited one, just
+# differently — so both end the step before chunkah runs.
+query_fail_dir="$(mktemp -d "${TMP_ROOT}/rechunk-kernel-fail.XXXXXX")"
+: >"${query_fail_dir}/fail-kernel-query"
+run_rechunk "${query_fail_dir}" "${TAG_LIST}"
+
+if [[ "$(cat "${query_fail_dir}/status")" != "0" ]]; then
+    _pass "a failed kernel query fails the step instead of labelling the image with nothing"
+else
+    _fail "a failed kernel query fails the step instead of labelling the image with nothing" \
+        "the step exited 0 after rpm -q kernel-core failed"
+fi
+assert_not_contains "a failed kernel query never starts the chunkah container" \
+    "$(calls_of "${query_fail_dir}/calls")" "--mount=type=image"
+rm -f "${ARCHIVE}"
+
+two_kernels_dir="$(mktemp -d "${TMP_ROOT}/rechunk-two-kernels.XXXXXX")"
+printf '%s\n%s\n' "7.1.10-200.fc44.x86_64" "${SHIPPED_KERNEL}" >"${two_kernels_dir}/kernel-query"
+run_rechunk "${two_kernels_dir}" "${TAG_LIST}"
+
+if [[ "$(cat "${two_kernels_dir}/status")" != "0" ]]; then
+    _pass "two installed kernels fail the step instead of becoming one label"
+else
+    _fail "two installed kernels fail the step instead of becoming one label" \
+        "the step exited 0 with two kernel-core packages in the image"
+fi
+assert_contains "the two-kernel refusal says what it saw" \
+    "$(cat "${two_kernels_dir}/err")" "expected exactly one kernel-core"
+assert_not_contains "two installed kernels never start the chunkah container" \
+    "$(calls_of "${two_kernels_dir}/calls")" "--mount=type=image"
 rm -f "${ARCHIVE}"
 
 finish
