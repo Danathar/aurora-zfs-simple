@@ -48,6 +48,8 @@ REPO_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
 
 # shellcheck source=tests/lib/assert.sh
 source "${TEST_DIR}/lib/assert.sh"
+# shellcheck source=tests/lib/docs.sh
+source "${TEST_DIR}/lib/docs.sh"
 
 QUALITY_DOC="${REPO_ROOT}/docs/quality.md"
 METRICS_DOC="${REPO_ROOT}/docs/metrics.md"
@@ -83,31 +85,6 @@ fi
 
 # --- extraction helpers -----------------------------------------------------
 
-# The body of one `##` section, verbatim, fences included. Scoping to a section
-# rather than counting tables from the top of the file keeps each expectation
-# anchored to what the document says where.
-doc_section() {
-    local file=$1 heading=$2
-    awk -v heading="${heading}" '
-        $0 == heading { in_section = 1; next }
-        /^## /        { in_section = 0 }
-        in_section
-    ' "${file}"
-}
-
-# The data rows of the first Markdown table in a chunk of text: leading `|`,
-# minus the header row and minus the `|---|` separator.
-table_rows() {
-    awk '
-        /^\|/ {
-            if ($0 ~ /^\|[[:space:]:|-]+\|[[:space:]:|-]*$/) { seen_rule = 1; next }
-            if (seen_rule) { print }
-            next
-        }
-        seen_rule && NF == 0 { seen_rule = 0 }
-    '
-}
-
 # One cell of a `| a | b | c |` row, 1-indexed, trimmed, verbatim. `raw_cell` is
 # what the code-span reader needs; `cell` strips the Markdown emphasis and
 # code-span markers that carry no meaning when the cell is read as a name.
@@ -135,56 +112,6 @@ code_spans() {
     # substitution, so they stay literal.
     # shellcheck disable=SC2016
     grep -oE '`[^`]+`' <<<"$1" | tr -d '`'
-}
-
-# The bodies of the fenced blocks with a given info string, concatenated with a
-# blank line between them so each stays a separate compound command.
-fenced_blocks() {
-    local file=$1 lang=$2
-    awk -v lang="${lang}" '
-        /^(```|~~~)/ {
-            if (in_block) { in_block = 0; if (emit) print ""; emit = 0; next }
-            info = $0
-            sub(/^(```|~~~)/, "", info)
-            gsub(/[[:space:]]/, "", info)
-            in_block = 1
-            emit = (info == lang)
-            next
-        }
-        emit
-    ' "${file}"
-}
-
-# A claim this file goes on to verify has to still be in the document. Without
-# this every join below degrades to a check on the tree alone the moment the
-# sentence it came from is deleted.
-require_claim() {
-    local file=$1 description=$2 needle=$3 flattened
-    # Prose wraps, so the sentence being looked for is matched against the
-    # document with its line breaks collapsed. A claim that has to be searched
-    # for at one particular wrap point is a claim a reflow can silently delete.
-    flattened="$(tr '\n' ' ' <"${file}" | tr -s '[:space:]' ' ')"
-    if [[ "${flattened}" == *"${needle}"* ]]; then
-        _pass "${file#"${REPO_ROOT}"/} still claims ${description}"
-        return 0
-    fi
-    _fail "${file#"${REPO_ROOT}"/} still claims ${description}" \
-        "the sentence this test verifies is gone: ${needle}" \
-        "either restore it or drop the assertions that depend on it"
-    return 1
-}
-
-# An extraction that matched nothing is not a passing check, it is an unverified
-# document.
-require_nonempty() {
-    local description=$1 content=$2
-    if [[ -n "${content//[[:space:]]/}" ]]; then
-        _pass "the document still has ${description}"
-        return 0
-    fi
-    _fail "the document still has ${description}" \
-        "nothing was extracted, so the checks over it verify nothing"
-    return 1
 }
 
 # The line number of a workflow step, by display name. Steps are the unit the
@@ -611,30 +538,11 @@ repo_slug="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/workf
     head -1 | cut -d/ -f2,3)"
 require_nonempty "this repository's slug in README.md's build badge" "${repo_slug}"
 
-# Prints each command line in $1 (continuations already joined) that runs a `gh`
-# call without naming this repository. A line may hold a `$(gh ...)` inside a
-# loop, so calls are counted rather than lines matched. Every subcommand counts,
-# not a list of the ones in use today: `gh api` has to name the repository in
-# its path, and anything else -- `pr`, `run`, or a later `gh workflow list` --
-# has to carry `--repo` or `-R`.
-unscoped_gh_calls() {
-    local line calls named api_calls api_named
-    while IFS= read -r line; do
-        calls="$(grep -oE '(^|[^[:alnum:]_./-])gh [a-z]+' <<<"${line}" | grep -vc ' api$')"
-        named="$(grep -oE -- "(--repo|-R) ${repo_slug}( |$)" <<<"${line}" | wc -l)"
-        api_calls="$(grep -oE '(^|[^[:alnum:]_./-])gh api ' <<<"${line}" | wc -l)"
-        api_named="$(grep -oE "gh api \"?repos/${repo_slug}/" <<<"${line}" | wc -l)"
-        if [[ "${calls}" -ne "${named}" || "${api_calls}" -ne "${api_named}" ]]; then
-            printf '%s\n' "${line}"
-        fi
-    done <<<"$1"
-}
-
 # metrics.md's commands are the ones a reader runs for current values, so they
 # are held to the same rule as the snapshots' (Codex review on #248: a clone
 # made with `gh repo clone` defaults `gh` to the parent repository).
 assert_eq "every gh call in docs/metrics.md names ${repo_slug}" \
-    "" "$(unscoped_gh_calls "${joined_blocks}")"
+    "" "$(unscoped_gh_calls "${joined_blocks}" "${repo_slug}")"
 
 snapshots=()
 while IFS= read -r snapshot; do
@@ -698,7 +606,7 @@ for snapshot in "${snapshots[@]}"; do
             unpinned+="${line}"$'\n'
         fi
     done <<<"${snapshot_joined}"
-    assert_eq "every gh call in ${rel} names ${repo_slug}" "" "$(unscoped_gh_calls "${snapshot_joined}")"
+    assert_eq "every gh call in ${rel} names ${repo_slug}" "" "$(unscoped_gh_calls "${snapshot_joined}" "${repo_slug}")"
     assert_eq "every run and pull request listing in ${rel} is pinned to a fixed scope" \
         "" "${unpinned%$'\n'}"
     # Two tables over different ranges of pull requests would not add up.

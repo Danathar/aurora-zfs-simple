@@ -13,6 +13,10 @@ Readings of these numbers, each dated and left as it was read, are in
 [`docs/metrics/`](metrics/2026-09-24.md). The first,
 [2026-09-24](metrics/2026-09-24.md), covers the whole history up to PR #246.
 
+[`docs/strategy.md`](strategy.md) reads the same data against the project's goal:
+whether builds are healthy, what is waiting on a person and what has merged
+since a date.
+
 Every command below names `Danathar/aurora-zfs-simple`. This repository is a
 fork, and `gh repo clone` of a fork adds an `upstream` remote and makes the
 parent, `renner0e/aurora-zfs-example`, the default for `gh`. Without `--repo`,
