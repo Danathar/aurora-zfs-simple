@@ -11,13 +11,22 @@ radius**: who or what is damaged if the change is wrong, and how it is noticed.
 
 | Tier                       | Blast radius                                                                     | Paths                                                                                                        | Merge on green CI alone?                                     |
 | -------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| **3 — Published artifact** | A wrong change ships signed bytes, a host that will not boot, or an agent that can reach past the deny list | `Containerfile`, `build_files/**`, the push/verify/sign steps of `.github/workflows/build.yml`, `cosign.pub`, `.claude/settings.json`, `.claude/hooks/**`, `.github/rulesets/**`, `.github/policies/**` | **No.** Needs a human and stated evidence.                   |
+| **3 — Published artifact** | A wrong change ships signed bytes, a host that will not boot, or an agent that can reach past the deny list | `Containerfile`, `build_files/**`, the push/verify/sign steps of `.github/workflows/build.yml`, `cosign.pub`, `.claude/settings.json`, `.claude/hooks/**`, `.claude/risk-config.json`, `.github/rulesets/**`, `.github/policies/**` | **No.** Needs a human and stated evidence.                   |
 | **2 — Pipeline**           | A wrong change breaks or silently degrades the build, badges, or dependency pins | other parts of `.github/workflows/**`, `ci/**`, `renovate.json`, `.github/dependabot.yml`                    | No. Needs a human, but CI is meaningful evidence.            |
 | **1 — Load-bearing prose** | A wrong change misleads a human or an agent mid-incident                         | `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, `docs/**`, `.github/prompts/**`, `.claude/**`                   | Yes, if the doc-path suite is green and a human has read it. |
 | **0 — Self-checking**      | A wrong change fails in front of the person who made it                          | `tests/**`, `.editorconfig`, `.shellcheckrc`, `.gitignore`                                                   | Yes.                                                         |
 
 When a change spans tiers, **it takes the highest tier it touches.** A pull
 request that edits `tests/` and one line of `build_files/` is Tier 3.
+
+[`.claude/risk-config.json`](../.claude/risk-config.json) is this table in a form
+a program can read: each tier's number, name, path globs in the order above, and
+its merge-on-green-CI-alone answer, plus the highest-tier rule. **This page is
+authoritative.** Nothing in the repository enforces the JSON — the tiers are
+advisory, see the last section — and
+[`tests/test-risk-config.sh`](../tests/test-risk-config.sh) is what keeps the two
+equal: it fails when a tier, a glob or a merge answer differs, or when a glob
+matches no tracked file. Edit both in the same change.
 
 ## Why Tier 1 is not the bottom
 
@@ -79,6 +88,21 @@ The same applies to `issues: write`, which only
 `ai-fix.yml` hold. A change that adds the scope to another workflow, or widens
 `auto-issues.yml`'s token beyond `issues: write` and `actions: read`, touches
 the policy file and is Tier 3; the workflow file alone is Tier 2.
+
+## Why `.claude/risk-config.json` is Tier 3
+
+The file matches the Tier 1 `.claude/**` glob as well, and the table names it in
+the top row so that the highest-tier rule puts it there, as it does for the
+permission table. It is a copy of this Tier 1 page, but a copy a program can
+read: a tool that used it to decide which changes merge on green CI alone would
+be widened by one edit to it — moving `.github/workflows/**` into a prose tier,
+or flipping a merge answer to `true`. Nothing reads it today, so that is a
+reason to classify it before something does, not a description of a hole.
+
+The test also makes the classification hold from the other side. This page is
+Tier 1, so a pull request that changes a tier's paths or merge answer here
+cannot pass without the matching edit to the JSON, which makes it a Tier 3 pull
+request that needs a human.
 
 ## Evidence, by tier
 
