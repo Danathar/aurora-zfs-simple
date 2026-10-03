@@ -1,0 +1,185 @@
+---
+name: Agent audit trail
+
+# Reads back the record an agent-written pull request is supposed to leave,
+# and fails when one did not leave it.
+#
+# The record is GitHub itself. An agent pull request ends its description with
+# a `— hive:` line naming the backend and model that wrote it, and every
+# commit carries a Signed-off-by trailer saying a person stands behind it.
+# Nothing checked either once the merge was in: the only required status check
+# in .github/rulesets/main.json is `Shell tests`, and the omp-backed runs push
+# under the maintainer's own login, so the author alone cannot say which merged
+# pull requests an agent wrote. The signature line is the only provenance
+# there is, and this is what notices when it is missing.
+#
+# The job lists the pull requests merged in a window, keeps the agent-written
+# ones -- opened by the Hive app, or carrying the signature line -- and writes
+# one row each to the run summary: merge date, author, who merged it, backend
+# and model, and how many commits carry a sign-off. Dependabot and Renovate are
+# bots but not agents in this sense; they sign nothing and are left out.
+#
+# Two things fail the run, because each is checkable from what GitHub holds:
+#
+#   * a pull request the Hive app opened with no `— hive:` signature line;
+#   * a commit on an agent pull request with no Signed-off-by trailer.
+#
+# Both rules apply from 2026-09-29. Reading the merged history when this was
+# written found earlier pull requests that already lack the record -- a missing
+# signature line, or a commit with no sign-off, in September and before. They
+# are still listed, under "Before enforcement", but do not fail the run, so a
+# manual run over an older window does not turn red for history nobody can
+# amend. A miss merged from the cutoff onward fails.
+#
+# Nothing else fails it. Who merged a pull request is reported, not judged:
+# this repository has no second reviewer, so a rule about self-merge would be
+# red on every run for a fact the maintainer already chose.
+#
+# It is a check, not a metric. docs/metrics.md keeps numbers off a schedule on
+# purpose; this runs monthly because its answer is red or green and a missing
+# record is a gap to close, not a trend to watch. It writes nothing but its own
+# run summary: the token reads pull requests, there is nothing to check out,
+# and no action runs. Pull request text reaches the shell only as `gh` output
+# read by `jq`, never through an Actions expression.
+
+on:
+  schedule:
+    - cron: '23 5 1 * *'  # monthly, the 1st at 05:23 UTC, covering the previous 31 days
+  workflow_dispatch:
+    inputs:
+      since:
+        description: Audit pull requests merged on or after this date (YYYY-MM-DD). Blank means the last 31 days.
+        required: false
+        default: ''
+
+concurrency:
+  group: agent-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Read back merged agent pull requests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Audit merged agent pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SINCE: ${{ inputs.since }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SINCE}" ]; then
+            SINCE="$(date -u -d '31 days ago' +%F)"
+          fi
+          case "${SINCE}" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+            *)
+              echo "::error::since must be YYYY-MM-DD, got '${SINCE}'"
+              exit 2
+              ;;
+          esac
+
+          # `gh pr list` returns the newest N and says nothing about the rest,
+          # so a window that fills the cap is refused rather than audited in
+          # part.
+          limit=500
+          gh pr list --repo "${REPO}" --state merged --limit "${limit}" \
+            --search "merged:>=${SINCE}" \
+            --json number,title,author,mergedAt,mergedBy,body,url > merged.json
+          total="$(jq length merged.json)"
+          if [ "${total}" -ge "${limit}" ]; then
+            echo "::error::${total} pull requests merged since ${SINCE} reached the ${limit} cap; audit a narrower window"
+            exit 2
+          fi
+
+          # The Hive app's login as `gh` spells it. A pull request is an
+          # agent's if the app opened it, or its body carries the signature
+          # line -- the second clause is what catches the omp-backed runs.
+          jq -c '[.[] | select(
+                .author.login == "app/danathar-atomic-hive"
+                or ((.body // "") | test("(^|\n)— hive:")))]' merged.json > agents.json
+
+          # Commits are fetched one pull request at a time: listing them
+          # alongside the pull requests trips the GraphQL node ceiling on a
+          # busy window.
+          jq -r '.[].number' agents.json | while read -r number; do
+            gh pr view "${number}" --repo "${REPO}" --json number,commits
+          done | jq -s 'map({(.number | tostring): .}) | add // {}' > details.json
+
+          # Merge dates before this day are reported, not failed (see header).
+          enforce_from="2026-09-29"
+
+          jq --arg since "${SINCE}" --arg enforce "${enforce_from}" --arg total "${total}" --slurpfile details details.json '
+            def signature:
+              (.body // "") | split("\n") | map(select(startswith("— hive:"))) | first;
+            def row:
+              . as $pr
+              | ($details[0][$pr.number | tostring]) as $d
+              | if $d == null then error("no commits fetched for #\($pr.number)") else . end
+              | {
+                  number: $pr.number,
+                  url: $pr.url,
+                  title: $pr.title,
+                  merged: $pr.mergedAt[:10],
+                  author: $pr.author.login,
+                  merged_by: ($pr.mergedBy.login // "unknown"),
+                  app: ($pr.author.login == "app/danathar-atomic-hive"),
+                  enforced: ($pr.mergedAt[:10] >= $enforce),
+                  signature: (signature | if . == null then null else ltrimstr("— hive: ") end),
+                  commits: ($d.commits | length),
+                  unsigned: [$d.commits[]
+                             | select(.messageBody | test("(^|\n)Signed-off-by: ") | not)
+                             | .oid[:7]]
+                };
+            def findings:
+              [ .[]
+                | (if .app and .signature == null
+                   then "#\(.number): opened by the Hive app with no `— hive:` signature line"
+                   else empty end),
+                  (if (.unsigned | length) > 0
+                   then "#\(.number): commit(s) \(.unsigned | join(", ")) carry no Signed-off-by trailer"
+                   else empty end)
+              ];
+            def cell: tostring | gsub("\\|"; "\\|");
+            map(row) as $rows
+            | ($rows | map(select(.enforced)) | findings) as $found
+            | ($rows | map(select(.enforced | not)) | findings) as $history
+            | {
+                findings: $found,
+                report: (
+                  [ "### Agent audit trail: pull requests merged since \($since)",
+                    "",
+                    "\($rows | length) of the \($total) pull requests merged in the window were written by an agent.",
+                    "" ]
+                  + (if ($rows | length) == 0 then [] else
+                      [ "| PR | Merged | Author | Merged by | Backend and model | Commits | Signed-off |",
+                        "| --- | --- | --- | --- | --- | --- | --- |" ]
+                      + [ $rows[]
+                          | "| [#\(.number)](\(.url)) \(.title | cell) | \(.merged) | \(.author) | \(.merged_by) | \(.signature // "**missing**" | cell) | \(.commits) | \(if (.unsigned | length) == 0 then "all" else "**\(.commits - (.unsigned | length)) of \(.commits)**" end) |" ]
+                      + [ "" ]
+                    end)
+                  + (if ($found | length) == 0
+                     then [ "No finding among the agent pull requests merged on or after \($enforce)." ]
+                     else [ "#### Findings", "" ] + ($found | map("- " + .))
+                     end)
+                  + (if ($history | length) == 0 then [] else
+                      [ "", "#### Before enforcement (merged before \($enforce); reported, not failed)", "" ]
+                      + ($history | map("- " + .))
+                    end)
+                  | join("\n")
+                )
+              }' agents.json > result.json
+
+          jq -r .report result.json | tee -a "${GITHUB_STEP_SUMMARY}"
+          findings="$(jq '.findings | length' result.json)"
+          if [ "${findings}" -gt 0 ]; then
+            echo "::error::${findings} finding(s) among the agent pull requests merged since ${SINCE}; see the run summary"
+            exit 1
+          fi

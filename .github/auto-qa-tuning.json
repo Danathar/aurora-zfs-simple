@@ -96,6 +96,11 @@
   ],
   "untracked": [
     {
+      "workflow": "agent-audit.yml",
+      "job": "Read back merged agent pull requests",
+      "reason": "Runs once a month, so a 20-run sample would span years and the row would read 'no successful runs sampled' for most of them. Its time is set by how many agent pull requests merged in the window (one gh call each); the 15-minute cap is a budget, not a measurement."
+    },
+    {
       "workflow": "ai-fix.yml",
       "job": "Run the agent",
       "reason": "Duration is set by the model, not by this repo's code. The number would move on its own with no change here to explain it, which is the definition of a metric that trains people to ignore it. The 30-minute cap is a budget, not a measurement."
