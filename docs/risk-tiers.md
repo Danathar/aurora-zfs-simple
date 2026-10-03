@@ -74,6 +74,12 @@ A change that adds a scope to it is the decision
 `contents: write` or `packages: write` — written down, so it sits in the tier
 that needs one. Removing a scope from both files is ordinary work.
 
+The same applies to `issues: write`, which only
+[`.github/workflows/auto-issues.yml`](../.github/workflows/auto-issues.yml) and
+`ai-fix.yml` hold. A change that adds the scope to another workflow, or widens
+`auto-issues.yml`'s token beyond `issues: write` and `actions: read`, touches
+the policy file and is Tier 3; the workflow file alone is Tier 2.
+
 ## Evidence, by tier
 
 What to write in the pull request. The template asks; this says what a good
