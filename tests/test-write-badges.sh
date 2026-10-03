@@ -409,6 +409,164 @@ assert_file_exists "an anonymous inspect still writes the badge" \
     "${case_dir}/out/last-good-build-badge.json"
 
 # ---------------------------------------------------------------------------
+# Refusing to guess, the cases the first round left open
+# ---------------------------------------------------------------------------
+
+# The mirror of akmods-unreadable: here the kernel side answers and the ZFS
+# side does not. Dropping either half of the "both readable" check publishes a
+# red "blocked: kernel 7.1.4-200, ZFS kmod " badge naming an outage that was
+# only a registry blip, so each half needs its own case.
+new_case akmods-zfs-unreadable
+standard_containerfile
+stub_kernel "${AKMODS_REF}" '7.1.4-200.fc44.x86_64'
+stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
+printf 'previous badge\n' >"${case_dir}/out/akmods-badge.json"
+run_badges IMAGE_REF="${LATEST_REF}"
+assert_eq "one unreadable akmods-zfs input is not a hard failure" 0 "${STATUS}"
+assert_eq "an unreadable ZFS kmod input leaves the existing badge byte-identical" \
+    "previous badge" "$(cat "${case_dir}/out/akmods-badge.json")"
+assert_contains "an unreadable ZFS kmod input reports akmods_updated=false" \
+    "${GITHUB_OUTPUT_CONTENT}" "akmods_updated=false"
+
+# Write a raw inspect payload for an image reference, for the cases where the
+# registry answers with something other than a well-formed label set.
+stub_raw() {
+    local ref=$1 body=$2
+    printf '%s\n' "${body}" \
+        >"${case_dir}/responses/$(printf '%s' "${ref}" | tr '/:' '__').json"
+}
+
+# An image that inspects cleanly but carries no ostree.linux label is not
+# evidence of anything. Without `// empty` jq prints the string "null" for both
+# images, the two "kernels" compare equal, and the badge goes green.
+new_case label-missing
+standard_containerfile
+stub_raw "${AKMODS_REF}" '{"Labels": {}}'
+stub_raw "${AKMODS_ZFS_REF}" '{"Labels": {}}'
+stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
+printf 'previous badge\n' >"${case_dir}/out/akmods-badge.json"
+run_badges IMAGE_REF="${LATEST_REF}"
+assert_eq "images with no ostree.linux label leave the badge byte-identical" \
+    "previous badge" "$(cat "${case_dir}/out/akmods-badge.json")"
+assert_contains "images with no ostree.linux label report akmods_updated=false" \
+    "${GITHUB_OUTPUT_CONTENT}" "akmods_updated=false"
+
+# A registry or proxy that answers with an HTML error page hands jq something
+# it cannot parse. That must degrade to "leave the badge alone" like any other
+# unreadable input, not abort the job under `set -e` partway through.
+new_case payload-not-json
+standard_containerfile
+stub_raw "${AKMODS_REF}" '<html>502 Bad Gateway</html>'
+stub_kernel "${AKMODS_ZFS_REF}" '7.1.4-200.fc44.x86_64'
+stub_raw "${LATEST_REF}" '<html>502 Bad Gateway</html>'
+run_badges IMAGE_REF="${LATEST_REF}"
+assert_eq "a non-JSON inspect payload is not a hard failure" 0 "${STATUS}"
+assert_contains "a non-JSON kernel payload reports akmods_updated=false" \
+    "${GITHUB_OUTPUT_CONTENT}" "akmods_updated=false"
+assert_contains "a non-JSON :latest payload reports last_good_updated=false" \
+    "${GITHUB_OUTPUT_CONTENT}" "last_good_updated=false"
+
+# ---------------------------------------------------------------------------
+# Badge 2: its colour, and a Created date after today
+# ---------------------------------------------------------------------------
+
+assert_eq "the last-good-build badge is green" "brightgreen" \
+    "$(jq -r '.color' <"${WORK_ROOT}/age-many-days/out/last-good-build-badge.json")"
+
+# A Created timestamp ahead of the runner's UTC date (a builder clock running
+# fast) gives a negative day count. It must read "today", not "-1 days ago".
+new_case age-in-future
+standard_containerfile
+tomorrow="$(date -u -d 'tomorrow' +%F)"
+stub_created "${LATEST_REF}" "${tomorrow}T00:30:00Z"
+run_badges IMAGE_REF="${LATEST_REF}"
+assert_eq "a Created date after today reads 'today'" \
+    "${tomorrow} (today)" \
+    "$(jq -r '.message' <"${case_dir}/out/last-good-build-badge.json")"
+
+# ---------------------------------------------------------------------------
+# Containerfile parsing, the shapes the first round did not use
+# ---------------------------------------------------------------------------
+
+# from_ref substitutes both spellings of the ARG. The fixtures above only use
+# the braced one.
+new_case unbraced-fedora-version
+write_containerfile <<'CONTAINERFILE'
+ARG FEDORA_VERSION=44
+FROM ghcr.io/ublue-os/akmods:coreos-stable-$FEDORA_VERSION-x86_64 AS akmods
+FROM ghcr.io/ublue-os/akmods-zfs:coreos-stable-$FEDORA_VERSION-x86_64 AS akmods-zfs
+CONTAINERFILE
+stub_kernel "${AKMODS_REF}" '7.1.4-200.fc44.x86_64'
+stub_kernel "${AKMODS_ZFS_REF}" '7.1.4-200.fc44.x86_64'
+stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
+run_badges IMAGE_REF="${LATEST_REF}"
+assert_contains "an unbraced \$FEDORA_VERSION is interpolated too" \
+    "${SKOPEO_CALLS}" "docker://${AKMODS_REF}"
+
+# `akmods` is a prefix of `akmods-zfs`. If the stage-name match were not
+# anchored at end of line, `AS akmods-zfs` would satisfy the search for
+# `akmods`, and with that stage written first both lookups would return the ZFS
+# image: one image compared with itself always reads "in sync".
+new_case zfs-stage-first
+write_containerfile <<'CONTAINERFILE'
+ARG FEDORA_VERSION=44
+FROM ghcr.io/ublue-os/akmods-zfs:coreos-stable-"${FEDORA_VERSION}"-x86_64 AS akmods-zfs
+FROM ghcr.io/ublue-os/akmods:coreos-stable-"${FEDORA_VERSION}"-x86_64 AS akmods
+CONTAINERFILE
+stub_kernel "${AKMODS_REF}" '7.1.5-200.fc44.x86_64'
+stub_kernel "${AKMODS_ZFS_REF}" '7.1.3-200.fc44.x86_64'
+stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
+run_badges IMAGE_REF="${LATEST_REF}"
+assert_contains "the akmods stage is not matched by the akmods-zfs line before it" \
+    "${STDOUT}" "akmods ref:     ${AKMODS_REF}"
+assert_eq "stage order does not hide a kernel skew" \
+    "blocked: kernel 7.1.5-200, ZFS kmod 7.1.3-200" \
+    "$(jq -r '.message' <"${case_dir}/out/akmods-badge.json")"
+
+# ---------------------------------------------------------------------------
+# Credentials: the registry-host rule and jq's argv
+# ---------------------------------------------------------------------------
+
+# registry_host_of has four outcomes and the cases above reach two (a dotted
+# host, and a two-part Docker Hub name). A wrong key leaves skopeo with no
+# credential for the reference and the inspect quietly goes anonymous.
+# Format per row: IMAGE_REF|expected auths key
+while IFS='|' read -r ref host; do
+    new_case "registry-host-${host//[^a-z0-9]/-}"
+    standard_containerfile
+    stub_created "${ref}" "$(days_ago 0)T06:00:00Z"
+    run_badges IMAGE_REF="${ref}" REGISTRY_ACTOR=someone REGISTRY_TOKEN=s3cret
+    assert_eq "${ref} keys its credential on ${host}" \
+        "someone:s3cret" \
+        "$(jq -r --arg h "${host}" '.auths[$h].auth' "${case_dir}/authfile/body" | base64 -d)"
+done <<'ROWS'
+localhost/private-image:latest|localhost
+myregistry:5000/team/image:latest|myregistry:5000
+private-image:latest|docker.io
+ROWS
+
+# The script hands the pair to jq through env.* so the token does not just
+# move from skopeo's argv to jq's, which is as readable in /proc/<pid>/cmdline.
+# A jq wrapper earlier on PATH records every argv the script gives it.
+new_case credentials-not-in-jq-argv
+standard_containerfile
+stub_created "${LATEST_REF}" "$(days_ago 0)T06:00:00Z"
+real_jq="$(command -v jq)"
+cat >"${case_dir}/bin/jq" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${case_dir}/jq-calls.log"
+exec "${real_jq}" "\$@"
+STUB
+chmod +x "${case_dir}/bin/jq"
+run_badges IMAGE_REF="${LATEST_REF}" REGISTRY_ACTOR=someone REGISTRY_TOKEN=s3cret
+jq_calls="$(cat "${case_dir}/jq-calls.log")"
+assert_contains "the jq wrapper saw the auth-file call" "${jq_calls}" "auths"
+assert_not_contains "the token never appears in jq's argv" "${jq_calls}" "s3cret"
+assert_eq "the pair still reaches the auth file" \
+    "someone:s3cret" \
+    "$(jq -r '.auths["ghcr.io"].auth' "${case_dir}/authfile/body" | base64 -d)"
+
+# ---------------------------------------------------------------------------
 # Environment defaults
 # ---------------------------------------------------------------------------
 
