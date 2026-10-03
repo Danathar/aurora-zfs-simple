@@ -210,6 +210,7 @@ docs/metrics/                             dated readings of those numbers, each 
 docs/review-rubric.md                     what a review of a change here should ask
 docs/branch-protection.md                 what protects `main`, and how to check it is applied
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs
+docs/multi-agent.md                       who works here, how work reaches an agent, and who merges
 docs/SECURITY-AI.md                       what an agent may do here, and what it must not touch
 docs/reflections/                         durable lessons from things that went wrong
 ```
