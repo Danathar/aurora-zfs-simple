@@ -208,11 +208,13 @@ docs/manual-input-check.md                Fedora release input-check notes
 docs/quality.md                           where the signal comes from, and what it cannot tell you
 docs/metrics.md                           what is measured here and what is not
 docs/metrics/                             dated readings of those numbers, each with its commands
+docs/agent-tasks/                         which agent made a change and for which issue, and dated ledgers of the marks
 docs/review-rubric.md                     what a review of a change here should ask
 docs/branch-protection.md                 what protects `main`, and how to check it is applied
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs
 docs/SECURITY-AI.md                       what an agent may do here, and what it must not touch
 docs/reflections/                         durable lessons from things that went wrong
+.claude/risk-config.json                  the risk tiers as JSON, held equal to that page by a test
 ```
 
 ## Build And Publish
