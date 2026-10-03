@@ -212,6 +212,7 @@ docs/branch-protection.md                 what protects `main`, and how to check
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs
 docs/SECURITY-AI.md                       what an agent may do here, and what it must not touch
 docs/reflections/                         durable lessons from things that went wrong
+.claude/risk-config.json                  the risk tiers as JSON, held equal to that page by a test
 ```
 
 ## Build And Publish

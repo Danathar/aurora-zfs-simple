@@ -1,0 +1,62 @@
+{
+  "$comment": "docs/risk-tiers.md in a form a program can read. The document is authoritative: this file copies its tier table (name, path globs in the table's order, and the merge-on-green-CI-alone answer) and tests/test-risk-config.sh fails when the two disagree or a glob matches no tracked path. Nothing else in the repository reads or enforces this file; the tiers stay advisory. A change spanning tiers takes the highest tier it touches (highest_tier_wins). This file is itself Tier 3, because a program that read it to decide merges would be widened by editing it.",
+  "source": "docs/risk-tiers.md",
+  "highest_tier_wins": true,
+  "tiers": [
+    {
+      "tier": 3,
+      "name": "Published artifact",
+      "paths": [
+        "Containerfile",
+        "build_files/**",
+        ".github/workflows/build.yml",
+        "cosign.pub",
+        ".claude/settings.json",
+        ".claude/hooks/**",
+        ".claude/risk-config.json",
+        ".github/rulesets/**",
+        ".github/policies/**"
+      ],
+      "partial_paths": [
+        ".github/workflows/build.yml"
+      ],
+      "merge_on_green_ci_alone": false
+    },
+    {
+      "tier": 2,
+      "name": "Pipeline",
+      "paths": [
+        ".github/workflows/**",
+        "ci/**",
+        "renovate.json",
+        ".github/dependabot.yml"
+      ],
+      "merge_on_green_ci_alone": false
+    },
+    {
+      "tier": 1,
+      "name": "Load-bearing prose",
+      "paths": [
+        "README.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "docs/**",
+        ".github/prompts/**",
+        ".claude/**"
+      ],
+      "merge_on_green_ci_alone": true,
+      "merge_condition": "the doc-path suite is green and a human has read it"
+    },
+    {
+      "tier": 0,
+      "name": "Self-checking",
+      "paths": [
+        "tests/**",
+        ".editorconfig",
+        ".shellcheckrc",
+        ".gitignore"
+      ],
+      "merge_on_green_ci_alone": true
+    }
+  ]
+}
