@@ -141,7 +141,7 @@ for title in (ROSTER, INTAKE, OVERLAP, MERGES, NOT_RUN):
 # --- workflows, read once ---------------------------------------------------
 
 workflows = {}
-for path in sorted(glob.glob(os.path.join(workflows_dir, "*.yml"))):
+for path in sorted(glob.glob(os.path.join(workflows_dir, "*.yml")) + glob.glob(os.path.join(workflows_dir, "*.yaml"))):
     doc = yaml.safe_load(open(path, encoding="utf-8"))
     if isinstance(doc, dict) and True in doc:  # YAML 1.1 reads a bare `on` as true
         doc["on"] = doc.pop(True)

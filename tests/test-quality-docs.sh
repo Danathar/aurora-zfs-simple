@@ -855,7 +855,8 @@ assert_contains "external sources are resolved, matching the -x" \
 run_by_path="$(
     {
         sed -nE 's|.*/ctx/([a-z-]+\.sh).*|build_files/\1|p' "${CONTAINERFILE}"
-        grep -ohE '\./(ci|tests)/[a-z-]+\.sh' "${REPO_ROOT}"/.github/workflows/*.yml | sed 's|^\./||'
+        find "${REPO_ROOT}/.github/workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+            -exec grep -ohE '\./(ci|tests)/[a-z-]+\.sh' {} + | sed 's|^\./||'
     } | LC_ALL=C sort -u
 )"
 require_nonempty "scripts executed by path" "${run_by_path}"
@@ -938,7 +939,7 @@ while IFS= read -r row; do
         case "${label}" in
             Workflows)
                 assert_eq "the evidence table's Workflows row still has workflows to describe" \
-                    "0" "$([[ -n "$(cd "${REPO_ROOT}" && git ls-files '.github/workflows/*.yml')" ]] && echo 0 || echo 1)"
+                    "0" "$([[ -n "$(cd "${REPO_ROOT}" && git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')" ]] && echo 0 || echo 1)"
                 ;;
             Docs)
                 assert_eq "the evidence table's Docs row still has documents to describe" \

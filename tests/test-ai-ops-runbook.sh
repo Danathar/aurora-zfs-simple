@@ -129,7 +129,8 @@ assert_eq "fixture: section_body stops at the next ## heading" $'b\nc' "$(sectio
 
 # --- 1. every workflow, in both directions -----------------------------------
 
-ON_DISK="$(find "${WORKFLOW_DIR}" -maxdepth 1 -name '*.yml' -printf '%f\n' | as_set)"
+# GitHub runs .yaml files from this directory as well as .yml ones.
+ON_DISK="$(find "${WORKFLOW_DIR}" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -printf '%f\n' | as_set)"
 require_nonempty "the workflows on disk" "${ON_DISK}"
 
 TABLE="$(section_body '## Each workflow' "${RUNBOOK}" | first_column)"
@@ -142,9 +143,8 @@ assert_eq "every *.yml the page names is a workflow that exists" \
 
 # --- 2. the scheduled workflows ----------------------------------------------
 
-SCHEDULED="$(for f in "${WORKFLOW_DIR}"/*.yml; do
-    grep -qE '^  schedule:' "${f}" && basename "${f}"
-done | as_set)"
+SCHEDULED="$(find "${WORKFLOW_DIR}" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+    -exec grep -lE '^  schedule:' {} + | sed 's|.*/||' | as_set)"
 require_nonempty "the scheduled workflows" "${SCHEDULED}"
 LISTED="$(section_body '## A scheduled run is missing' "${RUNBOOK}" |
     sed -nE 's/^- `([a-z0-9-]+\.yml)`$/\1/p' | as_set)"
