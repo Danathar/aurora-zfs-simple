@@ -122,13 +122,14 @@ assert_eq "and only once the watched run has completed" \
     "completed" "$(wf '.on.workflow_run.types | join(",")')"
 
 # name, file and whether it has a schedule, for every workflow in the tree.
+# GitHub runs .yaml files from this directory as well as .yml ones.
 TREE="${TMP_ROOT}/tree.jsonl"
 : >"${TREE}"
-for file in "${WORKFLOWS_DIR}"/*.yml; do
+while IFS= read -r file; do
     "${WORKFLOW_PYTHON}" -B "${NORMALIZER}" "${file}" |
         jq -c --arg file "$(basename "${file}")" \
             '{file: $file, name: .name, scheduled: (.on | has("schedule"))}' >>"${TREE}"
-done
+done < <(find "${WORKFLOWS_DIR}" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort)
 
 WATCHED="$(wf '.on.workflow_run.workflows[]')"
 
