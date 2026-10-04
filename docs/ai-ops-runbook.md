@@ -58,15 +58,22 @@ its own, and say which two merges collided.
 One row per file in `.github/workflows/`. The detail column is where the
 explanation lives; the first thing to do is what to try before reading a log.
 
-| Workflow                 | Red or odd means                                                               | First thing                                                                                       | Detail                                                                                  |
-| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `ai-fix.yml`             | A maintainer-requested agent run failed, or stopped at `preflight`.            | Read the run summary: [An `ai-fix.yml` run did nothing](#an-ai-fixyml-run-did-nothing-or-failed). | [SECURITY-AI.md](SECURITY-AI.md#agent-authored-pull-requests)                           |
-| `auto-qa.yml`            | A job was killed at its timeout, or its slowest run is close to it.            | Open the run summary table for the job and its slowest run.                                       | [quality.md](quality.md#the-gates), `.github/auto-qa-tuning.json`                       |
-| `build.yml`              | See [`main` is red](#main-is-red).                                             | Check the OpenZFS/kernel badge.                                                                   | [AGENTS.md](../AGENTS.md), [quality.md](quality.md#reading-a-red-build)                 |
-| `coverage-gate.yml`      | The shell suite failed on a change `build.yml` ignores, or on a workflow edit. | Run the failing test locally.                                                                     | [risk-tiers.md](risk-tiers.md#evidence-by-tier)                                         |
-| `labeler.yml`            | The `area/*` labelling failed. It classifies a change and checks nothing.      | Re-run it; do not apply a label by hand.                                                          | [SECURITY-AI.md](SECURITY-AI.md#labels-carry-authority--automation-must-not-apply-them) |
-| `nightly-compliance.yml` | The shell suite or the published image's signature or tags failed.             | Compare the failing commit with the last green night.                                             | [Nightly compliance failed](#nightly-compliance-failed)                                 |
-| `status-badges.yml`      | The badge files on the `status` branch were not refreshed.                     | Check whether the badge moved: it keeps its last value when an input cannot be read.              | [quality.md](quality.md#the-badges)                                                     |
+| Workflow                 | Red or odd means                                                                                                                                     | First thing                                                                                       | Detail                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `agent-audit.yml`        | An agent pull request merged since the enforcement date lacks its `— hive:` line or a sign-off; or the window hit the cap, or `since` was malformed. | Read the run summary: it names each pull request and commit. Merged history is not rewritten.     | [SECURITY-AI.md](SECURITY-AI.md#reading-the-record-back)                                |
+| `ai-fix.yml`             | A maintainer-requested agent run failed, or stopped at `preflight`.                                                                                  | Read the run summary: [An `ai-fix.yml` run did nothing](#an-ai-fixyml-run-did-nothing-or-failed). | [SECURITY-AI.md](SECURITY-AI.md#agent-authored-pull-requests)                           |
+| `auto-issues.yml`        | The failure issue was not opened or commented on. The failure it was reporting still happened.                                                       | Open the watched workflow's latest run yourself.                                                  | [SECURITY-AI.md](SECURITY-AI.md#failure-issues-hold-issues-write)                       |
+| `auto-qa.yml`            | A job was killed at its timeout, or its slowest run is close to it.                                                                                  | Open the run summary table for the job and its slowest run.                                       | [quality.md](quality.md#the-gates), `.github/auto-qa-tuning.json`                       |
+| `build.yml`              | See [`main` is red](#main-is-red).                                                                                                                   | Check the OpenZFS/kernel badge.                                                                   | [AGENTS.md](../AGENTS.md), [quality.md](quality.md#reading-a-red-build)                 |
+| `coverage-gate.yml`      | The shell suite failed on a change `build.yml` ignores, or on a workflow edit.                                                                       | Run the failing test locally.                                                                     | [risk-tiers.md](risk-tiers.md#evidence-by-tier)                                         |
+| `labeler.yml`            | The `area/*` labelling failed. It classifies a change and checks nothing.                                                                            | Re-run it; do not apply a label by hand.                                                          | [SECURITY-AI.md](SECURITY-AI.md#labels-carry-authority--automation-must-not-apply-them) |
+| `nightly-compliance.yml` | The shell suite or the published image's signature or tags failed.                                                                                   | Compare the failing commit with the last green night.                                             | [Nightly compliance failed](#nightly-compliance-failed)                                 |
+| `status-badges.yml`      | The badge files on the `status` branch were not refreshed.                                                                                           | Check whether the badge moved: it keeps its last value when an input cannot be read.              | [quality.md](quality.md#the-badges)                                                     |
+
+An issue titled `Unattended run failed: <workflow>` comes from `auto-issues.yml`
+when the scheduled build or the nightly check fails. Its body names the run and
+the first step to take; while it is open, later failures add comments to it.
+Close it by hand once the cause is fixed.
 
 ## Nightly compliance failed
 
@@ -104,6 +111,7 @@ workflows run on a schedule; the list is checked against the files.
 - `status-badges.yml`
 - `nightly-compliance.yml`
 - `auto-qa.yml`
+- `agent-audit.yml`
 
 1. Read the `cron:` line in the workflow and compare it with the dates the run
    list shows:
