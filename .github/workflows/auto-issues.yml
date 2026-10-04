@@ -41,9 +41,12 @@ name: Auto issues
 # repository, and was started by a schedule or a push. Pull requests are not
 # acted on: their author is looking at the check, and a fork's run is not ours.
 #
-# One open issue per workflow, found by the hidden marker in its body. A failure
-# while that issue is open adds a comment with the run link instead of a second
-# issue. This workflow never closes an issue and never applies a label: labels
+# One open issue per workflow, found by the hidden marker in its body (or by its
+# exact title, if someone edited the body). It must also have been opened by
+# the Actions bot: the repository is public, and anyone can open an issue with
+# that title or paste in that marker. A failure while the bot's issue is open
+# adds a comment with the run link instead of a second issue. This workflow
+# never closes an issue and never applies a label: labels
 # are read by an external system as approval to merge (docs/SECURITY-AI.md,
 # "Labels carry authority"), and a failure report is not an approval of anything.
 #
@@ -144,10 +147,16 @@ jobs:
               ;;
           esac
 
+          # Only an issue this workflow opened counts. Anyone can open an issue
+          # with this title or copy the marker out of a public issue body, and a
+          # failure must never be reported into an issue someone else controls.
+          # `gh issue list` reads authors over GraphQL, which spells the Actions
+          # bot `app/github-actions`; a person's login cannot contain a `/`.
           existing="$(gh issue list --repo "${REPO}" --state open --limit 1000 \
-            --json number,title,body \
+            --json number,title,body,author \
             | jq -r --arg title "${title}" --arg marker "${marker}" \
-              '[.[] | select(.title == $title or ((.body // "") | contains($marker)))]
+              '[.[] | select((.author.login // "") == "app/github-actions")
+                    | select(.title == $title or ((.body // "") | contains($marker)))]
                | sort_by(.number) | first | .number // empty')"
 
           if [ -n "${existing}" ]; then
