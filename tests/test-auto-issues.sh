@@ -56,6 +56,7 @@ trap 'rm -rf "${TMP_ROOT}"' EXIT
 UNWATCHED=(
     "status-badges.yml"  # republishes two JSON files; a failure is a stale badge and nothing else
     "auto-qa.yml"        # goes red on purpose to report a timeout; the finding is in its run summary
+    "agent-audit.yml"    # not routed here until the maintainer decides; its findings are in its run summary
 )
 
 if [[ ! -f "${AUTO_ISSUES_WF}" ]]; then

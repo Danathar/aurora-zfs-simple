@@ -198,6 +198,7 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/workflows/auto-qa.yml             compare CI timeouts against observed durations
 .github/workflows/labeler.yml             apply the descriptive `area/*` labels
 .github/workflows/ai-fix.yml              hand a labelled issue or a review to an agent
+.github/workflows/agent-audit.yml         monthly read-back of merged agent pull requests' signature and sign-off record
 .github/workflows/auto-issues.yml         open one issue when the build or nightly check fails unattended
 .github/rulesets/main.json                the ruleset that protects `main`, as applied to it
 .github/labeler.yml                       path-to-label map for the above
@@ -208,6 +209,7 @@ docs/manual-input-check.md                Fedora release input-check notes
 docs/quality.md                           where the signal comes from, and what it cannot tell you
 docs/metrics.md                           what is measured here and what is not
 docs/metrics/                             dated readings of those numbers, each with its commands
+docs/agent-tasks/                         which agent made a change and for which issue, and dated ledgers of the marks
 docs/review-rubric.md                     what a review of a change here should ask
 docs/branch-protection.md                 what protects `main`, and how to check it is applied
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs

@@ -21,6 +21,10 @@ name: Auto issues
 #   - `Auto-QA tuning` is not watched. It goes red on purpose, to say a declared
 #     timeout needs a human number; that finding lives in its run summary and
 #     a duplicate issue per week would only restate it.
+#   - `Agent audit trail` (agent-audit.yml) is not watched yet. It landed while
+#     this was in review, and an issue it opened would be about agents' own
+#     merged records, which the maintainer should decide to route here rather
+#     than have it arrive by default. Its findings are in its run summary.
 #   - `Coverage gate`, `Labeler` and `AI fix` run on pull requests or on a human's
 #     label or comment. A person is already looking at them.
 #

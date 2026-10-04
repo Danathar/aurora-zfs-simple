@@ -347,6 +347,32 @@ meets each condition, and the points worth knowing:
 - Fork pull requests are skipped rather than half-attempted: the head branch is
   in another repository and this job's token cannot push there.
 
+### Reading the record back
+
+The two conditions above leave a record: the `— hive:` line that ends an agent
+pull request's description (backend, model, effort), and the Signed-off-by
+trailer on its commits. Nothing in the ruleset requires either — the only
+required status check is `Shell tests`, and omp-backed runs push under the
+maintainer's own login, so the author alone does not say which pull requests an
+agent wrote.
+[`.github/workflows/agent-audit.yml`](../.github/workflows/agent-audit.yml)
+reads it back, monthly and on demand:
+
+- **What it lists.** Every pull request merged in the window that the Hive app
+  opened or whose description carries the signature line, one row each with the
+  backend and model, who merged it, and how many commits carry a sign-off.
+  Dependabot and Renovate pull requests are not agents' and are left out.
+- **What fails it.** A Hive-app pull request with no signature line, or a
+  commit on an agent pull request with no Signed-off-by trailer, merged on or
+  after the date the workflow records as its enforcement start. Earlier misses
+  are listed under their own heading and do not fail the run.
+- **What it does not judge.** Who merged a pull request is reported, not
+  checked: there is no second reviewer here to compare it against.
+- **Its reach.** Its job holds `contents: read` and `pull-requests: read`,
+  checks nothing out, runs no action, and writes only the run summary. Run it
+  by hand with `gh workflow run agent-audit.yml --repo Danathar/aurora-zfs-simple -f since=YYYY-MM-DD`.
+  `tests/test-agent-audit.sh` executes its step against a stubbed `gh`.
+
 ## What this policy does not cover
 
 Stated plainly, so nobody assumes otherwise:
