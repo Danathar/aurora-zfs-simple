@@ -13,6 +13,10 @@ Readings of these numbers, each dated and left as it was read, are in
 [`docs/metrics/`](metrics/2026-09-24.md). The first,
 [2026-09-24](metrics/2026-09-24.md), covers the whole history up to PR #246.
 
+[`docs/strategy.md`](strategy.md) reads the same data against the project's goal:
+whether builds are healthy, what is waiting on a person and what has merged
+since a date.
+
 Who made a change, which agent and for which issue, is not a quality number and
 is not measured here; [`docs/agent-tasks/`](agent-tasks/README.md) keeps that
 record in the same dated shape.
