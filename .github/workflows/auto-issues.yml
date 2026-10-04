@@ -1,0 +1,184 @@
+name: Auto issues
+
+# Files one issue when an unattended workflow fails, so a red scheduled run is
+# seen by someone who is not looking at Actions or the README badges.
+#
+# Nobody watches a Sunday 05:00 UTC image build or a daily compliance check.
+# Until this existed a red run was visible only as a badge, and a badge is read
+# by whoever happens to open the README. The kernel / ZFS akmod skew that
+# AGENTS.md calls the dominant failure mode can leave `:latest` stale for a week
+# before anyone looks.
+#
+# What it watches, and what it deliberately does not:
+#
+#   - `Build container image` (build.yml): decides whether there is a new image.
+#   - `Nightly compliance` (nightly-compliance.yml): the only thing that notices
+#     a published tag or signature going bad after the build that made it.
+#
+#   - `Status badges` is not watched. It republishes two JSON files; a failure
+#     leaves a stale badge and costs nothing else, and a red build already files
+#     an issue about the thing the badge reports.
+#   - `Auto-QA tuning` is not watched. It goes red on purpose, to say a declared
+#     timeout needs a human number; that finding lives in its run summary and
+#     a duplicate issue per week would only restate it.
+#   - `Agent audit trail` (agent-audit.yml) is not watched yet. It landed while
+#     this was in review, and an issue it opened would be about agents' own
+#     merged records, which the maintainer should decide to route here rather
+#     than have it arrive by default. Its findings are in its run summary.
+#   - `Coverage gate`, `Labeler` and `AI fix` run on pull requests or on a human's
+#     label or comment. A person is already looking at them.
+#
+# Adding a name to `workflows:` below widens what this opens issues for.
+# tests/test-auto-issues.sh fails when a scheduled workflow is neither watched
+# here nor listed there as deliberately unwatched.
+#
+# `workflow_run` always runs the copy of this file on the default branch, never
+# the copy on the branch that triggered the run, so a pull request cannot change
+# what this does by editing it. The decision is still made in the step, from the
+# run's own fields, because the job-level `if:` below is only a cheap filter.
+#
+# Acts only when the run failed or timed out, ran on the default branch of this
+# repository, and was started by a schedule or a push. Pull requests are not
+# acted on: their author is looking at the check, and a fork's run is not ours.
+#
+# One open issue per workflow, found by the hidden marker in its body. A failure
+# while that issue is open adds a comment with the run link instead of a second
+# issue. This workflow never closes an issue and never applies a label: labels
+# are read by an external system as approval to merge (docs/SECURITY-AI.md,
+# "Labels carry authority"), and a failure report is not an approval of anything.
+#
+# The token holds `issues: write` and `actions: read` and nothing else. There is
+# no checkout, so no repository content is read or written. Every field of the
+# triggering run reaches the shell through `env:`, never through `${{ }}` inside
+# `run:`, because a workflow name or branch name is text someone else chose.
+
+on:
+  workflow_run:
+    workflows:
+      - "Build container image"
+      - "Nightly compliance"
+    types:
+      - completed
+
+# Two failures of one workflow minutes apart must not both find no open issue
+# and open two. Serialising per workflow lets the second see the first.
+concurrency:
+  group: auto-issues-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Open or update the failure issue
+    runs-on: ubuntu-24.04
+    # The step re-checks all of this; the filter only spares a runner on the
+    # (far more common) green run.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'timed_out'
+    # A handful of gh calls. Recorded as untracked in
+    # .github/auto-qa-tuning.json: it runs its step only after a failure.
+    timeout-minutes: 5
+
+    permissions:
+      issues: write
+      actions: read
+
+    steps:
+      - name: Open or update the issue for this failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+
+          case "${CONCLUSION}" in
+            failure|timed_out) ;;
+            *) echo "Run concluded '${CONCLUSION}'; nothing to report."; exit 0 ;;
+          esac
+          case "${RUN_EVENT}" in
+            schedule|push) ;;
+            *) echo "Run was started by '${RUN_EVENT}', not a schedule or a push; nothing to report."; exit 0 ;;
+          esac
+          if [ "${HEAD_BRANCH}" != "${DEFAULT_BRANCH}" ]; then
+            echo "Run was on '${HEAD_BRANCH}', not '${DEFAULT_BRANCH}'; nothing to report."
+            exit 0
+          fi
+          if [ "${HEAD_REPO}" != "${REPO}" ]; then
+            echo "Run came from '${HEAD_REPO}', not ${REPO}; nothing to report."
+            exit 0
+          fi
+
+          title="Unattended run failed: ${WORKFLOW_NAME}"
+          marker="<!-- auto-issues:workflow=${WORKFLOW_NAME} -->"
+
+          # Which jobs failed. A lookup that fails must not lose the report.
+          failed_jobs="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/attempts/${RUN_ATTEMPT}/jobs" \
+            --paginate \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | "- " + .name' \
+            2>/dev/null)" || failed_jobs=""
+          if [ -z "${failed_jobs}" ]; then
+            failed_jobs="- (could not be read from the Actions API; open the run)"
+          fi
+
+          blob="${SERVER_URL}/${REPO}/blob/${DEFAULT_BRANCH}"
+          case "${WORKFLOW_NAME}" in
+            "Build container image")
+              next="Read the failing step's log first. If it is \`zfs.sh\` failing on a \`kmod-zfs-<kernel>*.rpm\` glob that matched nothing while the ZFS userspace packages resolved, it is kernel / ZFS akmod skew: [Dominant failure mode: kernel / ZFS akmod skew](${blob}/AGENTS.md#dominant-failure-mode-kernel--zfs-akmod-skew) has the symptom, the cause and how to confirm it. Pinning the akmods inputs needs a maintainer decision first ([CONTRIBUTING.md](${blob}/CONTRIBUTING.md)); do not pin from this issue alone."
+              ;;
+            "Nightly compliance")
+              next="Open the failed job's log and the run summary. The header of [nightly-compliance.yml](${blob}/.github/workflows/nightly-compliance.yml) says what each of its checks protects; a failed signature or tag check concerns the published image, so read the check's output before re-running anything."
+              ;;
+            *)
+              next="Open the run and read the failing step's log."
+              ;;
+          esac
+
+          existing="$(gh issue list --repo "${REPO}" --state open --limit 1000 \
+            --json number,title,body \
+            | jq -r --arg title "${title}" --arg marker "${marker}" \
+              '[.[] | select(.title == $title or ((.body // "") | contains($marker)))]
+               | sort_by(.number) | first | .number // empty')"
+
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --repo "${REPO}" --body-file - <<EOF
+          **${WORKFLOW_NAME}** failed again (${CONCLUSION}).
+
+          - Run: ${RUN_URL}
+          - Commit: ${HEAD_SHA}
+
+          Failed jobs:
+
+          ${failed_jobs}
+
+          This issue stays open until a maintainer closes it.
+          EOF
+            echo "Commented on #${existing}."
+            exit 0
+          fi
+
+          gh issue create --repo "${REPO}" --title "${title}" --body-file - <<EOF
+          ${marker}
+          The unattended workflow **${WORKFLOW_NAME}** ${CONCLUSION} on \`${DEFAULT_BRANCH}\`, started by \`${RUN_EVENT}\`.
+
+          - Run: ${RUN_URL}
+          - Commit: ${HEAD_SHA}
+
+          Failed jobs:
+
+          ${failed_jobs}
+
+          First step: ${next}
+
+          This issue was opened automatically by [auto-issues.yml](${blob}/.github/workflows/auto-issues.yml). While it is open, each further failure of this workflow adds a comment here instead of a new issue. It is never closed automatically: close it when the cause is fixed.
+          EOF

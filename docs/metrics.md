@@ -17,6 +17,10 @@ Readings of these numbers, each dated and left as it was read, are in
 whether builds are healthy, what is waiting on a person and what has merged
 since a date.
 
+Who made a change, which agent and for which issue, is not a quality number and
+is not measured here; [`docs/agent-tasks/`](agent-tasks/README.md) keeps that
+record in the same dated shape.
+
 Every command below names `Danathar/aurora-zfs-simple`. This repository is a
 fork, and `gh repo clone` of a fork adds an `upstream` remote and makes the
 parent, `renner0e/aurora-zfs-example`, the default for `gh`. Without `--repo`,
