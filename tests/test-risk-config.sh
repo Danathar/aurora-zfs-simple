@@ -112,9 +112,36 @@ assert_eq "the config lists the document's tiers in the document's order" \
 assert_eq "the config names the document it copies" \
     "${DOC_REL}" "$(jq -r '.source' "${CONFIG}")"
 
+# Types and keys. `jq -r` prints the string "false" and the boolean false the
+# same way, and `select(.tier == 1)` does not match a tier written as "1", so the
+# comparisons below cannot see either. A program reading the file can: in most
+# languages a non-empty string is true, so "false" would read as "merge on green
+# CI alone". The key sets are closed for the same reason -- a key the document
+# does not have is a claim nothing here checks.
+assert_eq "the config's top-level keys are the ones the document backs" \
+    '$comment highest_tier_wins source tiers' \
+    "$(jq -r 'keys_unsorted | sort | join(" ")' "${CONFIG}")"
+assert_eq "highest_tier_wins is a JSON boolean" \
+    "boolean" "$(jq -r '.highest_tier_wins | type' "${CONFIG}")"
+tier_count=$(jq '.tiers | length' "${CONFIG}")
+for ((i = 0; i < tier_count; i++)); do
+    entry=$(jq -c --argjson i "${i}" '.tiers[$i]' "${CONFIG}")
+    assert_eq "tiers[${i}] uses only known keys" "" \
+        "$(jq -r 'keys - ["tier","name","paths","partial_paths","merge_on_green_ci_alone","merge_condition"] | join(" ")' <<<"${entry}")"
+    assert_eq "tiers[${i}].tier is a JSON number" "number" "$(jq -r '.tier | type' <<<"${entry}")"
+    assert_eq "tiers[${i}].merge_on_green_ci_alone is a JSON boolean" \
+        "boolean" "$(jq -r '.merge_on_green_ci_alone | type' <<<"${entry}")"
+    assert_eq "tiers[${i}] has no empty merge_condition" \
+        "ok" "$(jq -r 'if has("merge_condition") and .merge_condition == "" then "empty" else "ok" end' <<<"${entry}")"
+done
+
 for tier in "${doc_tiers[@]}"; do
     entry=$(jq -c --argjson t "${tier}" '.tiers[] | select(.tier == $t)' "${CONFIG}")
-    [[ -z "${entry}" ]] && continue
+    # Exactly one entry: none means the tier would be skipped unchecked, two
+    # means a program has to guess which one counts.
+    matches=$(jq --argjson t "${tier}" '[.tiers[] | select(.tier == $t)] | length' "${CONFIG}")
+    assert_eq "tier ${tier} has exactly one entry in the config" "1" "${matches}"
+    [[ -z "${entry}" || "${matches}" != 1 ]] && continue
 
     assert_eq "tier ${tier} has the document's name" \
         "${DOC_NAME[${tier}]}" "$(jq -r '.name' <<<"${entry}")"
