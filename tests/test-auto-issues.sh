@@ -15,10 +15,13 @@
 # What each half guards:
 #
 #   1. The decision. A first failure opens one issue; a failure while that issue
-#      is open comments on it; and a green, cancelled, pull-request, dispatched,
-#      non-default-branch or fork run does nothing at all, not even a read. If
-#      the dedupe broke, a red nightly run would open a new issue every day. If
-#      the guards broke, every pull request's red build would.
+#      is open comments on it; an issue anyone but the Actions bot opened never
+#      counts as "that issue", whatever its title or body; and a green,
+#      cancelled, pull-request, dispatched, non-default-branch or fork run does
+#      nothing at all, not even a read. If the dedupe broke, a red nightly run
+#      would open a new issue every day. If the author check broke, a stranger's
+#      issue would swallow every report. If the guards broke, every pull
+#      request's red build would.
 #
 #   2. No label, ever. `gh issue create --label` is how this would start handing
 #      an issue the authority an external system reads from labels
@@ -369,14 +372,20 @@ assert_eq "a failed push-triggered run opens an issue" "1" "$(calls "${dir}" 'is
 
 # --- the second failure comments --------------------------------------------
 
+# `gh issue list` reads authors over GraphQL, which spells the Actions bot this
+# way. Every issue the workflow opened itself carries it.
+BOT='{login: "app/github-actions", is_bot: true}'
+
 dir="$(new_case second-failure)"
-jq -n '[
-    {number: 31, title: "Unattended run failed: Nightly compliance",
-     body: "<!-- auto-issues:workflow=Nightly compliance -->\nother workflow"},
-    {number: 52, title: "Unattended run failed: Build container image",
-     body: "<!-- auto-issues:workflow=Build container image -->\nfirst failure"}
-]' >"${dir}/issues.json"
+jq -n "[
+    {number: 31, title: \"Unattended run failed: Nightly compliance\", author: ${BOT},
+     body: \"<!-- auto-issues:workflow=Nightly compliance -->\nother workflow\"},
+    {number: 52, title: \"Unattended run failed: Build container image\", author: ${BOT},
+     body: \"<!-- auto-issues:workflow=Build container image -->\nfirst failure\"}
+]" >"${dir}/issues.json"
 run_step "${dir}"
+assert_contains "the open-issue listing asks for each issue's author" \
+    "$(grep '^issue list' "${dir}/gh-calls")" "--json number,title,body,author"
 assert_eq "a failure while its issue is open exits cleanly" "0" "$(cat "${dir}/status")"
 assert_eq "it opens no second issue" "0" "$(calls "${dir}" 'issue create')"
 assert_eq "it comments once" "1" "$(calls "${dir}" 'issue comment')"
@@ -389,8 +398,8 @@ assert_contains "and the commit" \
 
 # An issue whose title a person edited is still found by its marker.
 dir="$(new_case renamed-issue)"
-jq -n '[{number: 77, title: "build is red again",
-         body: "<!-- auto-issues:workflow=Build container image -->\nx"}]' >"${dir}/issues.json"
+jq -n "[{number: 77, title: \"build is red again\", author: ${BOT},
+         body: \"<!-- auto-issues:workflow=Build container image -->\nx\"}]" >"${dir}/issues.json"
 run_step "${dir}"
 assert_contains "an issue retitled by a person is still found by its marker" \
     "$(grep '^issue comment' "${dir}/gh-calls")" "issue comment 77 "
@@ -398,11 +407,50 @@ assert_eq "and no second issue is opened" "0" "$(calls "${dir}" 'issue create')"
 
 # Only another workflow's issue is open: this one still needs its own.
 dir="$(new_case other-workflow-open)"
-jq -n '[{number: 31, title: "Unattended run failed: Nightly compliance",
-         body: "<!-- auto-issues:workflow=Nightly compliance -->"}]' >"${dir}/issues.json"
+jq -n "[{number: 31, title: \"Unattended run failed: Nightly compliance\", author: ${BOT},
+         body: \"<!-- auto-issues:workflow=Nightly compliance -->\"}]" >"${dir}/issues.json"
 run_step "${dir}"
 assert_eq "another workflow's open issue does not stand in for this one" \
     "1" "$(calls "${dir}" 'issue create')"
+
+# --- an issue the bot did not open never stands in for its own ---------------
+
+# The repository is public. Anyone can open an issue with the exact title, or
+# copy the marker out of a bot issue's body; another app can too. None of them
+# may become where failures are reported, or keep the bot from opening its own.
+dir="$(new_case stranger-issue)"
+jq -n '[
+    {number: 12, title: "Unattended run failed: Build container image",
+     author: {login: "someone", is_bot: false},
+     body: "<!-- auto-issues:workflow=Build container image -->\nmine now"},
+    {number: 13, title: "Unattended run failed: Build container image",
+     author: {login: "app/some-other-app", is_bot: true},
+     body: "<!-- auto-issues:workflow=Build container image -->"},
+    {number: 14, title: "Unattended run failed: Build container image",
+     author: null, body: "<!-- auto-issues:workflow=Build container image -->"}
+]' >"${dir}/issues.json"
+run_step "${dir}"
+assert_eq "an issue a person or another app opened with the title and marker exits cleanly" \
+    "0" "$(cat "${dir}/status")"
+assert_eq "it does not stand in for the bot's issue: one is opened" \
+    "1" "$(calls "${dir}" 'issue create')"
+assert_eq "and nothing is posted to theirs" "0" "$(calls "${dir}" 'issue comment')"
+
+# The bot's issue is open too, with a higher number: it still gets the report,
+# though the stranger's would sort first.
+dir="$(new_case stranger-and-bot-issue)"
+jq -n "[
+    {number: 12, title: \"Unattended run failed: Build container image\",
+     author: {login: \"someone\", is_bot: false},
+     body: \"<!-- auto-issues:workflow=Build container image -->\"},
+    {number: 52, title: \"Unattended run failed: Build container image\", author: ${BOT},
+     body: \"<!-- auto-issues:workflow=Build container image -->\nfirst failure\"}
+]" >"${dir}/issues.json"
+run_step "${dir}"
+assert_eq "with the bot's issue open beside a stranger's, it opens no second issue" \
+    "0" "$(calls "${dir}" 'issue create')"
+assert_contains "and comments on the bot's issue, not the stranger's" \
+    "$(grep '^issue comment' "${dir}/gh-calls")" "issue comment 52 "
 
 # --- the nightly workflow gets its own first step ---------------------------
 
