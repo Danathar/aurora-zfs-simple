@@ -109,6 +109,11 @@
       "workflow": "ai-fix.yml",
       "job": "Check credentials and target",
       "reason": "Runs only when someone labels an issue ai-fix-requested, so the sample is usually empty and the row would read 'no successful runs sampled' indefinitely. Bounded at 5 minutes for a handful of gh api calls."
+    },
+    {
+      "workflow": "auto-issues.yml",
+      "job": "Open or update the failure issue",
+      "reason": "Its step runs only after another workflow has failed, so the sample is usually empty and the row would read 'no successful runs sampled' indefinitely. Bounded at 5 minutes for a handful of gh calls."
     }
   ]
 }

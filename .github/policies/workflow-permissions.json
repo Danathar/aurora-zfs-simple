@@ -14,6 +14,12 @@
         "fix": {"contents": "write", "pull-requests": "write", "issues": "write", "id-token": "write", "actions": "read"}
       }
     },
+    "auto-issues.yml": {
+      "workflow": null,
+      "jobs": {
+        "report": {"issues": "write", "actions": "read"}
+      }
+    },
     "auto-qa.yml": {
       "workflow": null,
       "jobs": {
