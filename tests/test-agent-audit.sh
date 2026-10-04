@@ -368,4 +368,99 @@ assert_contains "the default window starts 31 days back" \
 assert_contains "an empty window is reported as such" \
     "${A_SUMMARY}" "0 of the 0 pull requests merged in the window were written by an agent."
 
+# =============================================================================
+# F. Near misses: text that looks like the record but is not
+# =============================================================================
+#
+# A pull request about this audit says "— hive:" in its prose, and a commit
+# message can quote a trailer mid-line. Only a line that STARTS with the
+# signature, and a trailer that starts its own line, count. Each case below
+# was a surviving mutant of the step before it was added.
+
+# pr_with <number> <author> <title> <body> [merged-by login or "null"]
+pr_with() {
+    local by=${5:-Danathar}
+    jq -n --argjson n "$1" --arg a "$2" --arg t "$3" --arg b "$4" --arg by "${by}" --arg r "${REPO_NAME}" '{
+        number: $n, title: $t, body: $b,
+        url: "https://github.com/\($r)/pull/\($n)",
+        mergedAt: "2026-10-02T12:00:00Z",
+        mergedBy: (if $by == "null" then null else {login: $by} end),
+        author: {login: $a, is_bot: ($a | startswith("app/"))}
+    }'
+}
+
+PROSE="Every agent pull request ends with a \`— hive:\` line naming its model."
+
+new_case
+stage_list "$(pr_with 60 Danathar "docs: explain the audit" "${PROSE}")" \
+    "$(pr_with 61 "${APP}" "fix: prose only" "${PROSE}")" \
+    "$(pr_with 62 "${APP}" "fix: prose then signature" "${PROSE}
+
+${SIG}")"
+stage_detail 61 "${SIGNED}"
+stage_detail 62 "${SIGNED}"
+run_audit 2026-10-01
+assert_not_contains "a maintainer pull request that mentions '— hive:' mid-line is not an agent's" \
+    "${A_SUMMARY}" "#60"
+assert_not_contains "so its commits are not fetched" "${A_CALLS}" "pr view 60"
+assert_contains "a Hive-app pull request whose only '— hive:' is mid-line has no signature" \
+    "${A_SUMMARY}" "- #61: opened by the Hive app with no \`— hive:\` signature line"
+assert_contains "the backend is read from the line that starts with the signature, not from prose" \
+    "${A_SUMMARY}" "| ${APP} | Danathar | backend=omp model=anthropic/claude-opus-5-5 effort=high | 1 | all |"
+assert_not_contains "no prose line is reported as a backend" "${A_SUMMARY}" "naming its model"
+assert_eq "the prose-only Hive-app pull request fails the run" "1" "${A_STATUS}"
+assert_not_contains "a window with only enforced rows has no history section" \
+    "${A_SUMMARY}" "#### Before enforcement"
+
+new_case
+stage_list "$(pr 63 "${APP}" 2026-10-02 yes)"
+stage_detail 63 "Reverts a change that was Signed-off-by: someone else"
+run_audit 2026-10-01
+assert_eq "a trailer quoted mid-line does not sign the commit off" "1" "${A_STATUS}"
+assert_contains "and the commit is named" "${A_SUMMARY}" "- #63: commit(s) 0630000 carry no Signed-off-by trailer"
+
+# =============================================================================
+# G. The table: cells, dates, and an absent merger
+# =============================================================================
+
+new_case
+stage_list "$(pr_with 70 "${APP}" "fix(ci): a | b" "${SIG}" null)"
+stage_detail 70 "${SIGNED}"
+run_audit 2026-10-01
+assert_eq "a title with a pipe and no merger still audits cleanly" "0" "${A_STATUS}"
+assert_contains "a pipe in a title is escaped so it does not split the row" \
+    "${A_SUMMARY}" "fix(ci): a \\| b |"
+assert_contains "the merge date is the day, and a missing merger is 'unknown'" \
+    "${A_SUMMARY}" "| 2026-10-02 | ${APP} | unknown |"
+
+new_case
+stage_list
+run_audit 2026-10-01
+assert_not_contains "an empty window prints no table header" "${A_SUMMARY}" "| PR | Merged |"
+
+# =============================================================================
+# H. A commit list that could not be fetched is an error, not zero commits
+# =============================================================================
+#
+# A `gh pr view` that fails partway through the loop must stop the run: under
+# errexit and pipefail the loop's failure is the pipeline's. Audited instead,
+# the pull request would reach the row builder with nothing fetched -- which
+# refuses it by name as a second line of defence.
+
+new_case
+stage_list "$(pr 80 "${APP}" 2026-10-02 yes)" "$(pr 81 "${APP}" 2026-10-02 yes)" \
+    "$(pr 82 "${APP}" 2026-10-02 yes)"
+stage_detail 80 "${SIGNED}"
+stage_detail 82 "${SIGNED}"
+run_audit 2026-10-01
+assert_eq "a pull request whose commits could not be fetched fails the run" "1" "${A_STATUS}"
+assert_not_contains "it is not audited as signed" "${A_OUT}" "No finding"
+assert_eq "nothing is written to the summary" "" "${A_SUMMARY}"
+
+new_case
+stage_list "$(pr 90 Danathar 2026-10-02 yes)"
+run_audit "2026-10-1"
+assert_eq "a date with a one-digit day is refused" "2" "${A_STATUS}"
+assert_eq "and gh is not called" "" "${A_CALLS}"
+
 finish
