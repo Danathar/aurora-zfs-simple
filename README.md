@@ -216,6 +216,7 @@ docs/branch-protection.md                 what protects `main`, and how to check
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs
 docs/multi-agent.md                       who works here, how work reaches an agent, and who merges
 docs/SECURITY-AI.md                       what an agent may do here, and what it must not touch
+docs/ai-ops-runbook.md                    what to do when a workflow, badge, agent run or agent pull request goes red
 docs/reflections/                         durable lessons from things that went wrong
 .claude/risk-config.json                  the risk tiers as JSON, held equal to that page by a test
 ```

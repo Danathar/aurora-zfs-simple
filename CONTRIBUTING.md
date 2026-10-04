@@ -32,6 +32,9 @@ places:
 60-second confirmation and how to choose between waiting, pinning and switching.
 Pin **both** inputs or neither; a half-pin is the one move guaranteed to break.
 
+[`docs/ai-ops-runbook.md`](docs/ai-ops-runbook.md) says what to do when a workflow,
+badge, agent run or agent pull request goes red, one signal at a time.
+
 ## Running the tests
 
 ```bash
