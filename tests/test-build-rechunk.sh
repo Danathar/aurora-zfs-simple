@@ -740,6 +740,23 @@ assert_not_contains "a failed kernel query never starts the chunkah container" \
     "$(calls_of "${query_fail_dir}/calls")" "--mount=type=image"
 rm -f "${ARCHIVE}"
 
+# An rpm that exits 0 but prints nothing is the case the `[ -z ]` half of the
+# guard exists for: `printf '%s\n' ""` is still one line, so the line count
+# alone would pass it and the image would ship `ostree.linux=` with no value.
+empty_query_dir="$(mktemp -d "${TMP_ROOT}/rechunk-empty-kernel.XXXXXX")"
+: >"${empty_query_dir}/kernel-query"
+run_rechunk "${empty_query_dir}" "${TAG_LIST}"
+
+if [[ "$(cat "${empty_query_dir}/status")" != "0" ]]; then
+    _pass "an empty kernel query fails the step instead of labelling the image with nothing"
+else
+    _fail "an empty kernel query fails the step instead of labelling the image with nothing" \
+        "the step exited 0 after rpm -q kernel-core printed nothing"
+fi
+assert_not_contains "an empty kernel query never starts the chunkah container" \
+    "$(calls_of "${empty_query_dir}/calls")" "--mount=type=image"
+rm -f "${ARCHIVE}"
+
 two_kernels_dir="$(mktemp -d "${TMP_ROOT}/rechunk-two-kernels.XXXXXX")"
 printf '%s\n%s\n' "7.1.10-200.fc44.x86_64" "${SHIPPED_KERNEL}" >"${two_kernels_dir}/kernel-query"
 run_rechunk "${two_kernels_dir}" "${TAG_LIST}"
