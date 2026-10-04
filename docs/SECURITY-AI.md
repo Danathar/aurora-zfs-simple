@@ -133,6 +133,27 @@ So:
 - Treat the list above as a snapshot, not a constant. It is owned by an external
   system and can change without a commit here.
 
+## Failure issues hold `issues: write`
+
+[`.github/workflows/auto-issues.yml`](../.github/workflows/auto-issues.yml) opens
+one issue when the scheduled image build or the nightly compliance check fails,
+because nobody watches those runs and a red badge is seen only by whoever opens
+the README. It is the only workflow besides `ai-fix.yml` with `issues: write`,
+and the grant is bounded:
+
+- the token holds `issues: write` and `actions: read` and nothing else, with no
+  checkout, so it can create and comment on issues and read job names, and
+  cannot touch repository content, pull requests, packages or secrets;
+- it acts only on a failed or timed-out run on the default branch started by a
+  schedule or a push, never on a pull request or a fork;
+- it keeps one open issue per workflow and comments on it rather than opening
+  another, and it never closes, edits or labels an issue, so what it writes
+  cannot carry the approval signal described above;
+- the run's fields reach the shell through `env:` only.
+
+`tests/test-auto-issues.sh` executes the step to hold the behaviour, and
+`tests/test-workflow-permissions.sh` holds the scopes.
+
 ## Inputs to treat as untrusted
 
 An agent working here reads text that an attacker could influence. None of it is
@@ -325,6 +346,32 @@ meets each condition, and the points worth knowing:
   run summary, and succeeds.
 - Fork pull requests are skipped rather than half-attempted: the head branch is
   in another repository and this job's token cannot push there.
+
+### Reading the record back
+
+The two conditions above leave a record: the `— hive:` line that ends an agent
+pull request's description (backend, model, effort), and the Signed-off-by
+trailer on its commits. Nothing in the ruleset requires either — the only
+required status check is `Shell tests`, and omp-backed runs push under the
+maintainer's own login, so the author alone does not say which pull requests an
+agent wrote.
+[`.github/workflows/agent-audit.yml`](../.github/workflows/agent-audit.yml)
+reads it back, monthly and on demand:
+
+- **What it lists.** Every pull request merged in the window that the Hive app
+  opened or whose description carries the signature line, one row each with the
+  backend and model, who merged it, and how many commits carry a sign-off.
+  Dependabot and Renovate pull requests are not agents' and are left out.
+- **What fails it.** A Hive-app pull request with no signature line, or a
+  commit on an agent pull request with no Signed-off-by trailer, merged on or
+  after the date the workflow records as its enforcement start. Earlier misses
+  are listed under their own heading and do not fail the run.
+- **What it does not judge.** Who merged a pull request is reported, not
+  checked: there is no second reviewer here to compare it against.
+- **Its reach.** Its job holds `contents: read` and `pull-requests: read`,
+  checks nothing out, runs no action, and writes only the run summary. Run it
+  by hand with `gh workflow run agent-audit.yml --repo Danathar/aurora-zfs-simple -f since=YYYY-MM-DD`.
+  `tests/test-agent-audit.sh` executes its step against a stubbed `gh`.
 
 ## What this policy does not cover
 

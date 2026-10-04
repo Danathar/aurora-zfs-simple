@@ -38,7 +38,9 @@
 # file that actually holds that manifest. The dated snapshots under
 # docs/metrics/ are read as well: each must be linked from metrics.md, and each
 # command in it must parse, name this repository and be pinned to the scope its
-# numbers were read over.
+# numbers were read over. The ledgers under docs/agent-tasks/ are held to the
+# same rules, plus the commit their `git log` commands read, and that
+# directory's README is held to the marks the ledgers actually count.
 
 set -uo pipefail
 
@@ -636,25 +638,46 @@ unscoped_gh_calls() {
 assert_eq "every gh call in docs/metrics.md names ${repo_slug}" \
     "" "$(unscoped_gh_calls "${joined_blocks}")"
 
+# docs/agent-tasks/ holds the same kind of file -- a dated reading, with its
+# commands under every table -- so its ledgers go through the same loop. Its
+# README.md is the method and is read separately below.
+AGENT_TASKS_README="${REPO_ROOT}/docs/agent-tasks/README.md"
 snapshots=()
 while IFS= read -r snapshot; do
     snapshots+=("${snapshot}")
-done < <(find "${REPO_ROOT}/docs/metrics" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
+done < <(
+    {
+        find "${REPO_ROOT}/docs/metrics" -maxdepth 1 -type f -name '*.md'
+        find "${REPO_ROOT}/docs/agent-tasks" -maxdepth 1 -type f -name '*.md' ! -name README.md
+    } 2>/dev/null | LC_ALL=C sort
+)
 require_nonempty "a dated snapshot under docs/metrics/" "${snapshots[*]}"
+require_nonempty "a dated ledger under docs/agent-tasks/" "$(printf '%s\n' "${snapshots[@]}" | grep '/docs/agent-tasks/')"
 
 for snapshot in "${snapshots[@]}"; do
     rel="${snapshot#"${REPO_ROOT}"/}"
     read_on="$(basename "${snapshot}" .md)"
+    if [[ "${rel}" == docs/agent-tasks/* ]]; then
+        kind="ledger"
+        expected_title="# Agent task ledger — ${read_on}"
+        index_doc="${AGENT_TASKS_README}"
+        index_link="](${read_on}.md)"
+    else
+        kind="snapshot"
+        expected_title="# Metrics snapshot — ${read_on}"
+        index_doc="${METRICS_DOC}"
+        index_link="](metrics/${read_on}.md)"
+    fi
     if [[ "${read_on}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && date -d "${read_on}" >/dev/null 2>&1; then
         _pass "${rel} is named for the date it was read"
     else
-        _fail "${rel} is named for the date it was read" "expected docs/metrics/YYYY-MM-DD.md"
+        _fail "${rel} is named for the date it was read" "expected ${rel%/*}/YYYY-MM-DD.md"
         continue
     fi
     assert_eq "${rel}'s title carries the same date" \
-        "# Metrics snapshot — ${read_on}" "$(head -1 "${snapshot}")"
-    assert_contains "docs/metrics.md links to ${rel}" \
-        "$(cat "${METRICS_DOC}")" "](metrics/${read_on}.md)"
+        "${expected_title}" "$(head -1 "${snapshot}")"
+    assert_contains "${index_doc#"${REPO_ROOT}"/} links to ${rel}" \
+        "$(cat "${index_doc}")" "${index_link}"
 
     snapshot_blocks="$(fenced_blocks "${snapshot}" bash)"
     require_nonempty "runnable bash blocks in ${rel}" "${snapshot_blocks}" || continue
@@ -685,6 +708,40 @@ for snapshot in "${snapshots[@]}"; do
     jq_flags="$(grep -oE -- '(^|[[:space:]])(-q|--jq)([[:space:]]|=)' <<<"${gh_lines}" | wc -l)"
     assert_eq "every jq filter in ${rel} is single-quoted on one line, so the compile check read it" \
         "${jq_flags}" "$(grep -c . <<<"${snapshot_filters}")"
+
+    # A ledger also reads `main`. `git log` without a revision reads whatever is
+    # checked out, so every `git log` in it has to start from the one commit its
+    # opening names, and that commit has to be where the README says the ledger
+    # was read.
+    if [[ "${kind}" == "ledger" ]]; then
+        # SC2016: the backticks are Markdown delimiters in the regex.
+        # shellcheck disable=SC2016
+        ledger_sha="$(tr '\n' ' ' <"${snapshot}" | tr -s '[:space:]' ' ' |
+            grep -oE '`main` at `[0-9a-f]{7,40}`' | head -1 | grep -oE '[0-9a-f]{7,40}')"
+        require_nonempty "the commit ${rel} reads \`main\` at" "${ledger_sha}"
+        git_lines="$(grep -E '(^|[^[:alnum:]_./-])git log ' <<<"${snapshot_joined}")"
+        require_nonempty "git log commands in ${rel}" "${git_lines}"
+        unrooted=""
+        while IFS= read -r line; do
+            [[ -z "${line}" ]] && continue
+            [[ "${line}" == "git log ${ledger_sha} "* ]] || unrooted+="${line}"$'\n'
+        done <<<"${git_lines}"
+        assert_eq "every git log in ${rel} starts from ${ledger_sha}" "" "${unrooted%$'\n'}"
+        # Reachable only when the checkout has history; a shallow one cannot say.
+        if git -C "${REPO_ROOT}" rev-parse --verify -q "${ledger_sha}^{commit}" >/dev/null 2>&1; then
+            if git -C "${REPO_ROOT}" merge-base --is-ancestor "${ledger_sha}" HEAD 2>/dev/null; then
+                _pass "${ledger_sha} is a commit on this branch's history"
+            else
+                _fail "${ledger_sha} is a commit on this branch's history" \
+                    "${rel} was read at a commit that is not an ancestor of HEAD"
+            fi
+        fi
+        index_entry="$(grep -F -- "${index_link}" "${AGENT_TASKS_README}")"
+        assert_contains "the README's entry for ${rel} names the commit it was read at" \
+            "${index_entry}" "\`${ledger_sha}\`"
+        ledger_bound="$(grep -oE '\.number <= [0-9]+' <<<"${snapshot_joined}" | head -1 | grep -oE '[0-9]+')"
+        assert_contains "and the last pull request in scope" "${index_entry}" "#${ledger_bound},"
+    fi
 
     unpinned=""
     while IFS= read -r line; do
@@ -733,6 +790,57 @@ for snapshot in "${snapshots[@]}"; do
     fi
     require_claim "${snapshot}" "the cutoff is when the last pull request in scope was opened" \
         "\`--search 'created:<=${pr_cutoffs}'\` is the moment #${pr_bounds##* } was opened"
+done
+
+# =============================================================================
+# docs/agent-tasks/README.md -- the method the ledgers apply
+# =============================================================================
+#
+# The README names the marks an agent change leaves and the command that reads
+# each; the ledger is the evidence for it. Its own commands are held to the
+# repository rule (they name this repository, they parse, their filters compile)
+# but are not pinned, because they are the ones a reader runs for current
+# values.
+
+agent_tasks_blocks="$(fenced_blocks "${AGENT_TASKS_README}" bash)"
+require_nonempty "runnable bash blocks in docs/agent-tasks/README.md" "${agent_tasks_blocks}"
+if bash -n <<<"${agent_tasks_blocks}" 2>/dev/null; then
+    _pass "every bash block in docs/agent-tasks/README.md parses"
+else
+    _fail "every bash block in docs/agent-tasks/README.md parses" "bash -n rejected the concatenated blocks"
+fi
+agent_tasks_joined="$(sed -e ':a' -e '/\\$/N; s/\\\n[[:space:]]*/ /; ta' <<<"${agent_tasks_blocks}")"
+assert_eq "every gh call in docs/agent-tasks/README.md names ${repo_slug}" \
+    "" "$(unscoped_gh_calls "${agent_tasks_joined}")"
+agent_tasks_filters="$(grep -oE -- "(-q|--jq) '[^']+'" <<<"${agent_tasks_joined}" |
+    sed -E "s/^(-q|--jq) '//; s/'\$//")"
+require_nonempty "jq filters in docs/agent-tasks/README.md" "${agent_tasks_filters}"
+uncompiled=""
+while IFS= read -r filter; do
+    [[ -z "${filter}" ]] && continue
+    jq "${filter}" <<<'[]' >/dev/null 2>&1
+    [[ $? -eq 3 ]] && uncompiled+="${filter:0:60}"$'\n'
+done <<<"${agent_tasks_filters}"
+assert_eq "jq compiles every filter in docs/agent-tasks/README.md" "" "${uncompiled%$'\n'}"
+assert_contains "docs/metrics.md points at docs/agent-tasks/" \
+    "$(cat "${METRICS_DOC}")" "](agent-tasks/README.md)"
+
+# Each mark the README says an agent change leaves has to be one a ledger reads
+# with a command, so a mark described but never counted -- or counted but no
+# longer described -- is a red suite.
+ledger_commands=""
+for ledger in "${snapshots[@]}"; do
+    [[ "${ledger}" == "${REPO_ROOT}"/docs/agent-tasks/* ]] || continue
+    ledger_commands+="$(fenced_blocks "${ledger}" bash)"$'\n'
+done
+for mark in '— hive:' 'agent=' 'backend=' 'headRefName' 'closingIssuesReferences' \
+    'Hive-Run' 'Hive-Plan' 'hive.kubestellar.io' 'danathar-atomic-hive'; do
+    assert_contains "docs/agent-tasks/README.md names the mark ${mark}" \
+        "$(cat "${AGENT_TASKS_README}")" "${mark}"
+done
+for mark in '— hive:' 'agent=' 'backend=' 'headRefName' 'closingIssuesReferences' \
+    'Hive-Run' 'hive\.kubestellar\.io' 'danathar-atomic-hive'; do
+    assert_contains "a ledger reads the mark ${mark} with a command" "${ledger_commands}" "${mark}"
 done
 
 # =============================================================================
