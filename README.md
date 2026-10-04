@@ -213,6 +213,7 @@ docs/agent-tasks/                         which agent made a change and for whic
 docs/review-rubric.md                     what a review of a change here should ask
 docs/branch-protection.md                 what protects `main`, and how to check it is applied
 docs/risk-tiers.md                        how to classify a change, and the evidence each tier needs
+docs/multi-agent.md                       who works here, how work reaches an agent, and who merges
 docs/SECURITY-AI.md                       what an agent may do here, and what it must not touch
 docs/ai-ops-runbook.md                    what to do when a workflow, badge, agent run or agent pull request goes red
 docs/reflections/                         durable lessons from things that went wrong
