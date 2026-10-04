@@ -222,7 +222,7 @@ if key is not None:
     # mentions is a real one. A new pull_request job that nobody classified is
     # exactly the one that would be missed when the required set is revisited.
     pr_jobs, job_files = set(), {}
-    for path in sorted(glob.glob(os.path.join(workflows, "*.yml"))):
+    for path in sorted(glob.glob(os.path.join(workflows, "*.yml")) + glob.glob(os.path.join(workflows, "*.yaml"))):
         doc = yaml.safe_load(open(path, encoding="utf-8"))
         on = doc.get(True, doc.get("on", {}))
         triggers = set(on) if isinstance(on, dict) else set(on if isinstance(on, list) else [on])

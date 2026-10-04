@@ -389,7 +389,10 @@ require_claim "and that rotating the key invalidates every published signature" 
     'cosign.pub is committed and consumers pin it, so rotating the key invalidates every published signature'
 
 # "exists only in the signing step of build.yml", computed.
-secret_workflows="$(cd "${REPO_ROOT}" && grep -l 'secrets\.SIGNING_SECRET' .github/workflows/*.yml | sort)"
+# Both suffixes: GitHub runs a .yaml workflow too, and one handed the secret
+# would otherwise be invisible here.
+secret_workflows="$(cd "${REPO_ROOT}" && find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+    -exec grep -l 'secrets\.SIGNING_SECRET' {} + | sort)"
 assert_eq "exactly one workflow is handed SIGNING_SECRET" \
     ".github/workflows/build.yml" "${secret_workflows}"
 assert_eq "and it is handed to exactly one step there" "1" \
