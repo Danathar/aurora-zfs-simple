@@ -136,10 +136,10 @@ So:
 ## Failure issues hold `issues: write`
 
 [`.github/workflows/auto-issues.yml`](../.github/workflows/auto-issues.yml) opens
-one issue when the scheduled image build or the nightly compliance check fails,
-because nobody watches those runs and a red badge is seen only by whoever opens
-the README. It is the only workflow besides `ai-fix.yml` with `issues: write`,
-and the grant is bounded:
+one issue when the image build on `main`, scheduled or after a push, or the
+nightly compliance check fails, because nobody watches those runs and a red
+badge is seen only by whoever opens the README. It is the only workflow besides
+`ai-fix.yml` with `issues: write`, and the grant is bounded:
 
 - the token holds `issues: write` and `actions: read` and nothing else, with no
   checkout, so it can create and comment on issues and read job names, and
