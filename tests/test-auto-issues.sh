@@ -203,15 +203,80 @@ assert_eq "the step's run: body holds no Actions expression" \
 
 # Every field the step reads must be wired from the event through env:, so a
 # variable the body uses but the workflow never sets cannot pass by luck here.
+# Being set is not enough: each must come from the field that names it. The
+# cases below run the body with these values filled in by hand, so they cannot
+# see the wiring. HEAD_REPO read from github.repository would make the fork
+# guard compare this repository to itself; DEFAULT_BRANCH read from the run's
+# head_branch would make the branch guard compare a branch to itself; RUN_EVENT
+# read from github.event_name is always workflow_run. Each of those turns a
+# guard off while every case here still passes.
+# shellcheck disable=SC2016 # Actions expressions, compared as literal text
+EXPECTED_ENV='{
+  "CONCLUSION": "${{ github.event.workflow_run.conclusion }}",
+  "DEFAULT_BRANCH": "${{ github.event.repository.default_branch }}",
+  "GH_TOKEN": "${{ github.token }}",
+  "HEAD_BRANCH": "${{ github.event.workflow_run.head_branch }}",
+  "HEAD_REPO": "${{ github.event.workflow_run.head_repository.full_name }}",
+  "HEAD_SHA": "${{ github.event.workflow_run.head_sha }}",
+  "REPO": "${{ github.repository }}",
+  "RUN_ATTEMPT": "${{ github.event.workflow_run.run_attempt }}",
+  "RUN_EVENT": "${{ github.event.workflow_run.event }}",
+  "RUN_ID": "${{ github.event.workflow_run.id }}",
+  "RUN_URL": "${{ github.event.workflow_run.html_url }}",
+  "SERVER_URL": "${{ github.server_url }}",
+  "WORKFLOW_NAME": "${{ github.event.workflow_run.name }}"
+}'
 unwired=""
-for var in GH_TOKEN REPO SERVER_URL DEFAULT_BRANCH WORKFLOW_NAME CONCLUSION RUN_EVENT \
-    HEAD_BRANCH HEAD_REPO HEAD_SHA RUN_ID RUN_ATTEMPT RUN_URL; do
-    if ! jq -e --arg v "${var}" --arg s "${STEP_NAME}" \
-        '.jobs.report.steps[] | select(.name == $s) | .env | has($v)' <"${WF_JSON}" >/dev/null; then
-        unwired+="${var}; "
+while IFS= read -r var; do
+    want="$(jq -r --arg v "${var}" '.[$v]' <<<"${EXPECTED_ENV}")"
+    got="$(jq -r --arg v "${var}" --arg s "${STEP_NAME}" \
+        '.jobs.report.steps[] | select(.name == $s) | .env[$v] // "(unset)"' <"${WF_JSON}")"
+    [[ "${got}" == "${want}" ]] || unwired+="${var}=${got}; "
+done < <(jq -r 'keys[]' <<<"${EXPECTED_ENV}")
+assert_eq "every variable the step reads is set from the field of the event that names it" \
+    "" "${unwired}"
+assert_eq "and the step's env: sets nothing else" \
+    "$(jq -c 'keys' <<<"${EXPECTED_ENV}")" \
+    "$(jq -c --arg s "${STEP_NAME}" '.jobs.report.steps[] | select(.name == $s) | .env | keys' <"${WF_JSON}")"
+missing_vars=""
+while IFS= read -r var; do
+    grep -q -- "\${${var}}" "${STEP}" || missing_vars+="${var}; "
+done < <(jq -r 'keys[] | select(. != "GH_TOKEN")' <<<"${EXPECTED_ENV}")
+assert_eq "and the body reads every one of them (gh reads GH_TOKEN itself)" "" "${missing_vars}"
+
+# The job-level `if:` is a filter in front of the step's own conclusion check.
+# A conclusion the step reports but the filter drops never reaches the step,
+# so timed_out would go silent with every case below still green. The filter
+# must name exactly the conclusions the step's first `case` accepts.
+IF_EXPR="$(wf '.jobs.report.if // ""')"
+if_conclusions=""
+if_bad=""
+while IFS= read -r term; do
+    term="$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"${term}")"
+    if [[ "${term}" =~ ^github\.event\.workflow_run\.conclusion\ ==\ \'([a-z_]+)\'$ ]]; then
+        if_conclusions+="${BASH_REMATCH[1]}"$'\n'
+    else
+        if_bad+="[${term}] "
     fi
-done
-assert_eq "every variable the step reads is set from the event in env:" "" "${unwired}"
+done <<<"${IF_EXPR//||/$'\n'}"
+assert_eq "the job's if: is only conclusion == '...' terms joined by ||" "" "${if_bad}"
+step_conclusions="$(awk '/case "\$\{CONCLUSION\}" in/ { getline; print; exit }' "${STEP}" |
+    sed -E 's/^[[:space:]]+//; s/\).*//' | tr '|' '\n')"
+assert_eq "the step's own conclusion check accepts failure and timed_out" \
+    "failure timed_out" "$(LC_ALL=C sort <<<"${step_conclusions}" | xargs)"
+assert_eq "the job's if: admits exactly the conclusions the step reports" \
+    "$(LC_ALL=C sort <<<"${step_conclusions}" | xargs)" \
+    "$(LC_ALL=C sort <<<"${if_conclusions}" | xargs)"
+
+# Two failures of one workflow minutes apart are serialised so the second sees
+# the issue the first opened. A group keyed on anything but the watched
+# workflow's name (this run's id, say) serialises nothing; cancel-in-progress
+# would drop the first report outright.
+# shellcheck disable=SC2016 # an Actions expression, compared as literal text
+assert_eq "runs are serialised per watched workflow" \
+    '"auto-issues-${{ github.event.workflow_run.name }}"' "$(wf '.concurrency.group | tojson')"
+assert_eq "and a queued report never cancels one in progress" \
+    "false" "$(wf '.concurrency["cancel-in-progress"] | tojson')"
 
 # shellcheck disable=SC2016 # Actions expressions, compared as literal text
 assert_eq "the token is the job's own github.token" \
@@ -230,6 +295,8 @@ fi
 # open-issue listing from files in the case directory and records everything
 # else. It refuses a listing that does not ask for open issues, so a body that
 # stopped restricting to open would fail instead of matching a closed issue.
+# It returns the listing the way gh does, newest first and cut at --limit (30
+# when the flag is absent), so the bot's issue falls out of a short listing.
 make_gh() {
     local dir=$1
     mkdir -p "${dir}/bin"
@@ -263,9 +330,18 @@ case "\$1 \$2" in
         ;;
     "issue list")
         case " \$* " in
-            *" --state open "*) cat "\${dir}/issues.json" ;;
+            *" --state open "*) ;;
             *) printf 'gh stub: issue list without --state open\n' >&2; exit 1 ;;
         esac
+        # Like gh: newest first, and only --limit of them (30 when not given).
+        limit=30
+        args=("\$@")
+        for i in "\${!args[@]}"; do
+            if [ "\${args[\$i]}" = "--limit" ] || [ "\${args[\$i]}" = "-L" ]; then
+                limit=\${args[\$((i + 1))]}
+            fi
+        done
+        jq --argjson n "\${limit}" 'sort_by(-.number) | .[:\$n]' <"\${dir}/issues.json"
         ;;
     "issue create")
         cat >"\${dir}/create-body"
@@ -325,6 +401,7 @@ dir="$(new_case first-failure)"
 jq -n '{jobs: [
     {name: "Shell tests", conclusion: "success"},
     {name: "Build and push image", conclusion: "failure"},
+    {name: "Slow sibling", conclusion: "timed_out"},
     {name: "Cancelled sibling", conclusion: "cancelled"}
 ]}' >"${dir}/jobs.json"
 run_step "${dir}"
@@ -346,6 +423,13 @@ assert_contains "the body names the commit" \
     "${body}" "0123456789abcdef0123456789abcdef01234567"
 assert_contains "the body lists the job that failed" \
     "${body}" "- Build and push image"
+assert_contains "and the job that timed out" "${body}" "- Slow sibling"
+assert_contains "the jobs lookup pages through every job" \
+    "$(grep '^api ' "${dir}/gh-calls")" "--paginate"
+assert_contains "the body says how the run ended, on which branch, started by what" \
+    "${body}" "**Build container image** failure on \`main\`, started by \`schedule\`."
+assert_contains "and links the workflow that opened it" \
+    "${body}" "[auto-issues.yml](https://github.com/Danathar/aurora-zfs-simple/blob/main/.github/workflows/auto-issues.yml)"
 assert_not_contains "and not a job that succeeded" "${body}" "- Shell tests"
 assert_not_contains "and not a job that was merely cancelled" "${body}" "- Cancelled sibling"
 assert_contains "for the build, the first step is AGENTS.md's akmod skew section" \
@@ -364,12 +448,16 @@ assert_eq "AGENTS.md has the section the build issue links to" \
 dir="$(new_case timed-out)"
 run_step "${dir}" CONCLUSION=timed_out
 assert_eq "a timed-out run opens an issue" "1" "$(calls "${dir}" 'issue create')"
+assert_contains "that says it timed out" \
+    "$(cat "${dir}/create-body")" "**Build container image** timed_out on"
 
 # --- a push to the default branch counts ------------------------------------
 
 dir="$(new_case push)"
 run_step "${dir}" RUN_EVENT=push
 assert_eq "a failed push-triggered run opens an issue" "1" "$(calls "${dir}" 'issue create')"
+assert_contains "that says a push started it" \
+    "$(cat "${dir}/create-body")" "started by \`push\`"
 
 # --- the second failure comments --------------------------------------------
 
@@ -378,6 +466,7 @@ assert_eq "a failed push-triggered run opens an issue" "1" "$(calls "${dir}" 'is
 BOT='{login: "app/github-actions", is_bot: true}'
 
 dir="$(new_case second-failure)"
+jq -n '{jobs: [{name: "Build and push image", conclusion: "failure"}]}' >"${dir}/jobs.json"
 jq -n "[
     {number: 31, title: \"Unattended run failed: Nightly compliance\", author: ${BOT},
      body: \"<!-- auto-issues:workflow=Nightly compliance -->\nother workflow\"},
@@ -396,6 +485,10 @@ assert_contains "the comment carries the run link" \
     "$(cat "${dir}/comment-body")" "https://github.com/Danathar/aurora-zfs-simple/actions/runs/4242"
 assert_contains "and the commit" \
     "$(cat "${dir}/comment-body")" "0123456789abcdef0123456789abcdef01234567"
+assert_contains "and names the workflow and how it ended" \
+    "$(cat "${dir}/comment-body")" "**Build container image** failed again (failure)."
+assert_contains "and the job that failed" \
+    "$(cat "${dir}/comment-body")" "- Build and push image"
 
 # An issue whose title a person edited is still found by its marker.
 dir="$(new_case renamed-issue)"
@@ -405,6 +498,43 @@ run_step "${dir}"
 assert_contains "an issue retitled by a person is still found by its marker" \
     "$(grep '^issue comment' "${dir}/gh-calls")" "issue comment 77 "
 assert_eq "and no second issue is opened" "0" "$(calls "${dir}" 'issue create')"
+
+# An issue whose body a person edited, losing the marker, is still found by its
+# exact title.
+dir="$(new_case edited-body)"
+jq -n "[{number: 78, title: \"Unattended run failed: Build container image\", author: ${BOT},
+         body: \"rewritten by hand\"}]" >"${dir}/issues.json"
+run_step "${dir}"
+assert_contains "an issue whose body lost the marker is still found by its exact title" \
+    "$(grep '^issue comment' "${dir}/gh-calls")" "issue comment 78 "
+assert_eq "and no second issue is opened for it" "0" "$(calls "${dir}" 'issue create')"
+
+# Two of the bot's issues for one workflow are open (a person reopened an old
+# one, or two runs raced before concurrency serialised them). Reports go to the
+# oldest, every time, so they do not alternate.
+dir="$(new_case two-bot-issues)"
+jq -n "[
+    {number: 52, title: \"Unattended run failed: Build container image\", author: ${BOT},
+     body: \"<!-- auto-issues:workflow=Build container image -->\"},
+    {number: 60, title: \"Unattended run failed: Build container image\", author: ${BOT},
+     body: \"<!-- auto-issues:workflow=Build container image -->\"}
+]" >"${dir}/issues.json"
+run_step "${dir}"
+assert_contains "with two of its issues open, it comments on the oldest" \
+    "$(grep '^issue comment' "${dir}/gh-calls")" "issue comment 52 "
+
+# The bot's issue is older than a page of newer open issues. gh lists newest
+# first and stops at --limit, 30 by default, so a listing cut short would miss
+# it and open a duplicate on every failure.
+dir="$(new_case busy-tracker)"
+jq -n "[{number: 5, title: \"Unattended run failed: Build container image\", author: ${BOT},
+         body: \"<!-- auto-issues:workflow=Build container image -->\"}]
+       + [range(100; 300) | {number: ., title: \"unrelated\", author: {login: \"someone\"}, body: \"\"}]" \
+    >"${dir}/issues.json"
+run_step "${dir}"
+assert_contains "behind 200 newer open issues, its own is still found" \
+    "$(grep '^issue comment' "${dir}/gh-calls")" "issue comment 5 "
+assert_eq "and no duplicate is opened" "0" "$(calls "${dir}" 'issue create')"
 
 # Only another workflow's issue is open: this one still needs its own.
 dir="$(new_case other-workflow-open)"
