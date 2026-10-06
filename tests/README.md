@@ -35,7 +35,7 @@ when present and skipped when not.
 | `test-branch-protection.sh` | `docs/branch-protection.md` against `.github/rulesets/main.json`: the bold lead of each rule bullet joined to the JSON both ways — rule types, the `~DEFAULT_BRANCH` target, no bypass actors, the approval count, the required checks by name and number word and their `integration_id` — every job a `pull_request` or `pull_request_target` workflow runs classified as required or named in the bullet as not required, the workflows the bullet says run the required check equal to the ones whose job carries that name, the `status` branch exemption against `status-badges.yml`'s push, the Status section's ruleset name and recorded id joined to the JSON and to the `PUT` command, both `gh api` commands reading the committed file, and no tracked Markdown still saying the ruleset on `main` is missing or unapplied (issue #245) |
 | `test-workflow-permissions.sh` | `.github/policies/workflow-permissions.json` against every workflow's `permissions:` blocks, read with PyYAML: every workflow listed and every entry a real workflow, the top-level block and each job-level block exactly as listed, no job left on the repository's default token, only real scopes and levels in the policy, and a widened copy of two workflows reported against exactly those two |
 | `test-auto-issues.sh`       | `.github/workflows/auto-issues.yml`: the step that opens or updates the failure issue, extracted and executed against a `gh` stub with the real `jq` — a first failure opens one issue, a second comments on it (found by its marker even after a retitle), an issue a person or another app opened with the same title or marker is never commented on and never stops the bot opening its own, and a green, cancelled, pull-request, dispatched, non-default-branch or fork run makes no `gh` call; no label flag, `ai-fix-requested` or @-mention in anything it writes; the watched names joined to the workflow names in the tree, every scheduled workflow watched or listed as deliberately unwatched; each `env:` variable read from the event field that names it, the job's `if:` admitting exactly the conclusions the step reports, and runs serialised per watched workflow without cancelling; and the job's token exactly `issues: write` and `actions: read` with no checkout |
-| `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — auth-file use, the never-published exemption, the signature check, the date-tag digest comparison and the run summary |
+| `test-nightly-compliance.sh` | `.github/workflows/nightly-compliance.yml`: the `published_image` job's four `run:` bodies, extracted and executed with `skopeo` and `cosign` stubbed — auth-file use, the never-published exemption, the signature check, the date-tag digest comparison and the run summary; plus the `env:`, login, checkout, cosign-pin and concurrency wiring around them |
 | `test-agent-audit.sh` | `.github/workflows/agent-audit.yml`: the `Audit merged agent pull requests` step, extracted and executed with `gh` stubbed to staged JSON and the real `jq` — which pull requests count as an agent's (Dependabot and Renovate do not), the missing signature line and unsigned commit that fail the run, history before the enforcement date that is listed and does not, the cap, and a bad date — plus the job's token against the policy file |
 | `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op and the ref the push lands on |
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
@@ -464,6 +464,16 @@ registry token or `--creds` on their command line, and must fail before calling
 skopeo if that file is absent. The last guard prevents a missing login artifact
 from silently turning a successful check of a public package into an anonymous
 one.
+
+The bodies run with variables the test sets by hand, so the wiring that feeds
+them in the workflow is compared separately and whole: the job's `IMAGE_REF`,
+each step's `env:` map as sorted JSON (and every key in it read by the body), the
+`docker/login-action` inputs and its place before the first inspect,
+`persist-credentials: false` on the checkout, the `cosign-release` pin (which
+must equal the one `build.yml` signs with) and the `concurrency` block. Before
+these checks, pointing the summary's `PRESENT` at a literal `'true'`, feeding the
+date-tag step a digest as its `DATE_TAG`, or logging in to another registry left
+the whole suite green.
 
 ## The signing key
 
