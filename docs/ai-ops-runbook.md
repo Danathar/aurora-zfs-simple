@@ -89,12 +89,13 @@ The same commit as a green night means the cause is outside the repository. A
 new commit means treat it as [`main` is red](#main-is-red). Then read which step
 failed:
 
-| Step                                         | Failing on an unchanged commit means                                                                                                         |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Run shell test suite                         | The runner changed under the suite, most often its shellcheck version.                                                                       |
-| Resolve the published :latest                | `:latest` cannot be read (`could not be inspected` in the log): it was deleted or repointed, or the registry or credentials are not working. |
-| Verify the published signature               | The image no longer verifies against `cosign.pub`.                                                                                           |
-| Verify the date tags still share that digest | A date tag was repointed or removed after the push.                                                                                          |
+| Step                                           | Failing on an unchanged commit means                                                                                                         |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run shell test suite                           | The runner changed under the suite, most often its shellcheck version.                                                                       |
+| Resolve the published :latest                  | `:latest` cannot be read (`could not be inspected` in the log): it was deleted or repointed, or the registry or credentials are not working. |
+| Verify the published signature                 | The image no longer verifies against `cosign.pub`.                                                                                           |
+| Verify :latest is readable without credentials | The package stopped being public, so hosts that installed from the README can no longer pull updates. Check the package's visibility.        |
+| Verify the date tags still share that digest   | A date tag was repointed or removed after the push.                                                                                          |
 
 A run that finds no image published at all passes with a note; every other
 failure to read the image is fatal on purpose. What the job does not cover, the
