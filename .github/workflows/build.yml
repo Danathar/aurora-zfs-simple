@@ -337,7 +337,12 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+          # Stored on GitHub only, which is where `gh attestation verify`
+          # looks. Pushed to the registry, the attestation became the image's
+          # first Sigstore bundle, and cosign 3's default `cosign verify --key
+          # cosign.pub` (the README's check) then failed with "expected key
+          # signature, not certificate".
+          push-to-registry: false
           # Storage records exist only for organization-owned repositories,
           # and would need the artifact-metadata scope besides.
           create-storage-record: false

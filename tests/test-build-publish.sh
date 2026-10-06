@@ -649,16 +649,18 @@ for step in "Login to GitHub Container Registry" "Pick the tag to push first" "P
 done
 
 # The attestation has to name the digest that was pushed and signed, in the
-# repository hosts pull from, and be stored next to the image so
-# `gh attestation verify oci://...` finds it.
+# repository hosts pull from. It stays on GitHub, where `gh attestation verify`
+# reads it: a copy in the registry broke the README's `cosign verify --key`
+# under cosign 3, which picks up the newest Sigstore bundle on the image.
 # shellcheck disable=SC2016 # Actions expressions, compared as literal text
 assert_eq "the attestation covers the pushed digest" \
     '${{ steps.push.outputs.digest }}' "$(step_field "Attest build provenance" 'with["subject-digest"]')"
 # shellcheck disable=SC2016
 assert_eq "the attestation names the image the push published" \
     '${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}' "$(step_field "Attest build provenance" 'with["subject-name"]')"
-assert_eq "the attestation is pushed to the registry beside the image" \
-    "true" "$(step_field "Attest build provenance" 'with["push-to-registry"]')"
+# `// ""` in step_field would turn a literal false into "", so read it as text.
+assert_eq "the attestation is not pushed to the registry, where it breaks cosign verify --key" \
+    "false" "$(step_field "Attest build provenance" 'with["push-to-registry"] | tostring')"
 attest_at="$(wf '[.jobs.build_push.steps[].name] | index("Attest build provenance")')"
 sign_at_for_attest="$(wf '[.jobs.build_push.steps[].name] | index("Sign container image")')"
 if [[ "${attest_at}" =~ ^[0-9]+$ && "${sign_at_for_attest}" =~ ^[0-9]+$ && "${sign_at_for_attest}" -lt "${attest_at}" ]]; then
