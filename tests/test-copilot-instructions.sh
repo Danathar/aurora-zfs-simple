@@ -459,9 +459,9 @@ assert_contains "the instructions name the push-once-then-copy propagation" \
     "${comments_section}" "push-once-then-copy tag propagation"
 assert_contains "the workflow pushes exactly one tag" \
     "${BUILD_WORKFLOW_TEXT}" "# Push exactly one tag."
-# shellcheck disable=SC2016 # the literal ${DEFAULT_TAG} is the needle
-assert_contains "and that tag is the default one" \
-    "${BUILD_WORKFLOW_TEXT}" 'tags: ${{ env.DEFAULT_TAG }}'
+# shellcheck disable=SC2016 # the literal expression is the needle
+assert_contains "and that tag is the dated one the pick step chose, not latest" \
+    "${BUILD_WORKFLOW_TEXT}" 'tags: ${{ steps.first_tag.outputs.tag }}'
 assert_contains "the rest are copied from the pushed digest" \
     "${BUILD_WORKFLOW_TEXT}" "skopeo copy --preserve-digests"
 # shellcheck disable=SC2016 # the literal ${digest} is the needle
