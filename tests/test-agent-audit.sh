@@ -203,6 +203,7 @@ printf '%s\n' "$*" >> "${STUB_LOG}"
 case "$1 $2" in
     "pr list") cat "${STUB_DIR}/merged.json" ;;
     "pr view") cat "${STUB_DIR}/pr-$3.json" ;;
+    "api repos/"*) cat "${STUB_DIR}/parents-${2##*/}" 2>/dev/null || printf '1\n' ;;
     *) echo "gh stub: unexpected command: $*" >&2; exit 97 ;;
 esac
 STUB
@@ -307,6 +308,30 @@ run_audit 2026-10-01
 assert_eq "an empty message and a near-miss trailer both count as unsigned" "1" "${A_STATUS}"
 assert_contains "both unsigned commits are named together" \
     "${A_SUMMARY}" "commit(s) 0310000, 0310001 carry no Signed-off-by trailer"
+
+# A merge commit carries no trailer: docs/multi-agent.md asks for a pull
+# request to be updated from `main`, and GitHub's "Update branch" writes a
+# merge with none. It is told apart by its parent count, which `gh pr view`
+# does not return, so the step asks `gh api` for each untrailered commit.
+new_case
+stage_list "$(pr 32 "${APP}" 2026-10-02 yes)"
+stage_detail 32 "${SIGNED}" ""
+printf '2\n' >"${CASE_DIR}/parents-0320001$(printf '%033d' 0)"
+run_audit 2026-10-01
+assert_eq "a merge commit with no trailer does not fail the run" "0" "${A_STATUS}"
+assert_contains "and the row reads as all signed off" "${A_SUMMARY}" "| 2 | all |"
+assert_eq "parents are asked only for the commit that lacks a trailer" \
+    "api repos/${REPO_NAME}/commits/0320001$(printf '%033d' 0) --jq .parents | length" \
+    "$(grep '^api' <<<"${A_CALLS}")"
+
+new_case
+stage_list "$(pr 33 "${APP}" 2026-10-02 yes)"
+stage_detail 33 "" "Merge branch 'main' into docs/x"
+printf '2\n' >"${CASE_DIR}/parents-0330000$(printf '%033d' 0)"
+run_audit 2026-10-01
+assert_eq "an unsigned commit with one parent still fails the run" "1" "${A_STATUS}"
+assert_contains "the finding names it and not the merge, whatever the headline says" \
+    "${A_SUMMARY}" "- #33: commit(s) 0330001 carry no Signed-off-by trailer"
 
 # =============================================================================
 # D. History before the enforcement date is reported, not failed
