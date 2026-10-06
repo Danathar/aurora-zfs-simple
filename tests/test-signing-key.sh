@@ -331,6 +331,23 @@ else
         "matchRepository" "$(jq -r '.[][0].signedIdentity.type' <<<"${policy_json}")"
 fi
 
+# The policy entry alone makes the rebase fail, not pass. containers/image reads
+# cosign's signature tags only for scopes a registries.d file marks
+# `use-sigstore-attachments`, and the Aurora base marks `ghcr.io/ublue-os` and
+# nothing else, so a host that stops at the policy entry gets "A signature was
+# required, but no signature exists" from --enforce-container-sigpolicy. The
+# snippet is compared whole: it is three lines, and a scope that does not cover
+# the published image, or a misspelt key, is ignored by the host rather than
+# rejected.
+require_claim "the section still says why the registries.d entry is needed" \
+    "${README_PROSE}" 'A signature was required, but no signature exists'
+registries_snippet="$(printf '%s\n' "${TRUST_SECTION}" | fenced_content yaml)"
+assert_eq "the section ships a registries.d entry that reads signatures for the published image" \
+    "$(printf 'docker:\n  %s:\n    use-sigstore-attachments: true' "${PUBLISHED_REF}")" \
+    "${registries_snippet}"
+require_claim "and names the file under registries.d it goes in, after this repository" \
+    "${README_PROSE}" "Save this as /etc/containers/registries.d/${REPO_NAME,,}.yaml"
+
 # --- 5. the two commands that use the key ------------------------------------
 
 VERIFY_SECTION="$(section_body '## Signature Verification' "${README_MD}")"

@@ -72,7 +72,22 @@ than replacing the file:
 ]
 ```
 
-For a fork, use your own repository's path and your own `cosign.pub`.
+Last, tell the host where to find the signature. `cosign` stores it in the
+registry next to the image, and the host's container tools only look there for
+images a file under `/etc/containers/registries.d/` turns that on for. The
+Aurora base image ships such a file for `ghcr.io/ublue-os` only, so without
+this step the switch below fails with "A signature was required, but no
+signature exists". Save this as
+`/etc/containers/registries.d/aurora-zfs-simple.yaml`:
+
+```yaml
+docker:
+  ghcr.io/danathar/aurora-zfs-simple:
+    use-sigstore-attachments: true
+```
+
+For a fork, use your own repository's path and your own `cosign.pub`, in all
+three places.
 
 ## Switching To This Image
 
