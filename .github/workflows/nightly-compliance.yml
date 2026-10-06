@@ -167,6 +167,26 @@ jobs:
           cosign verify --key cosign.pub "${IMAGE_REF}@${DIGEST}" > /dev/null
           echo "Signature verifies against cosign.pub"
 
+      # Every step above reads the registry as this repository, and a token
+      # with packages: read can read its own private package. Hosts that
+      # followed the README pull anonymously, so a public repository's image
+      # has to be readable with no credentials at all. A private fork's
+      # package may legitimately be private, so this runs only when the
+      # repository itself is public.
+      - name: Verify :latest is readable without credentials
+        if: steps.latest.outputs.present == 'true' && !github.event.repository.private
+        env:
+          DIGEST: ${{ steps.latest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if ! skopeo inspect --no-creds --format '{{.Digest}}' \
+                 "docker://${IMAGE_REF}@${DIGEST}" > /dev/null 2>err.txt; then
+            cat err.txt
+            echo "::error::${IMAGE_REF}@${DIGEST} is not readable without credentials. Hosts that installed from the README can no longer pull updates; check the package's visibility in its GitHub package settings."
+            exit 1
+          fi
+          echo "${IMAGE_REF}@${DIGEST} is readable without credentials"
+
       # build.yml asserts this at push time; this asserts it still holds. A tag
       # that is absent is reported rather than failed -- a build straddling
       # midnight UTC, or a tag deleted by hand, is not the drift being hunted.

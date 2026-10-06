@@ -416,6 +416,56 @@ assert_not_contains "a failed verification does not claim the signature verifies
     "${S_STDOUT}" "verifies against cosign.pub"
 
 # =============================================================================
+# C2. "Verify :latest is readable without credentials" — as a host pulls it
+# =============================================================================
+#
+# Every other step reads the registry with this repository's token, which can
+# read its own private package. Hosts pull anonymously, so this one must not
+# use the auth file the login wrote, and must fail when the anonymous read does.
+
+ANON="${TMP_ROOT}/anon.sh"
+extract "${ANON}" "Verify :latest is readable without credentials" '--no-creds'
+
+# read_anonymously <skopeo exit status>. Sets N_STATUS, N_STDOUT, N_CALLS.
+read_anonymously() {
+    local skopeo_status=$1 dir
+
+    dir="$(mktemp -d "${TMP_ROOT}/anon.XXXXXX")"
+    mkdir -p "${dir}/bin"
+    : >"${dir}/calls"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'printf "%%s\\n" "$*" >> %q\n' "${dir}/calls"
+        printf '[ %s -eq 0 ] || echo "unauthorized: authentication required" >&2\n' "${skopeo_status}"
+        printf 'exit %s\n' "${skopeo_status}"
+    } >"${dir}/bin/skopeo"
+    chmod +x "${dir}/bin/skopeo"
+
+    N_STDOUT="$(
+        cd "${dir}" &&
+            PATH="${dir}/bin:${PATH}" \
+                IMAGE_REF="${TEST_IMAGE}" \
+                DIGEST="${DIGEST_A}" \
+                bash "${ANON}" 2>&1
+    )"
+    N_STATUS=$?
+    N_CALLS="$(cat "${dir}/calls")"
+}
+
+read_anonymously 0
+assert_eq "an image anyone can read passes the step" "0" "${N_STATUS}"
+assert_contains "the read is made with no credentials" "${N_CALLS}" "--no-creds"
+assert_not_contains "the read does not use the auth file the login wrote" "${N_CALLS}" "--authfile"
+assert_contains "the read is of the resolved digest, not the tag" \
+    "${N_CALLS}" "docker://${TEST_IMAGE}@${DIGEST_A}"
+
+read_anonymously 1
+assert_eq "an image only the repository can read fails the job" "1" "${N_STATUS}"
+assert_contains "the failure says hosts can no longer pull" \
+    "${N_STDOUT}" "not readable without credentials"
+assert_contains "the failure shows skopeo's own error" "${N_STDOUT}" "unauthorized"
+
+# =============================================================================
 # D. "Verify the date tags still share that digest" — the accumulated status
 # =============================================================================
 
@@ -606,6 +656,12 @@ for guarded in "Verify the published signature" \
         "steps.latest.outputs.present == 'true'" "$(step_if "${guarded}")"
 done
 
+# The anonymous read also needs an image, and is skipped for a private fork,
+# whose package may legitimately be private.
+assert_eq "the anonymous read runs only for a found image in a public repository" \
+    "steps.latest.outputs.present == 'true' && !github.event.repository.private" \
+    "$(step_if "Verify :latest is readable without credentials")"
+
 assert_eq "the summary is written even when a check failed" \
     "always()" "$(step_if "Summarize")"
 
@@ -666,6 +722,11 @@ assert_eq "the date-tag step compares against that digest, for that date" \
     "$(step_env "Verify the date tags still share that digest")"
 
 # shellcheck disable=SC2016
+assert_eq "the anonymous read checks the digest the resolve step found" \
+    '{"DIGEST":"${{ steps.latest.outputs.digest }}"}' \
+    "$(step_env "Verify :latest is readable without credentials")"
+
+# shellcheck disable=SC2016
 assert_eq "the summary reports what the resolve step found" \
     '{"DATE_TAG":"${{ steps.latest.outputs.date_tag }}","DIGEST":"${{ steps.latest.outputs.digest }}","PRESENT":"${{ steps.latest.outputs.present }}"}' \
     "$(step_env "Summarize")"
@@ -673,6 +734,7 @@ assert_eq "the summary reports what the resolve step found" \
 # A key the body never reads is wiring that does nothing; the exact maps above
 # would have to be edited to add one, and this is what says it must be used.
 for step in "Verify the published signature" \
+    "Verify :latest is readable without credentials" \
     "Verify the date tags still share that digest" "Summarize"; do
     body="$(step_run "${step}")"
     while IFS= read -r key; do
