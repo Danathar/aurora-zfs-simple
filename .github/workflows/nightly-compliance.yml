@@ -172,9 +172,10 @@ jobs:
       # followed the README pull anonymously, so a public repository's image
       # has to be readable with no credentials at all. A private fork's
       # package may legitimately be private, so this runs only when the
-      # repository itself is public.
+      # repository itself is public. !cancelled() runs it even when the
+      # signature check failed, so one red check does not hide the next.
       - name: Verify :latest is readable without credentials
-        if: steps.latest.outputs.present == 'true' && !github.event.repository.private
+        if: ${{ !cancelled() && steps.latest.outputs.present == 'true' && !github.event.repository.private }}
         env:
           DIGEST: ${{ steps.latest.outputs.digest }}
         run: |
@@ -190,9 +191,10 @@ jobs:
       # build.yml asserts this at push time; this asserts it still holds. A tag
       # that is absent is reported rather than failed -- a build straddling
       # midnight UTC, or a tag deleted by hand, is not the drift being hunted.
-      # A tag that is present and disagrees is a real failure.
+      # A tag that is present and disagrees is a real failure. Like the step
+      # above, it runs even when an earlier check failed.
       - name: Verify the date tags still share that digest
-        if: steps.latest.outputs.present == 'true'
+        if: ${{ !cancelled() && steps.latest.outputs.present == 'true' }}
         env:
           EXPECTED: ${{ steps.latest.outputs.digest }}
           DATE_TAG: ${{ steps.latest.outputs.date_tag }}

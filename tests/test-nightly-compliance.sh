@@ -650,16 +650,22 @@ assert_contains "the summary states that image contents are not validated here" 
 # digest and fails the job it was meant to exempt — and every executed case in
 # section B stops describing the workflow's behaviour while still passing.
 
-for guarded in "Verify the published signature" \
-    "Verify the date tags still share that digest"; do
-    assert_eq "'${guarded}' runs only when an image was found" \
-        "steps.latest.outputs.present == 'true'" "$(step_if "${guarded}")"
-done
+assert_eq "'Verify the published signature' runs only when an image was found" \
+    "steps.latest.outputs.present == 'true'" "$(step_if "Verify the published signature")"
 
-# The anonymous read also needs an image, and is skipped for a private fork,
-# whose package may legitimately be private.
-assert_eq "the anonymous read runs only for a found image in a public repository" \
-    "steps.latest.outputs.present == 'true' && !github.event.repository.private" \
+# The checks after the signature still need an image, and run even when an
+# earlier check failed: Actions adds an implicit success() to a step's if:, so
+# without !cancelled() a failed signature check would hide the anonymous read
+# and the date-tag check, and the run would report one problem when there are
+# three. The anonymous read is also skipped for a private fork, whose package
+# may legitimately be private.
+# shellcheck disable=SC2016 # Actions expression syntax, compared as text
+assert_eq "the date-tag check runs for a found image, even after an earlier check failed" \
+    "\${{ !cancelled() && steps.latest.outputs.present == 'true' }}" \
+    "$(step_if "Verify the date tags still share that digest")"
+# shellcheck disable=SC2016
+assert_eq "the anonymous read runs for a found image in a public repository, even after an earlier check failed" \
+    "\${{ !cancelled() && steps.latest.outputs.present == 'true' && !github.event.repository.private }}" \
     "$(step_if "Verify :latest is readable without credentials")"
 
 assert_eq "the summary is written even when a check failed" \
