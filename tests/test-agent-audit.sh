@@ -203,7 +203,9 @@ printf '%s\n' "$*" >> "${STUB_LOG}"
 case "$1 $2" in
     "pr list") cat "${STUB_DIR}/merged.json" ;;
     "pr view") cat "${STUB_DIR}/pr-$3.json" ;;
-    "api repos/"*) cat "${STUB_DIR}/parents-${2##*/}" 2>/dev/null || printf '1\n' ;;
+    "api repos/"*)
+        [[ -e "${STUB_DIR}/api-fails" ]] && { echo "gh stub: HTTP 502" >&2; exit 1; }
+        cat "${STUB_DIR}/parents-${2##*/}" 2>/dev/null || printf '1\n' ;;
     *) echo "gh stub: unexpected command: $*" >&2; exit 97 ;;
 esac
 STUB
@@ -319,7 +321,7 @@ stage_detail 32 "${SIGNED}" ""
 printf '2\n' >"${CASE_DIR}/parents-0320001$(printf '%033d' 0)"
 run_audit 2026-10-01
 assert_eq "a merge commit with no trailer does not fail the run" "0" "${A_STATUS}"
-assert_contains "and the row reads as all signed off" "${A_SUMMARY}" "| 2 | all |"
+assert_contains "and the row says all signed off, with the merge exempt" "${A_SUMMARY}" "| 2 | all (1 merge exempt) |"
 assert_eq "parents are asked only for the commit that lacks a trailer" \
     "api repos/${REPO_NAME}/commits/0320001$(printf '%033d' 0) --jq .parents | length" \
     "$(grep '^api' <<<"${A_CALLS}")"
@@ -332,6 +334,18 @@ run_audit 2026-10-01
 assert_eq "an unsigned commit with one parent still fails the run" "1" "${A_STATUS}"
 assert_contains "the finding names it and not the merge, whatever the headline says" \
     "${A_SUMMARY}" "- #33: commit(s) 0330001 carry no Signed-off-by trailer"
+
+# The exemption must fail closed. If the parent lookup fails, the commit's
+# count is unknown, and an unknown count must never read as a merge: the run
+# fails rather than reporting the commit as signed off.
+new_case
+stage_list "$(pr 34 "${APP}" 2026-10-02 yes)"
+stage_detail 34 "${SIGNED}" ""
+printf '2\n' >"${CASE_DIR}/parents-0340001$(printf '%033d' 0)"
+: >"${CASE_DIR}/api-fails"
+run_audit 2026-10-01
+assert_eq "a failed parent lookup fails the run" "1" "$((A_STATUS != 0))"
+assert_not_contains "and the commit is not reported as signed off" "${A_SUMMARY}" "| 2 | all"
 
 # =============================================================================
 # D. History before the enforcement date is reported, not failed

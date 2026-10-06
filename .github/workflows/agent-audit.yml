@@ -149,6 +149,7 @@ jobs:
                   enforced: ($pr.mergedAt[:10] >= $enforce),
                   signature: (signature | if . == null then null else ltrimstr("— hive: ") end),
                   commits: ($d.commits | length),
+                  merges: ([$d.commits[] | select(ismerge)] | length),
                   unsigned: [$d.commits[]
                              | select(ismerge | not)
                              | select(.messageBody | test("(^|\n)Signed-off-by: ") | not)
@@ -178,7 +179,7 @@ jobs:
                       [ "| PR | Merged | Author | Merged by | Backend and model | Commits | Signed-off |",
                         "| --- | --- | --- | --- | --- | --- | --- |" ]
                       + [ $rows[]
-                          | "| [#\(.number)](\(.url)) \(.title | cell) | \(.merged) | \(.author) | \(.merged_by) | \(.signature // "**missing**" | cell) | \(.commits) | \(if (.unsigned | length) == 0 then "all" else "**\(.commits - (.unsigned | length)) of \(.commits)**" end) |" ]
+                          | "| [#\(.number)](\(.url)) \(.title | cell) | \(.merged) | \(.author) | \(.merged_by) | \(.signature // "**missing**" | cell) | \(.commits) | \(if (.unsigned | length) == 0 then "all\(if .merges > 0 then " (\(.merges) merge exempt)" else "" end)" else "**\(.commits - .merges - (.unsigned | length)) of \(.commits - .merges)**" end) |" ]
                       + [ "" ]
                     end)
                   + (if ($found | length) == 0
