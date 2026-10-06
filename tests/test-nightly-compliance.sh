@@ -621,4 +621,119 @@ assert_eq "the published_image job cannot write to the repository" \
 assert_eq "the published_image job cannot write packages" \
     "read" "$(wf '.jobs.published_image.permissions.packages')"
 
+# =============================================================================
+# G. the wiring around the run: bodies
+# =============================================================================
+#
+# Every case above runs a body with variables this file sets by hand. That
+# proves what each body does with IMAGE_REF, DIGEST, EXPECTED, DATE_TAG and
+# PRESENT, and nothing about where the workflow takes them from. Pointing the
+# summary's PRESENT at a literal 'true', feeding the date-tag step a digest as
+# its DATE_TAG, or building IMAGE_REF from github.actor instead of the
+# repository owner left every assertion above passing. So did logging in to a
+# different registry, so the auth file the inspect steps insist on held no
+# ghcr.io credential.
+#
+# So the env: maps are compared whole, as sorted JSON: a swapped source, a
+# renamed key and an added key each change the string.
+
+# step_env <step name> — that step's env: map as sorted JSON, or "null".
+step_env() {
+    wf ".jobs.published_image.steps[] | select(.name == \"$1\") | .env" | jq -cS .
+}
+
+# step_index <step name> — where that step sits in the published_image job.
+step_index() {
+    wf "[.jobs.published_image.steps[].name] | index(\"$1\") // \"missing\""
+}
+
+# shellcheck disable=SC2016 # ${{ }} is GitHub expression syntax, not shell
+assert_eq "the image reference is built from the repository owner and name" \
+    '{"IMAGE_REF":"ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"}' \
+    "$(wf '.jobs.published_image.env' | jq -cS .)"
+
+assert_eq "the resolve step is handed no env: of its own" \
+    "null" "$(step_env "Resolve the published :latest")"
+
+# shellcheck disable=SC2016
+assert_eq "the signature step verifies the digest the resolve step found" \
+    '{"DIGEST":"${{ steps.latest.outputs.digest }}"}' \
+    "$(step_env "Verify the published signature")"
+
+# shellcheck disable=SC2016
+assert_eq "the date-tag step compares against that digest, for that date" \
+    '{"DATE_TAG":"${{ steps.latest.outputs.date_tag }}","EXPECTED":"${{ steps.latest.outputs.digest }}"}' \
+    "$(step_env "Verify the date tags still share that digest")"
+
+# shellcheck disable=SC2016
+assert_eq "the summary reports what the resolve step found" \
+    '{"DATE_TAG":"${{ steps.latest.outputs.date_tag }}","DIGEST":"${{ steps.latest.outputs.digest }}","PRESENT":"${{ steps.latest.outputs.present }}"}' \
+    "$(step_env "Summarize")"
+
+# A key the body never reads is wiring that does nothing; the exact maps above
+# would have to be edited to add one, and this is what says it must be used.
+for step in "Verify the published signature" \
+    "Verify the date tags still share that digest" "Summarize"; do
+    body="$(step_run "${step}")"
+    while IFS= read -r key; do
+        [[ -n "${key}" ]] || continue
+        assert_contains "'${step}' reads the ${key} its env: supplies" \
+            "${body}" "\${${key}}"
+    done < <(wf ".jobs.published_image.steps[] | select(.name == \"${step}\") | .env // {} | keys[]")
+done
+
+# The inspect steps refuse to run without ~/.docker/config.json, which only
+# proves *a* login happened. The credential in it has to be for ghcr.io, with
+# the job token, and written before the first inspect reads it.
+login_with="$(wf '.jobs.published_image.steps[] | select(.name == "Log in to GitHub Container Registry") | .with' | jq -cS .)"
+# shellcheck disable=SC2016
+assert_eq "the login writes a ghcr.io credential from the job token" \
+    '{"password":"${{ github.token }}","registry":"ghcr.io","username":"${{ github.actor }}"}' \
+    "${login_with}"
+assert_contains "the login step is docker/login-action" \
+    "$(wf '.jobs.published_image.steps[] | select(.name == "Log in to GitHub Container Registry") | .uses')" \
+    "docker/login-action@"
+login_at="$(step_index "Log in to GitHub Container Registry")"
+resolve_at="$(step_index "Resolve the published :latest")"
+if [[ "${login_at}" =~ ^[0-9]+$ && "${resolve_at}" =~ ^[0-9]+$ ]] &&
+    ((login_at < resolve_at)); then
+    _pass "the login runs before the first inspect"
+else
+    _fail "the login runs before the first inspect" \
+        "login is step ${login_at}, resolve is step ${resolve_at}"
+fi
+
+# The login puts the job token in ~/.docker/config.json; the checkout must not
+# leave a second copy of it in .git/config for nothing.
+assert_eq "the published_image checkout does not persist the token" \
+    "false" \
+    "$(wf '.jobs.published_image.steps[] | select(.name == "Checkout") | .with["persist-credentials"] | tojson')"
+
+# build.yml signs with one cosign release and this verifies with another. They
+# are pinned in two places, so a bump to one alone is the drift to catch: a
+# verify that fails because the verifier changed would look like a signature
+# that stopped verifying.
+BUILD_JSON="${TMP_ROOT}/build.json"
+if "${WORKFLOW_PYTHON}" -B "${NORMALIZER}" "${REPO_ROOT}/.github/workflows/build.yml" >"${BUILD_JSON}" 2>"${TMP_ROOT}/build.err"; then
+    sign_release="$(jq -r '[.jobs[].steps[]? | select((.uses // "") | startswith("sigstore/cosign-installer@")) | .with["cosign-release"]] | unique | join(" ")' <"${BUILD_JSON}")"
+    verify_release="$(wf '.jobs.published_image.steps[] | select((.uses // "") | startswith("sigstore/cosign-installer@")) | .with["cosign-release"] // ""')"
+    if [[ "${verify_release}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        _pass "the nightly verify pins a cosign release (${verify_release})"
+    else
+        _fail "the nightly verify pins a cosign release" \
+            "cosign-release is '${verify_release}', expected vX.Y.Z"
+    fi
+    assert_eq "the nightly verify uses the cosign release build.yml signs with" \
+        "${sign_release}" "${verify_release}"
+else
+    _fail "build.yml parses as YAML" "$(cat "${TMP_ROOT}/build.err")"
+fi
+
+# Two runs at once inspect the same tags and write the same summary; the
+# second waits rather than cancelling a check that may be the only one that
+# day. Compared as JSON so a quoted 'false' is not taken for the boolean.
+assert_eq "nightly runs queue rather than cancel each other" \
+    '{"cancel-in-progress":false,"group":"nightly-compliance"}' \
+    "$(wf '.concurrency' | jq -cS .)"
+
 finish
