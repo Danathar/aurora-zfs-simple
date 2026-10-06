@@ -642,10 +642,31 @@ assert_contains "the push guard also requires the default branch" \
     "${PUSH_GUARD}" "github.event.repository.default_branch"
 
 for step in "Login to GitHub Container Registry" "Pick the tag to push first" "Propagate tags from the pushed digest" \
-    "Verify pushed tags share one digest" "Install Cosign" "Sign container image"; do
+    "Verify pushed tags share one digest" "Install Cosign" "Sign container image" \
+    "Attest build provenance"; do
     assert_eq "'${step}' runs under exactly the push step's guard" \
         "${PUSH_GUARD}" "$(step_field "${step}" "if")"
 done
+
+# The attestation has to name the digest that was pushed and signed, in the
+# repository hosts pull from, and be stored next to the image so
+# `gh attestation verify oci://...` finds it.
+# shellcheck disable=SC2016 # Actions expressions, compared as literal text
+assert_eq "the attestation covers the pushed digest" \
+    '${{ steps.push.outputs.digest }}' "$(step_field "Attest build provenance" 'with["subject-digest"]')"
+# shellcheck disable=SC2016
+assert_eq "the attestation names the image the push published" \
+    '${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}' "$(step_field "Attest build provenance" 'with["subject-name"]')"
+assert_eq "the attestation is pushed to the registry beside the image" \
+    "true" "$(step_field "Attest build provenance" 'with["push-to-registry"]')"
+attest_at="$(wf '[.jobs.build_push.steps[].name] | index("Attest build provenance")')"
+sign_at_for_attest="$(wf '[.jobs.build_push.steps[].name] | index("Sign container image")')"
+if [[ "${attest_at}" =~ ^[0-9]+$ && "${sign_at_for_attest}" =~ ^[0-9]+$ && "${sign_at_for_attest}" -lt "${attest_at}" ]]; then
+    _pass "the attestation is made after the image is signed"
+else
+    _fail "the attestation is made after the image is signed" \
+        "sign=${sign_at_for_attest} attest=${attest_at}"
+fi
 
 # Order is what keeps `latest` on a signed image: the dated tag is pushed and
 # signed before any copy, and `latest` is copied (last) only after signing, so

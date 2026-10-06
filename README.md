@@ -363,9 +363,20 @@ section is the answer to that question.
 
 **What signing does and does not prove.** [Signature
 verification](#signature-verification) proves the image you pulled was signed
-with this repository's private key. It does not prove which commit,
-`Containerfile`, or build run produced that image. If you want that stronger
-guarantee, build it yourself: this repository's
+with this repository's private key. On its own it does not prove which
+commit, `Containerfile`, or build run produced that image. Each published image
+also carries a build provenance attestation that names the workflow and run
+that built it and the commit they ran from. It is issued by GitHub Actions, not
+by any key the maintainer holds. It does not list the build's inputs file by
+file; the `Containerfile` is the one in that commit. To check it:
+
+```bash
+gh attestation verify oci://ghcr.io/danathar/aurora-zfs-simple:latest \
+  --repo Danathar/aurora-zfs-simple
+```
+
+If you want a guarantee that does not depend on this repository's build at
+all, build it yourself: this repository's
 [`Containerfile`](Containerfile) and
 [build workflow](.github/workflows/build.yml) are both plain, readable inputs
 with no hidden build step, and you can fork the repository and publish your
