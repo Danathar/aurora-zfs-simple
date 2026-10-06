@@ -365,9 +365,10 @@ section is the answer to that question.
 verification](#signature-verification) proves the image you pulled was signed
 with this repository's private key. On its own it does not prove which
 commit, `Containerfile`, or build run produced that image. Each published image
-also carries a build provenance attestation, which does: it is issued by
-GitHub Actions for the workflow run that built the image, not by any key the
-maintainer holds, and it names the exact commit and workflow. To check it:
+also carries a build provenance attestation that names the workflow and run
+that built it and the commit they ran from. It is issued by GitHub Actions, not
+by any key the maintainer holds. It does not list the build's inputs file by
+file; the `Containerfile` is the one in that commit. To check it:
 
 ```bash
 gh attestation verify oci://ghcr.io/danathar/aurora-zfs-simple:latest \
