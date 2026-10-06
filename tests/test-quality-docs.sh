@@ -297,7 +297,7 @@ for image_gate in "/ctx/post-check.sh" "bootc container lint"; do
 done
 
 # Gate 5, and the ordering claim attached to it: the digest check runs on
-# default-branch non-PR runs and blocks signing, so it has to come first.
+# default-branch non-PR runs, after signing and the copies, on the finished set.
 verify_line="$(step_line "${BUILD_WF}" "Verify pushed tags share one digest")"
 sign_line="$(step_line "${BUILD_WF}" "Sign container image")"
 rechunk_line="$(step_line "${BUILD_WF}" "Rechunk Image with Chunkah")"
@@ -313,14 +313,20 @@ for step_name in Build\ Image Rechunk\ Image\ with\ Chunkah Push\ To\ GHCR \
     fi
 done
 
-if [[ -n "${verify_line}" && -n "${sign_line}" ]]; then
-    if [[ "${verify_line}" -lt "${sign_line}" ]]; then
-        _pass "the digest check runs before signing, so it can block it"
+propagate_line="$(step_line "${BUILD_WF}" "Propagate tags from the pushed digest")"
+if [[ -n "${verify_line}" && -n "${sign_line}" && -n "${propagate_line}" ]]; then
+    if [[ "${sign_line}" -lt "${propagate_line}" && "${propagate_line}" -lt "${verify_line}" ]]; then
+        _pass "the digest check runs after signing and the copies, on the finished tag set"
     else
-        _fail "the digest check runs before signing, so it can block it" \
-            "verify at line ${verify_line}, sign at line ${sign_line}"
+        _fail "the digest check runs after signing and the copies, on the finished tag set" \
+            "sign at line ${sign_line}, propagate at line ${propagate_line}, verify at line ${verify_line}"
     fi
+else
+    _fail "the digest check runs after signing and the copies, on the finished tag set" \
+        "missing a step: sign=${sign_line:-none} propagate=${propagate_line:-none} verify=${verify_line:-none}"
 fi
+require_claim "${QUALITY_DOC}" "the digest check gates a green run after signing" \
+    "a green run, after signing and the copies"
 
 verify_if="$(awk -v n="${verify_line}" 'NR > n && /^        if: / { print; exit }' "${BUILD_WF}")"
 assert_contains "the digest check is scoped to non-pull_request runs" \

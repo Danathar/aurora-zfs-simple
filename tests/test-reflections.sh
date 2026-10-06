@@ -366,6 +366,12 @@ require_claim "${TAGS_ENTRY}" "that signing operates on one digest" \
 # shellcheck disable=SC2016
 require_claim "${TAGS_ENTRY}" "the nightly re-check" \
     '`.github/workflows/nightly-compliance.yml` now re-checks this against the *published* registry'
+# shellcheck disable=SC2016
+require_claim "${TAGS_ENTRY}" "the 2026-10-06 reorder" \
+    'the order is now push, sign, copy, verify'
+# shellcheck disable=SC2016
+require_claim "${TAGS_ENTRY}" "that latest is copied last" \
+    'only then is it copied to the other tags, with `latest` last'
 
 # --- 2a. the tag set ----------------------------------------------------------
 #
@@ -406,7 +412,7 @@ while IFS= read -r line; do
     fi
 done <<<"${other_tags}"
 
-# --- 2b. one push, copies by digest, verified before the signature ------------
+# --- 2b. one push, signed, then copied by digest and verified -----------------
 
 push_tags="$(step_with "${BUILD_JSON}" "${PUBLISH_JOB}" "${PUSH_STEP}" tags)"
 require_nonempty "a tags: value on the '${PUSH_STEP}' step" "${push_tags}"
@@ -414,8 +420,8 @@ require_nonempty "a tags: value on the '${PUSH_STEP}' step" "${push_tags}"
 # before the value is split into tags.
 push_tag_count="$(sed -E 's/\$\{\{[^}]*\}\}/EXPR/g; s/[ ,]+/\n/g' <<<"${push_tags}" | grep -c .)"
 assert_eq "'${PUSH_STEP}' pushes exactly one tag" "1" "${push_tag_count}"
-assert_eq "and that tag is the default tag every other tag is copied from" \
-    "\${{ env.DEFAULT_TAG }}" "${push_tags}"
+assert_eq "and that tag is the one the pick step chose, which is never latest" \
+    "\${{ steps.first_tag.outputs.tag }}" "${push_tags}"
 
 propagate_body="$(step_field "${BUILD_JSON}" "${PUBLISH_JOB}" "${PROPAGATE_STEP}" run)"
 require_nonempty "a run: body on the '${PROPAGATE_STEP}' step" "${propagate_body}"
@@ -436,11 +442,11 @@ if [[ -z "${push_idx}" || -z "${propagate_idx}" || -z "${verify_idx}" || -z "${s
         "'${PUSH_STEP}' -> '${push_idx:-missing}', '${PROPAGATE_STEP}' -> '${propagate_idx:-missing}'," \
         "'${VERIFY_STEP}' -> '${verify_idx:-missing}', '${SIGN_STEP}' -> '${sign_idx:-missing}'"
 else
-    if [[ "${push_idx}" -lt "${propagate_idx}" && "${propagate_idx}" -lt "${verify_idx}" && "${verify_idx}" -lt "${sign_idx}" ]]; then
-        _pass "the band runs push, copy, verify, sign -- the verification is before signing"
+    if [[ "${push_idx}" -lt "${sign_idx}" && "${sign_idx}" -lt "${propagate_idx}" && "${propagate_idx}" -lt "${verify_idx}" ]]; then
+        _pass "the band runs push, sign, copy, verify -- latest moves only after the signature exists"
     else
-        _fail "the band runs push, copy, verify, sign -- the verification is before signing" \
-            "steps ${push_idx}, ${propagate_idx}, ${verify_idx}, ${sign_idx} are not ascending"
+        _fail "the band runs push, sign, copy, verify -- latest moves only after the signature exists" \
+            "steps ${push_idx}, ${sign_idx}, ${propagate_idx}, ${verify_idx} are not ascending"
     fi
 fi
 

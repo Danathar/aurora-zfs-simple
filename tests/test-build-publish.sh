@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
 # Covers the publish band of .github/workflows/build.yml's `build_push` job —
-# the four `run:` bodies that decide what the registry ends up holding and what
-# gets signed:
+# the `run:` bodies that decide what the registry ends up holding and what
+# gets signed, in the order they run:
 #
 #   Prepare environment              lower-cases the registry/image reference
-#   Propagate tags from the pushed digest   copies one manifest onto every tag
-#   Verify pushed tags share one digest     refuses to sign a split tag set
-#   Sign container image             signs the digest
+#   Pick the tag to push first       the dated tag, never the `latest` hosts follow
+#   Sign container image             signs the pushed digest
+#   Propagate tags from the pushed digest   copies it onto every tag, `latest` last
+#   Verify pushed tags share one digest     fails on a split tag set
 #
 # Nothing in this repository executed any of them. They are shell inside YAML
 # strings, so run-tests.sh does not find them, test-shell-syntax.sh does not
@@ -30,10 +31,10 @@
 #      --preserve-digests, or copy from `:latest` instead of `@digest`, and the
 #      split silently returns — every tag still exists, so nothing looks wrong.
 #
-#   2. The verify step is the guard that makes (1) checkable, and it has to fail
-#      *before* signing. If a mismatch or an unreadable tag were treated as a
-#      warning, the job would sign one digest and publish tags pointing
-#      elsewhere, which is the exact state the two steps exist to prevent.
+#   2. The verify step is the guard that makes (1) checkable. It runs after
+#      signing, on the finished tag set: `latest` moves only in the last copy,
+#      after the signature exists, so a split or unreadable tag fails the run
+#      instead of being reported as a warning next to a signed digest.
 #
 #   3. Both steps refuse to run on an empty digest. `steps.push.outputs.digest`
 #      is empty whenever the push action changes its output contract; without
@@ -335,21 +336,48 @@ registry_tags() {
 }
 
 # =============================================================================
+# B2. "Pick the tag to push first" — never the tag hosts follow
+# =============================================================================
+
+PICK="${TMP_ROOT}/pick.sh"
+extract "${PICK}" "Pick the tag to push first" 'GITHUB_OUTPUT'
+
+# pick <tags> — run the step. Sets K_STATUS, K_OUTPUT and K_TAG.
+pick() {
+    local out
+    out="$(mktemp "${TMP_ROOT}/pick.XXXXXX")"
+    K_OUTPUT="$(DEFAULT_TAG="${DEFAULT_TAG}" TAGS="$1" GITHUB_OUTPUT="${out}" bash "${PICK}" 2>&1)"
+    K_STATUS=$?
+    K_TAG="$(sed -n 's/^tag=//p' "${out}")"
+}
+
+pick "latest latest.20260101 20260101"
+assert_eq "the pick step succeeds when a dated tag exists" "0" "${K_STATUS}"
+assert_eq "the first tag pushed is the dated one, not latest" "latest.20260101" "${K_TAG}"
+
+pick "latest"
+assert_eq "a tag set with only latest fails rather than pushing latest first" "1" "${K_STATUS}"
+assert_contains "and says why" "${K_OUTPUT}" "no tag other than ${DEFAULT_TAG}"
+assert_eq "and picks nothing" "" "${K_TAG}"
+
+# =============================================================================
 # C. "Propagate tags from the pushed digest"
 # =============================================================================
 
 PROPAGATE="${TMP_ROOT}/propagate.sh"
 extract "${PROPAGATE}" "Propagate tags from the pushed digest" 'skopeo copy'
 
-# propagate <digest> <tags> — run the step in a fresh registry.
+# propagate <digest> <tags> [first tag] — run the step in a fresh registry.
 # Sets P_DIR, P_STATUS, P_OUTPUT and P_CALLS.
 propagate() {
-    local digest=$1 tags=$2
+    local digest=$1 tags=$2 first=${3:-latest.20260101}
 
     P_DIR="$(mktemp -d "${TMP_ROOT}/propagate.XXXXXX")"
     make_skopeo "${P_DIR}"
-    # The push action published exactly one tag before this step runs.
-    [[ -n "${digest}" ]] && printf '%s' "${digest}" >"${P_DIR}/registry/${DEFAULT_TAG}"
+    # The push action published exactly one tag, the dated one no host
+    # follows, before this step runs; `latest` still names the previous image.
+    [[ -n "${digest}" ]] && printf '%s' "${digest}" >"${P_DIR}/registry/${first}"
+    printf '%s' "${DIGEST_B}" >"${P_DIR}/registry/${DEFAULT_TAG}"
 
     P_OUTPUT="$(
         PATH="${P_DIR}/bin:${PATH}" \
@@ -358,6 +386,7 @@ propagate() {
             DEFAULT_TAG="${DEFAULT_TAG}" \
             DIGEST="${digest}" \
             TAGS="${tags}" \
+            FIRST_TAG="${first}" \
             bash "${PROPAGATE}" 2>&1
     )"
     P_STATUS=$?
@@ -371,19 +400,19 @@ propagate "${DIGEST_A}" "latest latest.20260101 20260101 pr-42"
 assert_eq "propagating the pushed digest succeeds" "0" "${P_STATUS}"
 assert_eq "every date and pull-request tag is published" \
     "20260101 latest latest.20260101 pr-42" "$(registry_tags "${P_DIR}")"
-assert_eq "latest.YYYYMMDD resolves to the pushed digest" \
-    "${DIGEST_A}" "$(registry_tag "${P_DIR}" latest.20260101)"
+assert_eq "latest moves to the pushed digest" \
+    "${DIGEST_A}" "$(registry_tag "${P_DIR}" latest)"
 assert_eq "the bare date tag resolves to the pushed digest" \
     "${DIGEST_A}" "$(registry_tag "${P_DIR}" 20260101)"
 assert_eq "the pull-request tag resolves to the pushed digest" \
     "${DIGEST_A}" "$(registry_tag "${P_DIR}" pr-42)"
 
-# The copy source is the digest, not `:latest`: copying tag-to-tag would
+# The copy source is the digest, not a tag: copying tag-to-tag would
 # re-introduce the indirection that split the tag set in the first place.
 assert_contains "each tag is copied from the pushed digest reference" \
     "${P_CALLS}" "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST_A} docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:20260101"
 assert_not_contains "no tag is copied from another tag" \
-    "${P_CALLS}" "copy --preserve-digests docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
+    "${P_CALLS}" "copy --preserve-digests docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:"
 
 # Without --preserve-digests skopeo may re-compress and rewrite the manifest,
 # which produces a different digest for a byte-identical image — the failure
@@ -391,11 +420,18 @@ assert_not_contains "no tag is copied from another tag" \
 assert_eq "every copy preserves the manifest digest" \
     "3" "$(grep -c -- '--preserve-digests' <<<"${P_CALLS}")"
 
-# `latest` was published by the push step itself. Copying it onto itself is at
-# best a wasted registry round trip and at worst a rewrite of the one manifest
-# everything else is compared against.
-assert_eq "the already-pushed default tag is not copied over itself" \
-    "0" "$(grep -c ":${DEFAULT_TAG}\$" <<<"${P_CALLS}")"
+# The dated tag was published by the push step itself. Copying it onto itself
+# is at best a wasted registry round trip and at worst a rewrite of the one
+# manifest everything else is compared against.
+assert_eq "the already-pushed tag is not copied over itself" \
+    "0" "$(grep -c ":latest.20260101\$" <<<"${P_CALLS}")"
+
+# Hosts follow `latest`, so it moves last: a copy that fails before it leaves
+# `latest` on the previous signed image instead of a half-published set.
+assert_eq "latest is copied exactly once" \
+    "1" "$(grep -c ":${DEFAULT_TAG}\$" <<<"${P_CALLS}")"
+assert_contains "latest is the last tag copied" \
+    "$(tail -n1 <<<"${P_CALLS}")" ":${DEFAULT_TAG}"
 
 # --- a push that exposed no digest ------------------------------------------
 #
@@ -408,6 +444,8 @@ assert_eq "an empty digest fails the step" "1" "${P_STATUS}"
 assert_contains "an empty digest says why" \
     "${P_OUTPUT}" "push step did not expose a digest"
 assert_eq "an empty digest reaches the registry not at all" "" "${P_CALLS}"
+assert_eq "an empty digest leaves latest where it was" \
+    "${DIGEST_B}" "$(registry_tag "${P_DIR}" latest)"
 
 # --- a copy the registry rejects --------------------------------------------
 #
@@ -416,7 +454,8 @@ assert_eq "an empty digest reaches the registry not at all" "" "${P_CALLS}"
 # verify step downstream is the only thing that would notice.
 
 propagate "${DIGEST_A}" "latest latest.20260101 20260101"
-printf '%s\n' "latest.20260101" >"${P_DIR}/copy-fails"
+printf '%s' "${DIGEST_B}" >"${P_DIR}/registry/${DEFAULT_TAG}"
+printf '%s\n' "20260101" >"${P_DIR}/copy-fails"
 propagate_dir_with_failure="${P_DIR}"
 P_OUTPUT="$(
     PATH="${propagate_dir_with_failure}/bin:${PATH}" \
@@ -425,10 +464,13 @@ P_OUTPUT="$(
         DEFAULT_TAG="${DEFAULT_TAG}" \
         DIGEST="${DIGEST_A}" \
         TAGS="latest latest.20260101 20260101" \
+        FIRST_TAG="latest.20260101" \
         bash "${PROPAGATE}" 2>&1
 )"
 P_STATUS=$?
 assert_eq "a rejected copy fails the step" "1" "${P_STATUS}"
+assert_eq "a rejected copy leaves latest on the previous image" \
+    "${DIGEST_B}" "$(registry_tag "${propagate_dir_with_failure}" latest)"
 
 # =============================================================================
 # D. "Verify pushed tags share one digest"
@@ -471,14 +513,14 @@ assert_contains "the default tag is checked too, not assumed" \
 
 # --- a tag pointing somewhere else ------------------------------------------
 #
-# This is the state the band exists to catch: `latest` published by one push,
-# a date tag left over from another. Signing here would sign one digest while
-# `latest` served a different image.
+# This is the state the band exists to catch: one tag holding the signed
+# digest, another left over from a different push, so `latest` and the date
+# tags would serve different images.
 
 printf '%s' "${DIGEST_B}" >"${P_DIR}/registry/20260101"
 verify "${P_DIR}" "${DIGEST_A}" "latest latest.20260101 20260101"
 
-assert_eq "a tag resolving elsewhere fails before signing" "1" "${V_STATUS}"
+assert_eq "a tag resolving elsewhere fails the run" "1" "${V_STATUS}"
 assert_contains "the failure names the offending tag and both digests" \
     "${V_OUTPUT}" "Tag 20260101 resolves to ${DIGEST_B}, expected ${DIGEST_A}"
 
@@ -570,18 +612,24 @@ for step in "Propagate tags from the pushed digest" "Verify pushed tags share on
         '${{ steps.push.outputs.digest }}' "$(step_field "${step}" 'env.DIGEST')"
 done
 
-for step in "Propagate tags from the pushed digest" "Verify pushed tags share one digest"; do
+for step in "Pick the tag to push first" "Propagate tags from the pushed digest" "Verify pushed tags share one digest"; do
     # shellcheck disable=SC2016 # likewise
     assert_eq "'${step}' iterates the tag list the metadata action generated" \
         '${{ steps.metadata.outputs.tags }}' "$(step_field "${step}" 'env.TAGS')"
 done
 
-# The push step generates exactly one tag. If it ever pushed the whole list
-# again, the propagate step's single-manifest guarantee would be gone and the
-# verify step would be checking tags that came from separate pushes.
+# The push step generates exactly one tag, the one the pick step chose. If it
+# ever pushed the whole list again, the propagate step's single-manifest
+# guarantee would be gone; if it pushed `latest`, hosts would follow an image
+# that is not signed yet.
 # shellcheck disable=SC2016 # likewise
-assert_eq "the push step publishes exactly the default tag" \
-    '${{ env.DEFAULT_TAG }}' "$(step_field "Push To GHCR" 'with.tags')"
+assert_eq "the push step publishes exactly the picked tag" \
+    '${{ steps.first_tag.outputs.tag }}' "$(step_field "Push To GHCR" 'with.tags')"
+# shellcheck disable=SC2016 # likewise
+assert_eq "the propagate step skips the tag the push already published" \
+    '${{ steps.first_tag.outputs.tag }}' "$(step_field "Propagate tags from the pushed digest" 'env.FIRST_TAG')"
+assert_eq "the pick step keeps the id the push step references" \
+    "first_tag" "$(step_field "Pick the tag to push first" 'id')"
 
 # The publish band is gated so a pull request never writes to the registry
 # under the account's name. The guard has to be the same on all of them: a step
@@ -593,7 +641,7 @@ assert_contains "the push is gated on a non-pull-request build of the default br
 assert_contains "the push guard also requires the default branch" \
     "${PUSH_GUARD}" "github.event.repository.default_branch"
 
-for step in "Login to GitHub Container Registry" "Propagate tags from the pushed digest" \
+for step in "Login to GitHub Container Registry" "Pick the tag to push first" "Propagate tags from the pushed digest" \
     "Verify pushed tags share one digest" "Install Cosign" "Sign container image" \
     "Attest build provenance"; do
     assert_eq "'${step}' runs under exactly the push step's guard" \
@@ -620,26 +668,28 @@ else
         "sign=${sign_at_for_attest} attest=${attest_at}"
 fi
 
-# Order is the invariant that makes the verify step a gate rather than a report:
-# it has to sit after the tags are propagated and before anything is signed.
+# Order is what keeps `latest` on a signed image: the dated tag is pushed and
+# signed before any copy, and `latest` is copied (last) only after signing, so
+# a failure anywhere earlier leaves `latest` where it was. The verify step then
+# checks the finished tag set against the signed digest.
 STEP_ORDER="$(wf '[.jobs.build_push.steps[].name] | to_entries[] | "\(.key) \(.value)"')"
 step_index() {
     grep -F " $1" <<<"${STEP_ORDER}" | head -n1 | cut -d' ' -f1
 }
+pick_at="$(step_index "Pick the tag to push first")"
 push_at="$(step_index "Push To GHCR")"
+sign_at="$(step_index "Sign container image")"
 propagate_at="$(step_index "Propagate tags from the pushed digest")"
 verify_at="$(step_index "Verify pushed tags share one digest")"
-sign_at="$(step_index "Sign container image")"
 
-if [[ -n "${push_at}" && -n "${propagate_at}" && -n "${verify_at}" && -n "${sign_at}" &&
-    "${push_at}" -lt "${propagate_at}" && "${propagate_at}" -lt "${verify_at}" &&
-    "${verify_at}" -lt "${sign_at}" ]]; then
-    _pass "the tags are propagated, then verified, and only then signed"
+if [[ -n "${pick_at}" && -n "${push_at}" && -n "${sign_at}" && -n "${propagate_at}" && -n "${verify_at}" &&
+    "${pick_at}" -lt "${push_at}" && "${push_at}" -lt "${sign_at}" &&
+    "${sign_at}" -lt "${propagate_at}" && "${propagate_at}" -lt "${verify_at}" ]]; then
+    _pass "the dated tag is pushed and signed before latest is copied, then the set is verified"
 else
-    _fail "the tags are propagated, then verified, and only then signed" \
-        "got push=${push_at} propagate=${propagate_at} verify=${verify_at} sign=${sign_at}" \
-        "a verify step after the signing would report a split tag set that is" \
-        "already published and signed"
+    _fail "the dated tag is pushed and signed before latest is copied, then the set is verified" \
+        "got pick=${pick_at} push=${push_at} sign=${sign_at} propagate=${propagate_at} verify=${verify_at}" \
+        "a copy before signing moves latest onto an image that is not signed yet"
 fi
 
 finish

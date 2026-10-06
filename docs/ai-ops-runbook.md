@@ -43,7 +43,7 @@ build runs on `main` with no pull request at all. Find which job is red, then:
 | `Shell tests`                                     | This repository broke, or the runner's shellcheck changed under it.                                                                        | Run the failing test locally with `./tests/run-tests.sh <name>`, with shellcheck installed.                                                                                                                                                   |
 | `Build and push image`                            | Upstream skew when the OpenZFS/kernel badge says `blocked`; else a break here.                                                             | Read the badge before the log, then follow [AGENTS.md](../AGENTS.md#dominant-failure-mode-kernel--zfs-akmod-skew).                                                                                                                            |
 | A step after `Build Image`                        | Rechunk or registry login failed, so nothing was pushed. If the red step is `Push To GHCR` or later, read the next row instead.            | Match the step against [Other failure modes](../AGENTS.md#other-failure-modes).                                                                                                                                                               |
-| A step after `Login to GitHub Container Registry` | The push or a step after it failed. The push may already have moved `:latest`, so it may name an unsigned image and the date tags may lag. | Treat the published image as suspect: run the `cosign verify` in [the README](../README.md#signature-verification), then dispatch `nightly-compliance.yml` (see [A scheduled run is missing](#a-scheduled-run-is-missing)) for the tag check. |
+| A step after `Login to GitHub Container Registry` | The push or a later step failed. `:latest` moves last, after signing, so it still names the last signed image; date tags may lag.          | Treat the published image as suspect: run the `cosign verify` in [the README](../README.md#signature-verification), then dispatch `nightly-compliance.yml` (see [A scheduled run is missing](#a-scheduled-run-is-missing)) for the tag check. |
 
 `Shell tests` is the only check the ruleset requires, and it comes from
 `build.yml` or `coverage-gate.yml` depending on what a change touched
@@ -89,12 +89,13 @@ The same commit as a green night means the cause is outside the repository. A
 new commit means treat it as [`main` is red](#main-is-red). Then read which step
 failed:
 
-| Step                                         | Failing on an unchanged commit means                                                                                                         |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Run shell test suite                         | The runner changed under the suite, most often its shellcheck version.                                                                       |
-| Resolve the published :latest                | `:latest` cannot be read (`could not be inspected` in the log): it was deleted or repointed, or the registry or credentials are not working. |
-| Verify the published signature               | The image no longer verifies against `cosign.pub`.                                                                                           |
-| Verify the date tags still share that digest | A date tag was repointed or removed after the push.                                                                                          |
+| Step                                           | Failing on an unchanged commit means                                                                                                         |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run shell test suite                           | The runner changed under the suite, most often its shellcheck version.                                                                       |
+| Resolve the published :latest                  | `:latest` cannot be read (`could not be inspected` in the log): it was deleted or repointed, or the registry or credentials are not working. |
+| Verify the published signature                 | The image no longer verifies against `cosign.pub`.                                                                                           |
+| Verify :latest is readable without credentials | The package stopped being public, so hosts that installed from the README can no longer pull updates. Check the package's visibility.        |
+| Verify the date tags still share that digest   | A date tag was repointed or removed after the push.                                                                                          |
 
 A run that finds no image published at all passes with a note; every other
 failure to read the image is fatal on purpose. What the job does not cover, the

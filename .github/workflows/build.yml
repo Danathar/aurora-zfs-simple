@@ -269,6 +269,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Publish under a tag no host follows, sign that digest, and only then
+      # move `latest`. Hosts follow `latest`; pushing it first left it naming
+      # an unsigned image whenever a later step failed, until the next build
+      # signed one. The pushed tag is the first non-default tag the metadata
+      # step generated (latest.YYYYMMDD), so the tag set itself is unchanged.
+      - name: Pick the tag to push first
+        id: first_tag
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${TAGS}; do
+            if [ "${tag}" != "${DEFAULT_TAG}" ]; then
+              echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          done
+          echo "no tag other than ${DEFAULT_TAG} to push first" >&2
+          exit 1
+
       - name: Push To GHCR
         uses: redhat-actions/push-to-registry@94ade333c38ecc0e60e94785125d9a52ca423b37 # v2
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -280,65 +301,10 @@ jobs:
           registry: ${{ env.IMAGE_REGISTRY }}
           image: ${{ env.IMAGE_NAME }}
           # Push exactly one tag. The remaining tags are copied from the
-          # pushed digest in the next step so every tag is byte-identical.
-          tags: ${{ env.DEFAULT_TAG }}
+          # pushed digest after signing so every tag is byte-identical.
+          tags: ${{ steps.first_tag.outputs.tag }}
           username: ${{ env.REGISTRY_USER }}
           password: ${{ env.REGISTRY_PASSWORD }}
-
-      # podman can emit different manifest bytes for sequential pushes of
-      # the same local image: the first push compresses and uploads, later
-      # pushes reuse cached blob info, and the resulting manifests can carry
-      # different digests. That split what `latest` and the date tags pointed
-      # at and left `latest` outside the signed digest. Copy the single
-      # pushed manifest to the remaining tags server-side instead;
-      # --preserve-digests makes skopeo fail rather than rewrite the
-      # manifest, so every tag is identical by construction.
-      - name: Propagate tags from the pushed digest
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-          TAGS: ${{ steps.metadata.outputs.tags }}
-        run: |
-          set -euo pipefail
-          digest="${DIGEST}"
-          if [ -z "${digest}" ]; then
-            echo "push step did not expose a digest" >&2
-            exit 1
-          fi
-          for tag in ${TAGS}; do
-            if [ "${tag}" = "${DEFAULT_TAG}" ]; then
-              continue
-            fi
-            skopeo copy --preserve-digests \
-              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}@${digest}" \
-              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
-          done
-
-      # All tags in this job point at one manifest pushed from one local
-      # image. Enforce that as an invariant instead of trusting it: if any
-      # published tag resolves to a different digest than the one about to
-      # be signed, fail before signing rather than publish a half-signed
-      # tag set.
-      - name: Verify pushed tags share one digest
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-          TAGS: ${{ steps.metadata.outputs.tags }}
-        run: |
-          set -euo pipefail
-          expected="${DIGEST}"
-          if [ -z "${expected}" ]; then
-            echo "push step did not expose a digest" >&2
-            exit 1
-          fi
-          for tag in ${TAGS}; do
-            actual=$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}")
-            if [ "${actual}" != "${expected}" ]; then
-              echo "Tag ${tag} resolves to ${actual}, expected ${expected}" >&2
-              exit 1
-            fi
-            echo "Tag ${tag} -> ${actual} OK"
-          done
 
       # This section is optional and only needs to be enabled if you plan on distributing
       # your project for others to consume. You will need to create a public and private key
@@ -361,8 +327,8 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
 
       # The cosign signature says this repository's key signed the digest. It
-      # does not say which commit, workflow run or Containerfile produced it.
-      # A SLSA provenance attestation does, and anyone can check it with
+      # does not say which commit or workflow run produced it. A SLSA
+      # provenance attestation names both, and anyone can check it with
       # `gh attestation verify` (see "Project Continuity & Trust" in the
       # README) without trusting the key at all.
       - name: Attest build provenance
@@ -375,3 +341,63 @@ jobs:
           # Storage records exist only for organization-owned repositories,
           # and would need the artifact-metadata scope besides.
           create-storage-record: false
+
+      # podman can emit different manifest bytes for sequential pushes of
+      # the same local image: the first push compresses and uploads, later
+      # pushes reuse cached blob info, and the resulting manifests can carry
+      # different digests. That split what `latest` and the date tags pointed
+      # at and left `latest` outside the signed digest. Copy the single
+      # pushed, signed manifest to the remaining tags server-side instead;
+      # --preserve-digests makes skopeo fail rather than rewrite the
+      # manifest, so every tag is identical by construction. `latest` is
+      # copied last, so it moves only once every other tag holds the digest.
+      - name: Propagate tags from the pushed digest
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.metadata.outputs.tags }}
+          FIRST_TAG: ${{ steps.first_tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          digest="${DIGEST}"
+          if [ -z "${digest}" ]; then
+            echo "push step did not expose a digest" >&2
+            exit 1
+          fi
+          copy_to() {
+            skopeo copy --preserve-digests \
+              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}@${digest}" \
+              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:$1"
+          }
+          for tag in ${TAGS}; do
+            if [ "${tag}" = "${FIRST_TAG}" ] || [ "${tag}" = "${DEFAULT_TAG}" ]; then
+              continue
+            fi
+            copy_to "${tag}"
+          done
+          copy_to "${DEFAULT_TAG}"
+
+      # All tags in this job point at one manifest pushed from one local
+      # image and signed above. Enforce that as an invariant instead of
+      # trusting it: if any published tag resolves to a different digest
+      # than the one that was signed, fail the run.
+      - name: Verify pushed tags share one digest
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          set -euo pipefail
+          expected="${DIGEST}"
+          if [ -z "${expected}" ]; then
+            echo "push step did not expose a digest" >&2
+            exit 1
+          fi
+          for tag in ${TAGS}; do
+            actual=$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}")
+            if [ "${actual}" != "${expected}" ]; then
+              echo "Tag ${tag} resolves to ${actual}, expected ${expected}" >&2
+              exit 1
+            fi
+            echo "Tag ${tag} -> ${actual} OK"
+          done
