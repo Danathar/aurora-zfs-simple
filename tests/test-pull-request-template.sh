@@ -630,11 +630,12 @@ build_push	Image Metadata	PR_SAFE
 build_push	Build Image	PR_SAFE
 build_push	Rechunk Image with Chunkah	PR_SAFE
 build_push	Login to GitHub Container Registry	GUARDED
+build_push	Pick the tag to push first	GUARDED
 build_push	Push To GHCR	GUARDED
-build_push	Propagate tags from the pushed digest	GUARDED
-build_push	Verify pushed tags share one digest	GUARDED
 build_push	Install Cosign	GUARDED
 build_push	Sign container image	GUARDED
+build_push	Propagate tags from the pushed digest	GUARDED
+build_push	Verify pushed tags share one digest	GUARDED
 EOF
 )
 

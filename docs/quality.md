@@ -42,7 +42,7 @@ Two properties of the badge pipeline are deliberate and worth knowing:
 | The image build itself                | same                                    | publishing — a failed build pushes nothing |
 | `post-check.sh`                       | inside the build, as a `RUN` step       | the build                                  |
 | `bootc container lint`                | inside the build, as a `RUN` step       | the build                                  |
-| `Verify pushed tags share one digest` | default-branch non-PR runs              | signing                                    |
+| `Verify pushed tags share one digest` | default-branch non-PR runs              | a green run, after signing and the copies  |
 
 ### What each one does not cover
 

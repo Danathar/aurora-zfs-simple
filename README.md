@@ -233,9 +233,9 @@ gh workflow run build.yml
 
 The workflow also runs on the default branch according to `.github/workflows/build.yml`.
 It builds the complete image, post-processes it with Chunkah, publishes a
-single tag, copies that exact manifest to the remaining tags, verifies every
-published tag resolves to one manifest digest, and then signs that digest on
-default-branch non-PR runs.
+single dated tag, signs that digest, copies the exact manifest to the remaining
+tags with `latest` last, and verifies every published tag resolves to the signed
+digest, on default-branch non-PR runs.
 
 Chunkah runs after the kernel and ZFS changes have been applied. It rebuilds the
 final root filesystem into content-based layers, including both the inherited

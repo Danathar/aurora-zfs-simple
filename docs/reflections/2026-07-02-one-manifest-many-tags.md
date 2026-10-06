@@ -27,6 +27,14 @@ disagrees.
 
 Both steps are in [`.github/workflows/build.yml`](../../.github/workflows/build.yml).
 
+**Follow-up, 2026-10-06 (#348):** the order is now push, sign, copy, verify.
+Pushing `latest` first meant that any failure between the push and the
+signature left hosts following an unsigned image until the next good build. The
+push now publishes only `latest.YYYYMMDD`, which no host follows, that digest
+is signed, and only then is it copied to the other tags, with `latest` last.
+`Verify pushed tags share one digest` runs after the copies and checks the
+finished tag set against the signed digest.
+
 ## What to carry forward
 
 **An invariant that nothing checks is a belief.** The pipeline "obviously"

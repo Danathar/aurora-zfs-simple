@@ -5,8 +5,8 @@ name: Nightly compliance
 # because they are only true after the push -- and can stop being true long
 # after the run that established them.
 #
-# `build.yml` verifies that every tag it pushes resolves to one manifest digest,
-# and then signs that digest. Both facts are asserted once, inside the run that
+# `build.yml` signs the digest it pushes and then verifies that every tag it
+# publishes resolves to it. Both facts are asserted once, inside the run that
 # creates them. Nothing revisits the registry afterwards. A tag repointed by a
 # later partial push, a signature that no longer verifies against the committed
 # public key, an image deleted out from under consumers -- none of that is
