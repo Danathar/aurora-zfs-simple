@@ -30,7 +30,7 @@
       "workflow": null,
       "jobs": {
         "tests": {"contents": "read"},
-        "build_push": {"contents": "read", "packages": "write"}
+        "build_push": {"contents": "read", "packages": "write", "id-token": "write", "attestations": "write"}
       }
     },
     "coverage-gate.yml": {
