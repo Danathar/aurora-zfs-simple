@@ -364,8 +364,11 @@ reads it back, monthly and on demand:
   Dependabot and Renovate pull requests are not agents' and are left out.
 - **What fails it.** A Hive-app pull request with no signature line, or a
   commit on an agent pull request with no Signed-off-by trailer, merged on or
-  after the date the workflow records as its enforcement start. Earlier misses
-  are listed under their own heading and do not fail the run.
+  after the date the workflow records as its enforcement start. A merge commit
+  — one with more than one parent, such as GitHub's "Update branch" writes — is
+  exempt, as the DCO app exempts it; the lines a conflict resolution adds in it
+  are therefore not checked for a sign-off. Earlier misses are listed under
+  their own heading and do not fail the run.
 - **What it does not judge.** Who merged a pull request is reported, not
   checked: there is no second reviewer here to compare it against.
 - **Its reach.** Its job holds `contents: read` and `pull-requests: read`,

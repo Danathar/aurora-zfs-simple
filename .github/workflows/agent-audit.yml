@@ -22,7 +22,10 @@ name: Agent audit trail
 # Two things fail the run, because each is checkable from what GitHub holds:
 #
 #   * a pull request the Hive app opened with no `— hive:` signature line;
-#   * a commit on an agent pull request with no Signed-off-by trailer.
+#   * a commit on an agent pull request with no Signed-off-by trailer. A merge
+#     commit (more than one parent) is exempt, as the DCO app exempts it: it is
+#     what updating a pull request from `main` writes, which
+#     docs/multi-agent.md asks for.
 #
 # Both rules apply from 2026-09-29. Reading the merged history when this was
 # written found earlier pull requests that already lack the record -- a missing
@@ -113,10 +116,22 @@ jobs:
             gh pr view "${number}" --repo "${REPO}" --json number,commits
           done | jq -s 'map({(.number | tostring): .}) | add // {}' > details.json
 
+          # A merge commit is exempt from the trailer rule, as the DCO app
+          # exempts it: docs/multi-agent.md asks for a pull request to be
+          # updated from `main`, and the merge that writes carries no trailer.
+          # The only honest test is its parent count. `gh pr view` does not
+          # return parents, so they are read for each commit that lacks a
+          # trailer and no other.
+          jq -r '.[].commits[] | select(.messageBody | test("(^|\n)Signed-off-by: ") | not) | .oid' details.json | sort -u |
+            while read -r oid; do
+              printf '%s %s\n' "${oid}" "$(gh api "repos/${REPO}/commits/${oid}" --jq '.parents | length')"
+            done | jq -Rn '[inputs | split(" ") | {(.[0]): (.[1] | tonumber)}] | add // {}' > parents.json
+
           # Merge dates before this day are reported, not failed (see header).
           enforce_from="2026-09-29"
 
-          jq --arg since "${SINCE}" --arg enforce "${enforce_from}" --arg total "${total}" --slurpfile details details.json '
+          jq --arg since "${SINCE}" --arg enforce "${enforce_from}" --arg total "${total}" --slurpfile details details.json --slurpfile parents parents.json '
+            def ismerge: ($parents[0][.oid] // 1) > 1;
             def signature:
               (.body // "") | split("\n") | map(select(startswith("— hive:"))) | first;
             def row:
@@ -134,7 +149,9 @@ jobs:
                   enforced: ($pr.mergedAt[:10] >= $enforce),
                   signature: (signature | if . == null then null else ltrimstr("— hive: ") end),
                   commits: ($d.commits | length),
+                  merges: ([$d.commits[] | select(ismerge)] | length),
                   unsigned: [$d.commits[]
+                             | select(ismerge | not)
                              | select(.messageBody | test("(^|\n)Signed-off-by: ") | not)
                              | .oid[:7]]
                 };
@@ -162,7 +179,7 @@ jobs:
                       [ "| PR | Merged | Author | Merged by | Backend and model | Commits | Signed-off |",
                         "| --- | --- | --- | --- | --- | --- | --- |" ]
                       + [ $rows[]
-                          | "| [#\(.number)](\(.url)) \(.title | cell) | \(.merged) | \(.author) | \(.merged_by) | \(.signature // "**missing**" | cell) | \(.commits) | \(if (.unsigned | length) == 0 then "all" else "**\(.commits - (.unsigned | length)) of \(.commits)**" end) |" ]
+                          | "| [#\(.number)](\(.url)) \(.title | cell) | \(.merged) | \(.author) | \(.merged_by) | \(.signature // "**missing**" | cell) | \(.commits) | \(if (.unsigned | length) == 0 then "all\(if .merges > 0 then " (\(.merges) merge exempt)" else "" end)" else "**\(.commits - .merges - (.unsigned | length)) of \(.commits - .merges)**" end) |" ]
                       + [ "" ]
                     end)
                   + (if ($found | length) == 0
