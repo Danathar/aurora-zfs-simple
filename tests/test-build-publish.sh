@@ -661,6 +661,22 @@ assert_eq "the attestation names the image the push published" \
 # `// ""` in step_field would turn a literal false into "", so read it as text.
 assert_eq "the attestation is not pushed to the registry, where it breaks cosign verify --key" \
     "false" "$(step_field "Attest build provenance" 'with["push-to-registry"] | tostring')"
+# The step above is not the only way back to the regression: any other
+# actions/attest* step (an SBOM, a second provenance) left pushing to the
+# registry puts a certificate-signed bundle on the image just the same. Scan
+# every job's steps, not the one name, and refuse a scan that found nothing.
+# shellcheck disable=SC2016
+attest_steps="$(wf '[.jobs[].steps[]? | select((.uses // "") | startswith("actions/attest"))] | length')"
+# shellcheck disable=SC2016
+attest_pushing="$(wf '[.jobs[].steps[]? | select((.uses // "") | startswith("actions/attest"))
+    | select((.with["push-to-registry"] | tostring) as $p | $p != "false" and $p != "null")
+    | .name // .uses] | join(", ")')"
+if [[ "${attest_steps}" =~ ^[1-9][0-9]*$ && -z "${attest_pushing}" ]]; then
+    _pass "no actions/attest step in build.yml pushes its attestation to the registry"
+else
+    _fail "no actions/attest step in build.yml pushes its attestation to the registry" \
+        "attest steps=${attest_steps} pushing=${attest_pushing}"
+fi
 attest_at="$(wf '[.jobs.build_push.steps[].name] | index("Attest build provenance")')"
 sign_at_for_attest="$(wf '[.jobs.build_push.steps[].name] | index("Sign container image")')"
 if [[ "${attest_at}" =~ ^[0-9]+$ && "${sign_at_for_attest}" =~ ^[0-9]+$ && "${sign_at_for_attest}" -lt "${attest_at}" ]]; then
