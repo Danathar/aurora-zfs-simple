@@ -341,6 +341,12 @@ keeps Aurora userspace updates flowing. They must be pinned **together** — the
 must be unpinned again later, or the image is frozen on an unpatched kernel;
 leave a tracking note when doing this.
 
+To find what the last good image was built from, read its labels:
+`org.aurora-zfs-simple.akmods-image` and `org.aurora-zfs-simple.akmods-zfs-image`
+each name the upstream build it used as `name:tag@digest`, and `ostree.linux`
+names its kernel (`skopeo inspect docker://ghcr.io/danathar/aurora-zfs-simple:<tag>`).
+Images published before these labels existed carry only `ostree.linux`.
+
 **Take the ZFS kmod from the `coreos-testing` stream.** Before dismissing this
 as reckless, check *why* `Linux-Maximum` is low. There are two very different
 cases, and they call for opposite decisions:
