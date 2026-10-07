@@ -510,6 +510,20 @@ inspect)
     *) printf '%s\n' "{\"Config\":\${config},\"RootFS\":{\"Layers\":[\"sha256:aaa\",\"sha256:bbb\"]},\"History\":[{\"created_by\":\"RUN true\"}]}" ;;
     esac
     ;;
+images)
+    # What buildah leaves in storage after the build: the three upstream
+    # images the Containerfile names, the built image, and nothing else from
+    # ublue-os. A test can replace the list to add a second copy or drop one.
+    if [ -e "\${dir}/images" ]; then
+        cat "\${dir}/images"
+    else
+        printf '%s\n' \
+            "localhost/aurora-zfs-simple:latest@sha256:\$(printf '0%.0s' {1..64})" \
+            "ghcr.io/ublue-os/aurora-dx:stable@sha256:\$(printf 'a%.0s' {1..64})" \
+            "ghcr.io/ublue-os/akmods:coreos-stable-44-x86_64@sha256:\$(printf 'b%.0s' {1..64})" \
+            "ghcr.io/ublue-os/akmods-zfs:coreos-stable-44-x86_64@sha256:\$(printf 'c%.0s' {1..64})"
+    fi
+    ;;
 run)
     case " \$* " in
     *" --entrypoint rpm "*)
@@ -624,6 +638,54 @@ assert_contains "it drops the inherited ostree.commit label" \
     "${run_call}" "--label ostree.commit-"
 assert_contains "it drops the inherited ostree.final-diffid label" \
     "${run_call}" "--label ostree.final-diffid-"
+
+# The Containerfile names Aurora and both akmods images by moving tags, and the
+# metadata step overwrites the inherited org.opencontainers.image.version that
+# named the Aurora build. These labels are the only record, on the published
+# image, of which upstream builds went into it.
+A64="$(printf 'a%.0s' {1..64})"; B64="$(printf 'b%.0s' {1..64})"; C64="$(printf 'c%.0s' {1..64})"
+assert_contains "it names the Aurora base by name" \
+    "${run_call}" "--label org.opencontainers.image.base.name=ghcr.io/ublue-os/aurora-dx:stable "
+assert_contains "it names the Aurora base by the digest buildah pulled" \
+    "${run_call}" "--label org.opencontainers.image.base.digest=sha256:${A64} "
+assert_contains "it names the akmods image it took the kernel from, by digest" \
+    "${run_call}" "--label org.aurora-zfs-simple.akmods-image=ghcr.io/ublue-os/akmods:coreos-stable-44-x86_64@sha256:${B64} "
+assert_contains "it names the akmods-zfs image it took ZFS from, by digest" \
+    "${run_call}" "--label org.aurora-zfs-simple.akmods-zfs-image=ghcr.io/ublue-os/akmods-zfs:coreos-stable-44-x86_64@sha256:${C64} "
+for inherited in io.artifacthub.package.deprecated io.artifacthub.package.keywords \
+    io.artifacthub.package.logo-url io.artifacthub.package.maintainers \
+    io.artifacthub.package.readme-url quay.expires-after; do
+    assert_contains "it drops Aurora's own ${inherited} label" \
+        "${run_call}" "--label ${inherited}- "
+done
+assert_contains "it reports what it was built from" \
+    "$(cat "${ok_dir}/out")" "Built from: ghcr.io/ublue-os/aurora-dx:stable@sha256:${A64}"
+
+# An upstream image missing from storage, or there twice, would label the
+# image with nothing or with two refs at once. Either refuses before chunkah.
+for shape in missing doubled; do
+    lab_dir="$(mktemp -d "${TMP_ROOT}/rechunk-upstream-${shape}.XXXXXX")"
+    if [ "${shape}" = missing ]; then
+        printf '%s\n' "ghcr.io/ublue-os/aurora-dx:stable@sha256:${A64}" \
+            "ghcr.io/ublue-os/akmods-zfs:coreos-stable-44-x86_64@sha256:${C64}" >"${lab_dir}/images"
+    else
+        printf '%s\n' "ghcr.io/ublue-os/aurora-dx:stable@sha256:${A64}" \
+            "ghcr.io/ublue-os/akmods:coreos-stable-44-x86_64@sha256:${B64}" \
+            "ghcr.io/ublue-os/akmods:coreos-stable-44-6.19.14-101.fc44.x86_64@sha256:${B64}" \
+            "ghcr.io/ublue-os/akmods-zfs:coreos-stable-44-x86_64@sha256:${C64}" >"${lab_dir}/images"
+    fi
+    run_rechunk "${lab_dir}" "${TAG_LIST}"
+    if [[ "$(cat "${lab_dir}/status")" != "0" ]]; then
+        _pass "an akmods image ${shape} in storage fails the step"
+    else
+        _fail "an akmods image ${shape} in storage fails the step" "the step exited 0"
+    fi
+    assert_contains "the ${shape}-akmods refusal names the image" \
+        "$(cat "${lab_dir}/err")" "expected exactly one ghcr.io/ublue-os/akmods image in storage"
+    assert_not_contains "an akmods image ${shape} in storage never starts chunkah" \
+        "$(calls_of "${lab_dir}/calls")" "--mount=type=image"
+    rm -f "${ARCHIVE}"
+done
 # The inherited ostree.linux is Aurora's kernel, which kernel-akmods.sh erased.
 # `--label KEY=VALUE` overrides the config's value in chunkah; the value has to
 # be the one the query returned, with no trailing newline folded in.
@@ -641,12 +703,15 @@ assert_contains "the first call reads the source image's config" \
     "$(nth_call "${ok_dir}" 1)" "inspect"
 assert_contains "the second call reads the shipped kernel out of the built image" \
     "$(nth_call "${ok_dir}" 2)" "run --rm --entrypoint rpm"
-assert_contains "the third call is the chunkah run that writes the archive" \
-    "$(nth_call "${ok_dir}" 3)" "run --rm --mount=type=image"
-assert_eq "the fourth call empties container storage, tagged images included" \
-    "image prune -af" "$(nth_call "${ok_dir}" 4)"
-assert_contains "the fifth call loads the buffered archive back" \
-    "$(nth_call "${ok_dir}" 5)" "load -i /tmp/chunkah-oci.tar"
+assert_contains "calls three to five list storage for the upstream images, before the prune" \
+    "$(nth_call "${ok_dir}" 3) $(nth_call "${ok_dir}" 4) $(nth_call "${ok_dir}" 5)" \
+    "images --format {{.Repository}}:{{.Tag}}@{{.Digest}} images --format"
+assert_contains "the sixth call is the chunkah run that writes the archive" \
+    "$(nth_call "${ok_dir}" 6)" "run --rm --mount=type=image"
+assert_eq "the seventh call empties container storage, tagged images included" \
+    "image prune -af" "$(nth_call "${ok_dir}" 7)"
+assert_contains "the eighth call loads the buffered archive back" \
+    "$(nth_call "${ok_dir}" 8)" "load -i /tmp/chunkah-oci.tar"
 
 # podman unpacks the archive into TMPDIR before applying it. Left on /var/tmp
 # that lands on the same disk the prune just freed, which is the disk the load's
