@@ -136,6 +136,36 @@ Reboot after switching back.
 This branch intentionally does not include the NVIDIA Open Aurora base image or
 NVIDIA akmods.
 
+## Which Upstream Builds An Image Came From
+
+The three `ghcr.io/ublue-os` images above are named by tags that move each time
+Universal Blue publishes a new build. So the `Containerfile` alone does not say
+which builds went into a given published image. The build records them on the
+image as labels, each with the exact digest it pulled:
+
+| Label                                    | What it names                                    |
+| ---------------------------------------- | ------------------------------------------------ |
+| `org.opencontainers.image.base.name`     | the Aurora tag the build used                    |
+| `org.opencontainers.image.base.digest`   | the Aurora build behind that tag at the time     |
+| `org.aurora-zfs-simple.akmods-image`     | the akmods build the kernel came from, by digest |
+| `org.aurora-zfs-simple.akmods-zfs-image` | the akmods-zfs build ZFS came from, by digest    |
+| `ostree.linux`                           | the kernel version installed in the image        |
+
+To compare two published images, read the labels off each:
+
+```bash
+skopeo inspect docker://ghcr.io/danathar/aurora-zfs-simple:latest \
+  | jq '.Labels | with_entries(select(.key | test("base\\.|akmods|ostree\\.linux")))'
+```
+
+The two akmods labels name the builds to go back to when a newer upstream build
+breaks something. Each value works as written in a `FROM` line; see
+[Pinning The Kernel If Needed](#pinning-the-kernel-if-needed).
+
+The build drops the Artifact Hub labels Aurora sets for itself (maintainer,
+README link, logo, keywords, deprecated flag) and Aurora's quay.io expiry
+setting, because they describe Aurora rather than this image.
+
 ## Important Design Detail
 
 This image does not keep Aurora's original kernel packages.
@@ -383,7 +413,11 @@ commit, `Containerfile`, or build run produced that image. Each published image
 also carries a build provenance attestation that names the workflow and run
 that built it and the commit they ran from. It is issued by GitHub Actions, not
 by any key the maintainer holds. It does not list the build's inputs file by
-file; the `Containerfile` is the one in that commit. To check it:
+file; the `Containerfile` is the one in that commit, and the upstream builds it
+pulled by moving tags are recorded on the image as labels (see
+[Which Upstream Builds An Image Came From](#which-upstream-builds-an-image-came-from)).
+Those labels come from this repository's build, so they are only as trustworthy
+as the signature on the image. To check the attestation:
 
 ```bash
 gh attestation verify oci://ghcr.io/danathar/aurora-zfs-simple:latest \
