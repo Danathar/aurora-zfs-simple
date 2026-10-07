@@ -427,6 +427,16 @@ assert_eq "the label job runs no shell" \
 # sentence; the two assertions above only bound what is there now.
 assert_eq "the label job has exactly one step" "1" "$(wf '.jobs.label.steps | length')"
 
+# A labeling failure has to show on the pull request. `continue-on-error: true`
+# on the job or the step keeps the failure and shows the check green, so a pull
+# request reaches review without its area labels and nothing says why; an `if:`
+# can skip the job outright. So the job and its step are closed key sets: a new
+# key has to be added here on purpose.
+assert_eq "the label job has only the keys it needs, so nothing can soften its failure" \
+    "name,permissions,runs-on,steps,timeout-minutes" "$(wf '.jobs.label | keys | join(",")')"
+assert_eq "the label step has only name, uses and with, so a failure fails the job" \
+    "name,uses,with" "$(wf '.jobs.label.steps[0] | keys | join(",")')"
+
 # Selected by name rather than by index, so a step inserted above it makes the
 # count assertion fail on its own instead of dragging every input assertion
 # below with it.
