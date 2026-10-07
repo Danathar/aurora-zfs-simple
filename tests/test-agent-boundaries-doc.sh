@@ -19,8 +19,10 @@
 #   * the ruleset: no bypass actors, no approval, no code-owner review, and
 #     `Shell tests` the only required check, run by exactly the two workflows
 #     the row names and needed by `build_push`;
-#   * build.yml runs on a push to `main` only, and ai-fix.yml's agent job holds
-#     no `packages` scope and reads no `SIGNING_SECRET`;
+#   * build.yml runs on a push to `main` only, its publishing-step `if:`
+#     conditions are listed as asked rather than as a gate (a same-repository
+#     pull request runs its own copy of build.yml), and ai-fix.yml's agent job
+#     holds no `packages` scope and reads no `SIGNING_SECRET`;
 #   * .claude/settings.json: every deny and ask rule is named in the settings
 #     row, the three commands the hook row names are allow rules, the runner is
 #     allow-listed beside its `_note_run_tests` key, and no rule covers
@@ -208,6 +210,13 @@ guard = "github.event_name != 'pull_request' && github.ref == format('refs/heads
 guarded = [s for s in build["jobs"]["build_push"].get("steps", []) if s.get("if") == guard]
 check("build.yml still guards publishing steps on non-pull-request runs of the default branch",
       bool(guarded))
+# A same-repository pull request runs its own copy of build.yml, so those
+# conditions are only as strong as review of the file: they are asked, not a gate.
+check("no gate row claims the publishing-step if: conditions as a gate",
+      not [r for r in rows if "`if:` conditions" in r[0]])
+check("§What is asked lists the publishing-step if: conditions and says a pull request runs its own copy",
+      "The `if:` conditions on the publishing steps" in squash(section(page, ASKED))
+      and "pull request's own copy of `build.yml`" in squash(section(page, ASKED)))
 
 ai_fix = workflow("ai-fix.yml")
 fix = ai_fix["jobs"].get("fix", {})
