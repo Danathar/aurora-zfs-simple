@@ -170,7 +170,8 @@ documents:
 [`.claude/settings.json`](../.claude/settings.json) and its hook bind a Claude
 Code session. A backend that does not read them is held by the layers on
 GitHub's side instead: the ruleset, the `Shell tests` check, and a person's
-merge.
+merge. [`docs/agent-boundaries.md`](agent-boundaries.md) lists each of those
+gates and who it holds for.
 
 ## What this repository does not run
 
