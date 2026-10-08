@@ -185,7 +185,7 @@ jobs:
       # ever has to hold two unpacked copies of the image at once.
       - name: Rechunk Image with Chunkah
         env:
-          CHUNKAH_IMAGE: quay.io/coreos/chunkah:v0.7.0
+          CHUNKAH_IMAGE: quay.io/coreos/chunkah:v0.7.0@sha256:8b56578258d1d10d3e1c7b0f71a4d05317c5fde331c4f483576a1b60e65f0cea
           TAGS: ${{ steps.metadata.outputs.tags }}
         run: |
           set -euo pipefail

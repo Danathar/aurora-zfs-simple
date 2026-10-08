@@ -289,15 +289,14 @@ Aurora content and this image's replacement kernel and ZFS files. This improves
 layer reuse and update resumability; it does not change the files installed in
 the image.
 
-The workflow pins Chunkah to an explicit stable release tag, for example
-`quay.io/coreos/chunkah:v0.7.0`, instead of the floating `latest` tag. A custom
+The workflow pins Chunkah to an explicit stable release tag and its digest,
+`quay.io/coreos/chunkah:v0.7.0@sha256:8b56578258d1d10d3e1c7b0f71a4d05317c5fde331c4f483576a1b60e65f0cea`, instead of the floating `latest` tag. A custom
 manager in [`renovate.json`](renovate.json) matches that `CHUNKAH_IMAGE:` line
 and opens a PR when a newer stable `vX.Y.Z` is published.
 
 Chunkah is pinned by tag and digest. The custom manager captures an optional
 `@sha256:...` digest after the tag, and no `packageRule` turns digest or pin
-updates off for `quay.io/coreos/chunkah`. A bare tag therefore gets its digest
-added by a Renovate pin PR, and from then on tag and digest move together on
+updates off for `quay.io/coreos/chunkah`, so tag and digest move together on
 every release. The digest matters more here than for most pins: Chunkah
 rewrites the image immediately before it is pushed and signed, so a `v0.7.0`
 that was re-pushed upstream would put unreviewed bytes into an image this
