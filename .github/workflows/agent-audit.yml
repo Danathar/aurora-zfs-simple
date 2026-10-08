@@ -23,9 +23,12 @@ name: Agent audit trail
 #
 #   * a pull request the Hive app opened with no `— hive:` signature line;
 #   * a commit on an agent pull request with no Signed-off-by trailer. A merge
-#     commit (more than one parent) is exempt, as the DCO app exempts it: it is
-#     what updating a pull request from `main` writes, which
-#     docs/multi-agent.md asks for.
+#     commit is exempt, as the DCO app exempts it, when the pull request went
+#     into `main` and every parent after the first is outside the commits the
+#     pull request lists: that is what updating a pull request from `main`
+#     writes, which docs/multi-agent.md asks for. A merge of another unmerged
+#     branch brings in commits the pull request lists, so it still needs its
+#     trailer.
 #
 # Both rules apply from 2026-09-29. Reading the merged history when this was
 # written found earlier pull requests that already lack the record -- a missing
@@ -95,7 +98,7 @@ jobs:
           limit=500
           gh pr list --repo "${REPO}" --state merged --limit "${limit}" \
             --search "merged:>=${SINCE}" \
-            --json number,title,author,mergedAt,mergedBy,body,url > merged.json
+            --json number,title,author,baseRefName,mergedAt,mergedBy,body,url > merged.json
           total="$(jq length merged.json)"
           if [ "${total}" -ge "${limit}" ]; then
             echo "::error::${total} pull requests merged since ${SINCE} reached the ${limit} cap; audit a narrower window"
@@ -119,25 +122,42 @@ jobs:
           # A merge commit is exempt from the trailer rule, as the DCO app
           # exempts it: docs/multi-agent.md asks for a pull request to be
           # updated from `main`, and the merge that writes carries no trailer.
-          # The only honest test is its parent count. `gh pr view` does not
-          # return parents, so they are read for each commit that lacks a
-          # trailer and no other.
+          # The only honest test is its parents, not its headline (see
+          # ismerge below). `gh pr view` does not return parents, so they are
+          # read, in order, for each commit that lacks a trailer and no other.
+          # A lookup that returns anything but commit hashes fails the run.
           jq -r '.[].commits[] | select(.messageBody | test("(^|\n)Signed-off-by: ") | not) | .oid' details.json | sort -u |
             while read -r oid; do
-              printf '%s %s\n' "${oid}" "$(gh api "repos/${REPO}/commits/${oid}" --jq '.parents | length')"
-            done | jq -Rn '[inputs | split(" ") | {(.[0]): (.[1] | tonumber)}] | add // {}' > parents.json
+              printf '%s %s\n' "${oid}" "$(gh api "repos/${REPO}/commits/${oid}" --jq '[.parents[].sha] | join(",")')"
+            done | jq -Rn '[inputs | split(" ") | {(.[0]): (.[1] | split(",")
+                | if length > 0 and all(test("^[0-9a-f]{40}$")) then . else error("no parents read for \(.)") end)}]
+                | add // {}' > parents.json
 
           # Merge dates before this day are reported, not failed (see header).
           enforce_from="2026-09-29"
 
           jq --arg since "${SINCE}" --arg enforce "${enforce_from}" --arg total "${total}" --slurpfile details details.json --slurpfile parents parents.json '
-            def ismerge: ($parents[0][.oid] // 1) > 1;
+            # The commits a pull request lists are what its branch held and
+            # its base did not when it merged, so a parent missing from that
+            # list was on the base then. Every parent after the first, which
+            # is what the merge brought in, must be missing from it, and the
+            # base must be main. So a merge of another unmerged branch still
+            # needs its trailer, even as the first commit on the branch, when
+            # the first parent is the main commit it started from; so does
+            # any merge on a pull request into another branch, which nothing
+            # here audits. Asking main would prove nothing: once the pull
+            # request merges, every parent is on main.
+            def ismerge($own; $base): ($parents[0][.oid] // []) as $p
+              | $base == "main"
+              and ($p | length) > 1
+              and all($p[1:][]; IN($own[]) | not);
             def signature:
               (.body // "") | split("\n") | map(select(startswith("— hive:"))) | first;
             def row:
               . as $pr
               | ($details[0][$pr.number | tostring]) as $d
               | if $d == null then error("no commits fetched for #\($pr.number)") else . end
+              | [$d.commits[].oid] as $own
               | {
                   number: $pr.number,
                   url: $pr.url,
@@ -149,9 +169,9 @@ jobs:
                   enforced: ($pr.mergedAt[:10] >= $enforce),
                   signature: (signature | if . == null then null else ltrimstr("— hive: ") end),
                   commits: ($d.commits | length),
-                  merges: ([$d.commits[] | select(ismerge)] | length),
+                  merges: ([$d.commits[] | select(ismerge($own; $pr.baseRefName))] | length),
                   unsigned: [$d.commits[]
-                             | select(ismerge | not)
+                             | select(ismerge($own; $pr.baseRefName) | not)
                              | select(.messageBody | test("(^|\n)Signed-off-by: ") | not)
                              | .oid[:7]]
                 };
