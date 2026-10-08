@@ -710,4 +710,65 @@ else
         "a copy before signing moves latest onto an image that is not signed yet"
 fi
 
+
+# =============================================================================
+# G. what can quietly skip or soften a step
+# =============================================================================
+#
+# Everything above reads a value the steps hold; none of it reads the keys
+# around those values. `continue-on-error: true` on the job, on Build Image or
+# on Push To GHCR keeps a failed build or a rejected push and paints the run
+# green, so the badge says a new image shipped when hosts are still on the old
+# one. The same key on Sign container image or on the verify step publishes an
+# unsigned or split tag set as a success, which is the exact failure section E
+# and the verify step exist to make loud. `if: false` on Build Image or on the
+# rechunk step skips the image entirely while every step after it still runs
+# against whatever the runner had. Sections A to D still pass under all of
+# these, because they execute the extracted run: bodies, not the steps around
+# them. So the job and every one of its steps are closed key sets: a new key has
+# to be added here on purpose, with a reason.
+
+assert_eq "the build_push job has only the keys it needs, so nothing can soften its failure" \
+    "name,needs,permissions,runs-on,steps,timeout-minutes" \
+    "$(wf '.jobs.build_push | keys | join(",")')"
+
+# One row per step, in run order: the step name, then its sorted keys. The
+# order half is checked separately above for the publish band; here it pins
+# the whole list, so a step added between two others shows up as a diff rather
+# than slipping past a name lookup.
+expected_step_keys="$(cat <<'ROWS'
+Prepare environment|name,run
+Checkout|name,uses
+Maximize build space|name,uses
+Update Podman|name,run
+Move container storage to the large runner disk|name,run
+Get current date|id,name,run
+Image Metadata|id,name,uses,with
+Build Image|id,name,uses,with
+Rechunk Image with Chunkah|env,name,run
+Login to GitHub Container Registry|if,name,uses,with
+Pick the tag to push first|env,id,if,name,run
+Push To GHCR|env,id,if,name,uses,with
+Install Cosign|if,name,uses,with
+Sign container image|env,if,name,run
+Attest build provenance|if,name,uses,with
+Propagate tags from the pushed digest|env,if,name,run
+Verify pushed tags share one digest|env,if,name,run
+ROWS
+)"
+actual_step_keys="$(wf '.jobs.build_push.steps[] | "\(.name)|\(keys | join(","))"')"
+assert_eq "every build_push step has exactly its expected keys, in order, so none can be skipped or softened" \
+    "${expected_step_keys}" "${actual_step_keys}"
+
+# The row comparison above would also pass if the jq read nothing on both
+# sides, so prove it read the real job: seventeen steps, none without a name.
+assert_eq "the key-set check read every build_push step" \
+    "17" "$(wf '[.jobs.build_push.steps[] | select(.name != null)] | length')"
+
+# No step anywhere in the file may carry continue-on-error, whatever its value:
+# the tests job is the gate build_push needs, and a softened suite there
+# publishes an image no test passed.
+assert_eq "no job or step in build.yml sets continue-on-error" \
+    "0" "$(wf '[.jobs[] | ., .steps[]? | select(has("continue-on-error"))] | length')"
+
 finish
