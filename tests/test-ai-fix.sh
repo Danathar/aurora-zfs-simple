@@ -366,6 +366,39 @@ assert_eq "the fix job waits for preflight" "preflight" "$(wf '.jobs.fix.needs')
 assert_eq "the fix job runs only on preflight's yes" \
     "needs.preflight.outputs.run == 'yes'" "$(wf '.jobs.fix.if')"
 
+# --- B2b. what can quietly stop the agent -----------------------------------
+#
+# Every check above reads a value the jobs hold; none of them reads the keys
+# around those values. `if: false` on the `check` step leaves `run` unset, so
+# the fix job never starts and the run is green with no summary saying why. The
+# same `if:` on the Claude Code step skips the agent while the job reports
+# success. `continue-on-error: true` on either job or any step keeps a real
+# failure -- an unreadable pull request, an agent that runs out of turns --
+# and paints it green, so a maintainer who asked with `@claude` sees a passing
+# run and no pull request. Section A would still pass, because it runs the
+# extracted script, not the step around it. So both jobs and their steps are
+# closed key sets: a new key has to be added here on purpose.
+
+assert_eq "the workflow has exactly two jobs, preflight and fix" \
+    "fix,preflight" "$(wf '.jobs | keys | join(",")')"
+assert_eq "the preflight job has only the keys it needs, so nothing can soften its failure" \
+    "if,name,outputs,permissions,runs-on,steps,timeout-minutes" \
+    "$(wf '.jobs.preflight | keys | join(",")')"
+assert_eq "the fix job has only the keys it needs, so nothing can soften its failure" \
+    "if,name,needs,permissions,runs-on,steps,timeout-minutes" \
+    "$(wf '.jobs.fix | keys | join(",")')"
+assert_eq "the preflight job has exactly one step, the check" \
+    "check" "$(wf '[.jobs.preflight.steps[].id] | join(",")')"
+assert_eq "the check step has only env, id, name and run, so it cannot be skipped or softened" \
+    "env,id,name,run" "$(wf '.jobs.preflight.steps[0] | keys | join(",")')"
+assert_eq "the fix job checks out and then runs the agent, and nothing else" \
+    "actions/checkout,anthropics/claude-code-action" \
+    "$(wf '[.jobs.fix.steps[].uses | sub("@.*"; "")] | join(",")')"
+assert_eq "the checkout step has only name, uses and with" \
+    "name,uses,with" "$(wf '.jobs.fix.steps[0] | keys | join(",")')"
+assert_eq "the agent step has only name, uses and with, so its failure fails the run" \
+    "name,uses,with" "$(wf '.jobs.fix.steps[1] | keys | join(",")')"
+
 # --- B3. permissions --------------------------------------------------------
 
 perms() {
