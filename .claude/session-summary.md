@@ -10,7 +10,7 @@ agent will act on it.
 
 ---
 
-**Last updated:** 2026-09-19
+**Last updated:** 2026-10-08
 
 ## Where things stand
 
@@ -35,9 +35,12 @@ archive is loaded, tagged, pushed and signed unchecked. `tests/e2e/run-e2e.sh
 --rechunk` closes this loop locally but nothing does in CI. Worth running after
 a Chunkah version bump.
 
-**The Chunkah pin is a semver tag, not a digest**, and `renovate.json` disables
-digest updates for it deliberately. Do not "fix" that without checking whether
-the maintainer wants the tradeoff changed.
+**The Chunkah pin is a semver tag plus a digest.** `renovate.json` captures the
+digest and leaves digest and pin updates on, so Renovate adds the digest to a
+bare tag and moves both together on each release. Chunkah rewrites the image
+right before it is pushed and signed, which is why its bytes are pinned. Do not
+drop the digest or turn those updates off without checking whether the
+maintainer wants the tradeoff changed.
 
 ## Before you start anything
 

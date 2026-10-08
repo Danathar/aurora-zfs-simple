@@ -28,8 +28,8 @@
         "/^README\\.md$/"
       ],
       "matchStrings": [
-        "CHUNKAH_IMAGE:(?:\\s+\"?|-)quay\\.io/coreos/chunkah:(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"?",
-        "`quay\\.io/coreos/chunkah:(?<currentValue>v\\d+\\.\\d+\\.\\d+)`"
+        "CHUNKAH_IMAGE:(?:\\s+\"?|-)quay\\.io/coreos/chunkah:(?<currentValue>v\\d+\\.\\d+\\.\\d+)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?\"?",
+        "`quay\\.io/coreos/chunkah:(?<currentValue>v\\d+\\.\\d+\\.\\d+)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?`"
       ],
       "depNameTemplate": "quay.io/coreos/chunkah",
       "datasourceTemplate": "docker",
@@ -47,11 +47,6 @@
       "matchUpdateTypes": ["digest", "pinDigest", "pin"],
       "matchDepTypes": ["container"],
       "matchFileNames": [".github/workflows/**.yaml", ".github/workflows/**.yml"]
-    },
-    {
-      "enabled": false,
-      "matchUpdateTypes": ["digest", "pinDigest", "pin"],
-      "matchPackageNames": ["quay.io/coreos/chunkah"]
     },
     {
       "description": "Dependabot owns GitHub Actions version updates; disable Renovate's github-actions manager to avoid duplicate PRs. Renovate still owns the Chunkah custom manager above.",
