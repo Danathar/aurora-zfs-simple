@@ -219,11 +219,11 @@ run_audit() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${STUB_LOG}"
 case "$1 $2" in
-    "pr list") cat "${STUB_DIR}/merged.json" ;;
+    "pr list") jq 'map(.baseRefName //= "main")' "${STUB_DIR}/merged.json" ;;
     "pr view") cat "${STUB_DIR}/pr-$3.json" ;;
     "api repos/"*)
         [[ -e "${STUB_DIR}/api-fails" ]] && { echo "gh stub: HTTP 502" >&2; exit 1; }
-        cat "${STUB_DIR}/parents-${2##*/}" 2>/dev/null || printf '1\n' ;;
+        cat "${STUB_DIR}/parents-${2##*/}" 2>/dev/null || printf '%040d\n' 0 ;;
     *) echo "gh stub: unexpected command: $*" >&2; exit 97 ;;
 esac
 STUB
@@ -331,27 +331,81 @@ assert_contains "both unsigned commits are named together" \
 
 # A merge commit carries no trailer: docs/multi-agent.md asks for a pull
 # request to be updated from `main`, and GitHub's "Update branch" writes a
-# merge with none. It is told apart by its parent count, which `gh pr view`
-# does not return, so the step asks `gh api` for each untrailered commit.
+# merge with none. It is told apart by its parents, which `gh pr view` does
+# not return, so the step asks `gh api` for each untrailered commit. Every
+# parent after the first must be outside the pull request's own commits; the
+# stub's all-zero hash stands in for a commit on main.
 new_case
 stage_list "$(pr 32 "${APP}" 2026-10-02 yes)"
 stage_detail 32 "${SIGNED}" ""
-printf '2\n' >"${CASE_DIR}/parents-0320001$(printf '%033d' 0)"
+printf '%s,%040d\n' "0320000$(printf '%033d' 0)" 0 >"${CASE_DIR}/parents-0320001$(printf '%033d' 0)"
 run_audit 2026-10-01
 assert_eq "a merge commit with no trailer does not fail the run" "0" "${A_STATUS}"
 assert_contains "and the row says all signed off, with the merge exempt" "${A_SUMMARY}" "| 2 | all (1 merge exempt) |"
 assert_eq "parents are asked only for the commit that lacks a trailer" \
-    "api repos/${REPO_NAME}/commits/0320001$(printf '%033d' 0) --jq .parents | length" \
+    "api repos/${REPO_NAME}/commits/0320001$(printf '%033d' 0) --jq [.parents[].sha] | join(\",\")" \
     "$(grep '^api' <<<"${A_CALLS}")"
 
 new_case
 stage_list "$(pr 33 "${APP}" 2026-10-02 yes)"
 stage_detail 33 "" "Merge branch 'main' into docs/x"
-printf '2\n' >"${CASE_DIR}/parents-0330000$(printf '%033d' 0)"
+printf '%s,%040d\n' "0330000$(printf '%033d' 0)" 0 >"${CASE_DIR}/parents-0330000$(printf '%033d' 0)"
 run_audit 2026-10-01
 assert_eq "an unsigned commit with one parent still fails the run" "1" "${A_STATUS}"
 assert_contains "the finding names it and not the merge, whatever the headline says" \
     "${A_SUMMARY}" "- #33: commit(s) 0330001 carry no Signed-off-by trailer"
+
+# A merge whose parents are both commits of the pull request did not come
+# from main -- another unmerged branch was merged in -- so it is the author's
+# own work and still needs its trailer, whatever its headline says.
+new_case
+stage_list "$(pr 35 "${APP}" 2026-10-02 yes)"
+stage_detail 35 "${SIGNED}" "${SIGNED}" "Merge branch 'main' into docs/x"
+printf '%s,%s\n' "0350000$(printf '%033d' 0)" "0350001$(printf '%033d' 0)" >"${CASE_DIR}/parents-0350002$(printf '%033d' 0)"
+run_audit 2026-10-01
+assert_eq "a merge of the pull request's own commits fails the run" "1" "${A_STATUS}"
+assert_contains "and the finding names the merge" \
+    "${A_SUMMARY}" "- #35: commit(s) 0350002 carry no Signed-off-by trailer"
+
+# What a merge brings in is every parent after the first, and each must be
+# outside the pull request. A branch whose first act is to merge another
+# unmerged branch writes a merge whose first parent is the main commit it
+# started from; an octopus merge can bring in main and that branch at once,
+# in either order. All three still need their trailer.
+new_case
+stage_list "$(pr 36 "${APP}" 2026-10-02 yes)"
+stage_detail 36 "" "${SIGNED}"
+printf '%040d,%s\n' 0 "0360001$(printf '%033d' 0)" >"${CASE_DIR}/parents-0360000$(printf '%033d' 0)"
+run_audit 2026-10-01
+assert_eq "a first-commit merge of an unmerged branch fails the run" "1" "${A_STATUS}"
+assert_contains "and the finding names the merge" \
+    "${A_SUMMARY}" "- #36: commit(s) 0360000 carry no Signed-off-by trailer"
+
+new_case
+stage_list "$(pr 37 "${APP}" 2026-10-02 yes)"
+stage_detail 37 "${SIGNED}" "${SIGNED}" ""
+printf '%s,%040d,%s\n' "0370001$(printf '%033d' 0)" 0 "0370000$(printf '%033d' 0)" >"${CASE_DIR}/parents-0370002$(printf '%033d' 0)"
+run_audit 2026-10-01
+assert_eq "an octopus merge of main and an unmerged branch fails the run" "1" "${A_STATUS}"
+
+new_case
+stage_list "$(pr 38 "${APP}" 2026-10-02 yes)"
+stage_detail 38 "${SIGNED}" "${SIGNED}" ""
+printf '%s,%s,%040d\n' "0380001$(printf '%033d' 0)" "0380000$(printf '%033d' 0)" 0 >"${CASE_DIR}/parents-0380002$(printf '%033d' 0)"
+run_audit 2026-10-01
+assert_eq "the same octopus merge with main listed last fails the run" "1" "${A_STATUS}"
+
+# On a pull request into another branch, a parent outside the pull request
+# was on that branch, which nothing audits, so no merge there is exempt. The
+# base must be exactly main, not a name that contains it.
+for base in dev maintenance main-old; do
+    new_case
+    stage_list "$(pr 39 "${APP}" 2026-10-02 yes | jq --arg b "${base}" '.baseRefName = $b')"
+    stage_detail 39 "${SIGNED}" ""
+    printf '%s,%040d\n' "0390000$(printf '%033d' 0)" 0 >"${CASE_DIR}/parents-0390001$(printf '%033d' 0)"
+    run_audit 2026-10-01
+    assert_eq "an update merge on a pull request into ${base} fails the run" "1" "${A_STATUS}"
+done
 
 # The exemption must fail closed. If the parent lookup fails, the commit's
 # count is unknown, and an unknown count must never read as a merge: the run
@@ -359,7 +413,7 @@ assert_contains "the finding names it and not the merge, whatever the headline s
 new_case
 stage_list "$(pr 34 "${APP}" 2026-10-02 yes)"
 stage_detail 34 "${SIGNED}" ""
-printf '2\n' >"${CASE_DIR}/parents-0340001$(printf '%033d' 0)"
+printf '%s,%040d\n' "0340000$(printf '%033d' 0)" 0 >"${CASE_DIR}/parents-0340001$(printf '%033d' 0)"
 : >"${CASE_DIR}/api-fails"
 run_audit 2026-10-01
 assert_eq "a failed parent lookup fails the run" "1" "$((A_STATUS != 0))"
