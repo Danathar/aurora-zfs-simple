@@ -152,6 +152,24 @@ assert_eq "it runs on a schedule and on demand, and on nothing else" \
 assert_eq "the date reaches the step through env, not through the shell text" \
     "\${{ inputs.since }}" "$(wf ".jobs.audit.steps[] | select(.name == \"${STEP_NAME}\") | .env.SINCE")"
 
+# --- what can turn a red audit green ----------------------------------------
+#
+# The run's colour is its whole answer: a finding exits the step non-zero and
+# nothing else reports it. `continue-on-error: true` on the job or the step
+# keeps that exit and paints the run green, with the findings left in a summary
+# nobody opens on a green run; an `if:` on either can skip the audit outright.
+# Every case below would still pass, because they run the extracted body, not
+# the job around it. So the job and its one step are closed key sets: a new key
+# has to be added here on purpose.
+
+assert_eq "the workflow has exactly one job, audit" "audit" "$(wf '.jobs | keys | join(",")')"
+assert_eq "the audit job has only the keys it needs, so nothing can soften its failure" \
+    "name,permissions,runs-on,steps,timeout-minutes" "$(wf '.jobs.audit | keys | join(",")')"
+assert_eq "the audit job has exactly one step" "1" "$(wf '.jobs.audit.steps | length')"
+assert_eq "the audit step has only name, env and run, so a finding fails the job" \
+    "env,name,run" "$(wf '.jobs.audit.steps[0] | keys | join(",")')"
+assert_eq "the one step is the audit" "${STEP_NAME}" "$(wf '.jobs.audit.steps[0].name')"
+
 # --- fixtures and the runner ------------------------------------------------
 
 REPO_NAME="Danathar/aurora-zfs-simple"

@@ -185,6 +185,19 @@ done
 assert_eq "the badge step writes into the artifacts directory the publish step reads" \
     "artifacts" "$(wf '.jobs.badges.steps[] | select(.id == "badges") | .env.OUT_DIR')"
 
+# A failed publish has to show. auto-issues.yml leaves this workflow unwatched
+# on purpose (a failure is a stale badge), so the red run is the only notice
+# that the badges stopped updating. `continue-on-error: true` on the job or any
+# step keeps the failure and shows the run green, and the badges freeze with
+# nobody told. Nothing above runs the job around the steps, so the
+# job and each step are closed key sets: a new key has to be added here on
+# purpose. The job's `if:` and the publish step's `if:` are checked above.
+assert_eq "the badges job has only the keys it needs, so nothing can soften its failure" \
+    "if,name,runs-on,steps,timeout-minutes" "$(wf '.jobs.badges | keys | join(",")')"
+assert_eq "each badges step has only the keys it needs, and none softens a failure" \
+    "name,uses,with|name,run|env,id,name,run|env,if,name,run" \
+    "$(wf '[.jobs.badges.steps[] | keys | join(",")] | join("|")')"
+
 # =============================================================================
 # B. the step, executed
 # =============================================================================

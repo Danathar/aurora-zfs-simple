@@ -223,6 +223,27 @@ jobs:
           fi
           echo "==> Shipped kernel: ${shipped_kernel}"
 
+          # Name the upstream images this build combined. The Containerfile
+          # names all three by moving tags, so the commit alone does not say
+          # which Aurora or akmods build went in, and the inherited
+          # org.opencontainers.image.version that named the Aurora build is
+          # overwritten by the metadata step. buildah left the copies it
+          # pulled in storage; the prune below removes them, so read them now.
+          upstream_ref() {
+            local name="$1" ref
+            ref="$(podman images --format '{{.Repository}}:{{.Tag}}@{{.Digest}}' \
+              | grep -E "^ghcr\.io/ublue-os/${name}:" | sort -u)"
+            if [ -z "${ref}" ] || [ "$(printf '%s\n' "${ref}" | wc -l)" -ne 1 ]; then
+              echo "expected exactly one ghcr.io/ublue-os/${name} image in storage, got: '${ref}'" >&2
+              return 1
+            fi
+            printf '%s\n' "${ref}"
+          }
+          base_ref="$(upstream_ref aurora-dx)"
+          akmods_ref="$(upstream_ref akmods)"
+          akmods_zfs_ref="$(upstream_ref akmods-zfs)"
+          echo "==> Built from: ${base_ref} ${akmods_ref} ${akmods_zfs_ref}"
+
           echo "==> Disk usage before rechunk" && df -h / /mnt
 
           podman run --rm \
@@ -236,6 +257,16 @@ jobs:
               --label ostree.commit- \
               --label ostree.final-diffid- \
               --label "ostree.linux=${shipped_kernel}" \
+              --label "org.opencontainers.image.base.name=${base_ref%@*}" \
+              --label "org.opencontainers.image.base.digest=${base_ref#*@}" \
+              --label "org.aurora-zfs-simple.akmods-image=${akmods_ref}" \
+              --label "org.aurora-zfs-simple.akmods-zfs-image=${akmods_zfs_ref}" \
+              --label io.artifacthub.package.deprecated- \
+              --label io.artifacthub.package.keywords- \
+              --label io.artifacthub.package.logo-url- \
+              --label io.artifacthub.package.maintainers- \
+              --label io.artifacthub.package.readme-url- \
+              --label quay.expires-after- \
               --tag "${chunked_image}" > "${archive}"
 
           # The archive is self-contained, so nothing left in container
