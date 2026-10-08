@@ -184,6 +184,19 @@ assert_eq "no step checks out the repository or runs an action" \
 assert_eq "the job is bounded by a timeout" \
     "5" "$(wf '.jobs.report["timeout-minutes"]')"
 
+# A report that could not be filed has to say so. When `gh issue create` fails,
+# the step exits non-zero and the red run is the only notice anyone gets that a
+# scheduled failure went unreported. `continue-on-error: true` on the job or the
+# step keeps that exit and shows the run green; every case below would still
+# pass, because they run the extracted body, not the job around it. So the job
+# and its one step are closed key sets: a new key has to be added here on
+# purpose. The job's `if:` is allowed, and its terms are checked further down.
+assert_eq "the report job has only the keys it needs, so nothing can soften its failure" \
+    "if,name,permissions,runs-on,steps,timeout-minutes" "$(wf '.jobs.report | keys | join(",")')"
+assert_eq "the report job has exactly one step" "1" "$(wf '.jobs.report.steps | length')"
+assert_eq "the report step has only name, env and run, so a failed report fails the job" \
+    "env,name,run" "$(wf '.jobs.report.steps[0] | keys | join(",")')"
+
 STEP_NAME="Open or update the issue for this failure"
 STEP="${TMP_ROOT}/report.sh"
 wf ".jobs.report.steps[] | select(.name == \"${STEP_NAME}\") | .run // \"\"" >"${STEP}"
