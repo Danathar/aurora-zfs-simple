@@ -294,21 +294,24 @@ The workflow pins Chunkah to an explicit stable release tag, for example
 manager in [`renovate.json`](renovate.json) matches that `CHUNKAH_IMAGE:` line
 and opens a PR when a newer stable `vX.Y.Z` is published.
 
-The pin is the semver tag only — there is no `@sha256:...` digest on it, and
-`renovate.json` explicitly disables digest and pin updates for
-`quay.io/coreos/chunkah`. So the guarantee here is "a named upstream release",
-not "these exact bytes": Chunkah could in principle re-push `v0.7.0`.
+Chunkah is pinned by tag and digest. The custom manager captures an optional
+`@sha256:...` digest after the tag, and no `packageRule` turns digest or pin
+updates off for `quay.io/coreos/chunkah`. A bare tag therefore gets its digest
+added by a Renovate pin PR, and from then on tag and digest move together on
+every release. The digest matters more here than for most pins: Chunkah
+rewrites the image immediately before it is pushed and signed, so a `v0.7.0`
+that was re-pushed upstream would put unreviewed bytes into an image this
+repository's key then signs.
 
-Nothing downstream re-checks the result, either. `build_files/post-check.sh` and
+Nothing downstream re-checks the result. `build_files/post-check.sh` and
 `bootc container lint` run *inside* the `Containerfile`, so they validate the
 image before the workflow hands it to Chunkah. The re-layered archive that comes
 back out is loaded, tagged, pushed and signed without either check running
 again, and `Verify pushed tags share one digest` confirms that every tag
 resolves to one manifest — not that the manifest holds what was built.
 
-Do not read this pin as digest-level immutability. If that property is wanted,
-it needs a digest on `CHUNKAH_IMAGE` and a `currentDigest` group in the custom
-manager, not an inference from the checks above.
+So the digest is what fixes Chunkah's bytes, not the checks above: they never
+see the archive Chunkah writes.
 
 Scheduled builds run weekly on Sunday morning at 05:00 UTC, which is about
 1:00 AM Eastern during daylight time. This keeps the image refreshed before a

@@ -62,9 +62,9 @@ if not match_strings:
 matcher = re.compile(
     "|".join(
         "(?:"
-        + re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", expression).replace(
-            "(?P<currentValue>", f"(?P<currentValue{index}>"
-        )
+        + re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", expression)
+        .replace("(?P<currentValue>", f"(?P<currentValue{index}>")
+        .replace("(?P<currentDigest>", f"(?P<currentDigest{index}>")
         + ")"
         for index, expression in enumerate(match_strings)
     )
@@ -72,7 +72,30 @@ matcher = re.compile(
 
 
 def current_value_group(match):
-    return next(name for name, value in match.groupdict().items() if value is not None)
+    return next(
+        name
+        for name, value in match.groupdict().items()
+        if value is not None and name.startswith("currentValue")
+    )
+
+
+def pinned_reference(match):
+    # The version and, once Renovate has added one, the digest after it. Two
+    # pins that agree on the tag but not the digest are two different images.
+    index = current_value_group(match)[len("currentValue") :]
+    digest = match.groupdict().get(f"currentDigest{index}")
+    return match.group(f"currentValue{index}") + (f"@{digest}" if digest else "")
+
+
+def digest_span_end(match):
+    # Where Renovate's rewrite of this pin stops: after the digest when the pin
+    # carries one, since a release moves tag and digest together, otherwise
+    # after the version.
+    index = current_value_group(match)[len("currentValue") :]
+    group = f"currentDigest{index}"
+    if match.groupdict().get(group) is not None:
+        return match.end(group)
+    return match.end(f"currentValue{index}")
 
 
 # A file matched by ignorePaths is skipped before any manager runs, so a pin
@@ -145,13 +168,17 @@ for raw_pattern in manager.get("managerFilePatterns", []):
         raise SystemExit(f"unsupported manager file pattern: {raw_pattern!r}")
     file_patterns.append(re.compile(raw_pattern[1:-1]))
 
+# {ref} is the reference a release writes: the new version, followed by a new
+# digest when the pin already carries one, so quay.io/coreos/chunkah:v9.8.7 or
+# that with @sha256:fff... after it.
+NEW_DIGEST = "sha256:" + "f" * 64
 files = (
-    (".github/workflows/build.yml", "CHUNKAH_IMAGE: quay.io/coreos/chunkah:v9.8.7"),
+    (".github/workflows/build.yml", "CHUNKAH_IMAGE: quay.io/coreos/chunkah:{ref}"),
     (
         "tests/e2e/run-e2e.sh",
-        'CHUNKAH_IMAGE="${CHUNKAH_IMAGE:-quay.io/coreos/chunkah:v9.8.7}"',
+        'CHUNKAH_IMAGE="${{CHUNKAH_IMAGE:-quay.io/coreos/chunkah:{ref}}}"',
     ),
-    ("README.md", "`quay.io/coreos/chunkah:v9.8.7`"),
+    ("README.md", "`quay.io/coreos/chunkah:{ref}`"),
 )
 
 for relative_path, expected_replacement in files:
@@ -160,14 +187,23 @@ for relative_path, expected_replacement in files:
     eligible = any(pattern.search(relative_path) for pattern in file_patterns) and not ignored(
         relative_path
     )
-    values = ",".join(match.group(current_value_group(match)) for match in matches)
+    values = ",".join(pinned_reference(match) for match in matches)
+
+    def new_reference(match):
+        return "v9.8.7" + ("@" + NEW_DIGEST if "@" in pinned_reference(match) else "")
 
     def replace_version(match):
-        start, end = match.span(current_value_group(match))
-        return match.group(0)[: start - match.start()] + "v9.8.7" + match.group(0)[end - match.start() :]
+        start, end = match.start(current_value_group(match)), digest_span_end(match)
+        return (
+            match.group(0)[: start - match.start()]
+            + new_reference(match)
+            + match.group(0)[end - match.start() :]
+        )
 
     updated = matcher.sub(replace_version, text)
-    replacement_preserved_syntax = expected_replacement in updated
+    replacement_preserved_syntax = bool(matches) and all(
+        expected_replacement.format(ref=new_reference(match)) in updated for match in matches
+    )
     print(
         relative_path,
         str(eligible).lower(),
@@ -198,6 +234,15 @@ pinning = sorted(
 print("@pin-files", ",".join(path for path in pinning if path != EXEMPT), sep="\t")
 print("@listed-files", ",".join(sorted(path for path, _ in files)), sep="\t")
 print("@exempt-still-pins", str(EXEMPT in pinning).lower(), sep="\t")
+
+# A match string with no currentDigest group gives Renovate nowhere to write a
+# digest, and with digest pinning on that errors the whole update branch (this
+# is what happened in #18 before digest updates were turned off for Chunkah).
+print(
+    "@strings-without-digest",
+    str(sum("(?<currentDigest>" not in expression for expression in match_strings)),
+    sep="\t",
+)
 PY
 ); then
     _pass "Chunkah manager can be evaluated"
@@ -219,6 +264,8 @@ assert_eq "every tracked file pinning a Chunkah version is one this test checks"
     "${DERIVED[@listed-files]}" "${DERIVED[@pin-files]}"
 assert_eq "the fixture exemption still applies to a file that names a version" \
     "true" "${DERIVED[@exempt-still-pins]}"
+assert_eq "every Chunkah match string can capture the digest Renovate writes" \
+    "0" "${DERIVED[@strings-without-digest]}"
 
 IFS=$'\t' read -r workflow_path workflow_eligible workflow_matches workflow_value workflow_replaced <<<"${rows[0]}"
 assert_eq "first result is the workflow pin" ".github/workflows/build.yml" "${workflow_path}"
@@ -335,7 +382,6 @@ managers = [
 chunkah_dep_name = managers[0].get("depNameTemplate", "") if len(managers) == 1 else ""
 
 package_rules = [rule for rule in renovate.get("packageRules", []) if rule.get("matchPackageNames")]
-named_packages = sorted({name for rule in package_rules for name in rule["matchPackageNames"]})
 chunkah_disabled_types = set()
 for rule in package_rules:
     if rule.get("enabled") is False and chunkah_dep_name in rule["matchPackageNames"]:
@@ -376,7 +422,12 @@ readme = (repo_root / "README.md").read_text()
 pin_claim = [
     paragraph
     for paragraph in readme.split("\n\n")
-    if "disables digest and pin updates" in paragraph
+    if "pinned by tag and digest" in paragraph
+]
+stale_pin_claim = [
+    paragraph
+    for paragraph in readme.split("\n\n")
+    if "disables digest and pin updates" in paragraph or "semver tag only" in paragraph
 ]
 
 facts = {
@@ -408,13 +459,13 @@ facts = {
         sorted(eco for eco in ecosystems if ECOSYSTEM_TO_MANAGER.get(eco) == "dockerfile")
     ),
     "chunkah_dep_name": chunkah_dep_name,
-    "renovate_named_packages": ",".join(named_packages),
     "chunkah_disabled_update_types": ",".join(sorted(chunkah_disabled_types)),
     "bot_configs": ",".join(bot_configs),
     "bot_configs_missing_from_tier_2": ",".join(
         name for name in bot_configs if name not in tier_row
     ),
     "readme_pin_claims": str(len(pin_claim)),
+    "readme_stale_pin_claims": str(len(stale_pin_claim)),
     "readme_pin_claim_names_package": str(
         len(pin_claim) == 1 and bool(chunkah_dep_name) and chunkah_dep_name in pin_claim[0]
     ).lower(),
@@ -463,27 +514,28 @@ assert_eq "Renovate's dockerfile manager stays disabled" \
 assert_eq "and no Dependabot ecosystem updates the Containerfile either" \
     "" "${FACT[containerfile_ecosystems]}"
 
-# Without this join a rename of depNameTemplate detaches the pin rule silently:
-# the rule keeps matching a package name nothing tracks any more, and Chunkah
-# starts receiving the digest pins the README says it does not get.
-assert_eq "the packageRules names are the package the Chunkah manager tracks" \
-    "${FACT[chunkah_dep_name]}" "${FACT[renovate_named_packages]}"
+# Chunkah rewrites the image right before it is pushed and signed, so its pin
+# carries a digest, and Renovate has to be free to add and move it. A rule that
+# turns digest or pin updates off for the package leaves a bare tag bare, and
+# the README's promise below with nothing behind it.
 assert_eq "the Chunkah manager tracks the image the workflow pins" \
     "quay.io/coreos/chunkah" "${FACT[chunkah_dep_name]}"
-assert_eq "digest and pin updates are disabled for that package" \
-    "digest,pin,pinDigest" "${FACT[chunkah_disabled_update_types]}"
+assert_eq "no packageRule turns updates off for that package" \
+    "" "${FACT[chunkah_disabled_update_types]}"
 
 assert_eq "the repository configures exactly these two dependency bots" \
     "renovate.json,.github/dependabot.yml" "${FACT[bot_configs]}"
 assert_eq "and docs/risk-tiers.md rates both of them Tier 2" \
     "" "${FACT[bot_configs_missing_from_tier_2]}"
 
-# README.md tells a reader the Chunkah pin is a tag and stays one. That claim
-# is true only for as long as the packageRule holds, and the two are edited
-# separately.
-assert_eq "README.md states the digest and pin disable exactly once" \
+# README.md tells a reader the Chunkah pin carries a digest. That claim is true
+# only for as long as renovate.json leaves digest updates on, and the two are
+# edited separately.
+assert_eq "README.md states the tag-and-digest pin exactly once" \
     "1" "${FACT[readme_pin_claims]}"
-assert_eq "and names the package the rule disables" \
+assert_eq "and names the package it pins" \
     "true" "${FACT[readme_pin_claim_names_package]}"
+assert_eq "and no longer says the pin is a tag only" \
+    "0" "${FACT[readme_stale_pin_claims]}"
 
 finish

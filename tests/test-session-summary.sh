@@ -407,40 +407,45 @@ assert_contains "and re-runs the image lint the Containerfile ran before the rec
 assert_contains "the image those checks run against is the rechunked tag" \
     "${E2E_TEXT}" 'TARGET="${CHUNKED_TAG}"'
 
-# --- 6. "The Chunkah pin is a semver tag, not a digest" ---------------------
+# --- 6. "The Chunkah pin is a semver tag plus a digest" ---------------------
 #
 # Both halves are read out of the files rather than restated: the pin's shape
-# comes from build.yml, and the deliberate exclusion comes from renovate.json's
-# own rule. The image name is the join between them -- a rename on one side
-# that left the other behind would silently stop the rule from applying, and a
-# reader told "deliberately" would not look.
+# comes from build.yml, and whether Renovate may add and move the digest comes
+# from renovate.json's packageRules. The pin is a bare tag only until the first
+# Renovate pin PR lands, so either shape passes; what may not come back is a
+# rule that turns digest updates off for the image build.yml pins, which would
+# leave a bare tag bare.
+
+assert_contains "the summary says the Chunkah pin carries a digest" \
+    "${DOC_TEXT}" "**The Chunkah pin is a semver tag plus a digest.**"
+assert_not_contains "and no longer says it is a tag only" \
+    "${DOC_TEXT}" "semver tag, not a digest"
 
 CHUNKAH_IMAGE="$(grep -oE 'CHUNKAH_IMAGE:[[:space:]]*[^[:space:]]+' "${BUILD_WF}" |
     head -1 | sed 's/^CHUNKAH_IMAGE:[[:space:]]*//')"
 if [[ -z "${CHUNKAH_IMAGE}" ]]; then
     _fail "build.yml still pins a Chunkah image" "no CHUNKAH_IMAGE assignment found"
 else
-    assert_not_contains "the Chunkah pin is not a digest, as the summary says" \
-        "${CHUNKAH_IMAGE}" "@sha256:"
-    if [[ "${CHUNKAH_IMAGE}" =~ ^(.+):v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        _pass "the Chunkah pin is a semver tag (${CHUNKAH_IMAGE##*:})"
+    if [[ "${CHUNKAH_IMAGE}" =~ ^(.+):v[0-9]+\.[0-9]+\.[0-9]+(@sha256:[0-9a-f]{64})?$ ]]; then
+        _pass "the Chunkah pin is a semver tag, with or without its digest (${CHUNKAH_IMAGE##*/})"
         CHUNKAH_NAME="${BASH_REMATCH[1]}"
     else
-        _fail "the Chunkah pin is a semver tag" \
-            "not v<major>.<minor>.<patch>: ${CHUNKAH_IMAGE}"
+        _fail "the Chunkah pin is a semver tag, with or without its digest" \
+            "not v<major>.<minor>.<patch>[@sha256:<64 hex>]: ${CHUNKAH_IMAGE}"
         CHUNKAH_NAME=""
     fi
 
     if [[ -n "${CHUNKAH_NAME}" ]]; then
-        # The rule renovate.json disables has to name the image build.yml pins,
-        # cover digest updates, and be off.
+        # No rule may name the image build.yml pins and switch its digest or
+        # pin updates off.
         disabled="$(jq -r --arg img "${CHUNKAH_NAME}" '
             .packageRules[]
             | select((.matchPackageNames // []) | index($img))
-            | select((.matchUpdateTypes // []) | index("digest"))
+            | select((.matchUpdateTypes // []) | any(. == "digest" or . == "pin" or . == "pinDigest"))
+            | select(.enabled == false)
             | .enabled' "${RENOVATE}")"
-        assert_eq "renovate.json disables digest updates for ${CHUNKAH_NAME}" \
-            "false" "${disabled}"
+        assert_eq "renovate.json leaves digest and pin updates on for ${CHUNKAH_NAME}" \
+            "" "${disabled}"
     fi
 fi
 

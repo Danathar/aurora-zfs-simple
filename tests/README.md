@@ -41,7 +41,7 @@ when present and skipped when not.
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest` and `Sign container image`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed |
 | `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
 | `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
-| `test-renovate.sh`          | the Chunkah regex manager against every tracked file that pins a Chunkah version (derived, not listed) and the `ignorePaths` that could hide one, including a simulated version-only replacement, and the split of work between `renovate.json` and `.github/dependabot.yml` |
+| `test-renovate.sh`          | the Chunkah regex manager against every tracked file that pins a Chunkah version (derived, not listed) and the `ignorePaths` that could hide one, including a simulated release that moves the version and any digest, that every pin agrees on tag and digest, and the split of work between `renovate.json` and `.github/dependabot.yml` |
 | `test-manual-input-check.sh` | `docs/manual-input-check.md`: the manual pre-bump procedure held against the machine it describes — the artifact references and tag template against the `Containerfile`'s `FROM` lines, the copied payload paths against its bind mounts, the RPM names and `rpm --qf` query against `build_files/post-check.sh`, and the worked release example against `ARG FEDORA_VERSION` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
 | `test-claude-settings.sh`   | `.claude/settings.json`: the `PostToolUse` shellcheck hook and the `PreToolUse` hook that gates `git diff --no-index`, both extracted and executed — the first against a recording `shellcheck` stub, the second against the command payloads it has to refuse and the ones it must leave alone — plus the permission table's `deny` rules, the decisions its `_note_*` keys record, and the reach of the one `allow` rule that names a script — `run-tests.sh` is run with a path outside `tests/` and has to refuse it |
@@ -165,11 +165,13 @@ them, which does not fail anything because a stale pin is still a valid one. So
 the cases assert ownership rather than presence: each Dependabot ecosystem is
 mapped to the Renovate manager it would collide with, an unmapped ecosystem is
 a failure rather than an assumed-harmless addition, and the `Containerfile`'s
-hand-managed ARGs are checked against both bots at once. The Chunkah
-`packageRules` entry is joined to the custom manager's `depNameTemplate`,
-because a rename there would detach the rule while leaving it valid JSON, and
-the README paragraph promising the pin stays a tag is held against the same
-name.
+hand-managed ARGs are checked against both bots at once. The Chunkah pin
+carries a digest because Chunkah rewrites the image right before it is signed,
+so every match string has to capture one (without a `currentDigest` group
+Renovate has nowhere to write it and errors the branch, as in #18), no
+`packageRule` may turn digest or pin updates off for the manager's
+`depNameTemplate`, and the README paragraph promising the tag-and-digest pin
+is held against the same name.
 
 `test-ci-workflows.sh` closes the same kind of gap one level up. Everything in
 the "In CI" section below was, until it existed, prose that nothing checked: the
