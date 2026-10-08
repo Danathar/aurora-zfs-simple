@@ -454,6 +454,8 @@ read_anonymously() {
 
 read_anonymously 0
 assert_eq "an image anyone can read passes the step" "0" "${N_STATUS}"
+assert_contains "a passing read says what it read" \
+    "${N_STDOUT}" "${TEST_IMAGE}@${DIGEST_A} is readable without credentials"
 assert_contains "the read is made with no credentials" "${N_CALLS}" "--no-creds"
 assert_not_contains "the read does not use the auth file the login wrote" "${N_CALLS}" "--authfile"
 assert_contains "the read is of the resolved digest, not the tag" \
@@ -464,6 +466,12 @@ assert_eq "an image only the repository can read fails the job" "1" "${N_STATUS}
 assert_contains "the failure says hosts can no longer pull" \
     "${N_STDOUT}" "not readable without credentials"
 assert_contains "the failure shows skopeo's own error" "${N_STDOUT}" "unauthorized"
+# The ::error:: annotation is what the run page and its summary show; a plain
+# echo leaves the reason buried in the step log.
+assert_contains "the failure is raised as an Actions error annotation" \
+    "${N_STDOUT}" "::error::${TEST_IMAGE}@${DIGEST_A} is not readable without credentials"
+assert_not_contains "a failed read does not claim the image is readable" \
+    "${N_STDOUT}" "is readable without credentials"
 
 # =============================================================================
 # D. "Verify the date tags still share that digest" — the accumulated status
@@ -682,6 +690,37 @@ assert_eq "the published_image job cannot write to the repository" \
     "read" "$(wf '.jobs.published_image.permissions.contents')"
 assert_eq "the published_image job cannot write packages" \
     "read" "$(wf '.jobs.published_image.permissions.packages')"
+
+# A check whose failure does not fail the job is not a check. Each step above
+# exits 1 on what it exists to catch, and the cases in B to D prove that. But
+# `continue-on-error: true` on the job or on any one step turns that exit into
+# a green run, and auto-issues.yml opens an issue only for a run that failed,
+# so nobody would hear about it. A job-level `if:` (for example, only on
+# workflow_dispatch) skips every check on the nightly schedule without a red
+# mark anywhere, and `needs: suite` lets a red suite hide the registry checks,
+# the same "one red check hides the next" the !cancelled() guards above exist
+# to prevent. Every assertion above stays true under each of these.
+#
+# So the job's keys and each step's keys are closed sets. A key this test does
+# not know is a change to how the job runs; adding one means saying here why
+# it is safe.
+assert_eq "the published_image job has only the keys this test knows" \
+    '["env","name","permissions","runs-on","steps","timeout-minutes"]' \
+    "$(wf '.jobs.published_image | keys' | jq -c .)"
+for field in continue-on-error if needs; do
+    assert_eq "the published_image job sets no ${field}:" \
+        "null" "$(wf ".jobs.published_image[\"${field}\"] | tojson")"
+done
+
+# shellcheck disable=SC2016 # jq string interpolation, not shell
+unknown_keys="$(wf '.jobs.published_image.steps[]
+    | (keys - ["env","id","if","name","run","uses","with"]) as $extra
+    | select($extra | length > 0)
+    | "\(.name): \($extra | join(", "))"')"
+assert_eq "every published_image step has only the keys this test knows" \
+    "" "${unknown_keys}"
+assert_eq "no published_image step sets continue-on-error" \
+    "" "$(wf '.jobs.published_image.steps[] | select(has("continue-on-error")) | .name')"
 
 # =============================================================================
 # G. the wiring around the run: bodies
