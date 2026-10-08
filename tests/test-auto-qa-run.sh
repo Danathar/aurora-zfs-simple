@@ -195,6 +195,18 @@ assert_eq "the job that runs it can read the run history" \
 assert_eq "and cannot write to the repository" \
     "read" "$(wf '.jobs.tune.permissions.contents')"
 
+# This workflow goes red on purpose: a job that hit its declared timeout is a
+# finding, and the failed run is how anyone hears of it. `continue-on-error:
+# true` on the job or a step keeps that exit and shows the run green, and an
+# `if:` can skip the comparison outright; the cases below run the extracted
+# body, not the job around it. So the job and each step are closed key sets: a
+# new key has to be added here on purpose.
+assert_eq "the tune job has only the keys it needs, so nothing can soften its failure" \
+    "name,permissions,runs-on,steps,timeout-minutes" "$(wf '.jobs.tune | keys | join(",")')"
+assert_eq "each tune step has only the keys it needs, and none softens a failure" \
+    "name,uses,with|env,name,run" \
+    "$(wf '[.jobs.tune.steps[] | keys | join(",")] | join("|")')"
+
 # --- fixtures ---------------------------------------------------------------
 
 # A fixed epoch, so a case's durations are the only thing that varies.
