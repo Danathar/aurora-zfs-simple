@@ -184,8 +184,8 @@ for label in ${labels_read}; do
     assert_eq "${label} is not a label Hive reads as approval to auto-merge" \
         "0" "$(tr -s ' ' '\n' <<<"${approval_block}" | grep -cxF "${label}")"
 done
-require_claim "${README}" "agent pull requests get a hold label" \
-    "gets a \`hold\` label automatically"
+require_claim "${README}" "outreach pull requests get a hold label" \
+    "Outreach pull requests stay held with a \`hold\` label"
 
 # --- the claim that there is no report job -----------------------------------
 

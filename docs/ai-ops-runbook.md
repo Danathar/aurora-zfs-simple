@@ -181,9 +181,10 @@ hook.
 
 ## An agent pull request looks wrong
 
-Every agent pull request is held for a person and nothing merges on its own
-([README.md](../README.md#maintained-with-hive-acmm-l5)), so leaving it
-unmerged is always safe. Comment with what is wrong, or close it.
+An outreach agent pull request is held for a person, and so is any change to a
+path that always needs one; other agent pull requests merge once checks pass
+([README.md](../README.md#maintained-with-hive-acmm-l6)), so
+leaving a held one unmerged is always safe. Comment with what is wrong, or close it.
 
 - **Read what it says about itself.** An agent pull request states that an
   agent wrote it and what evidence exists
@@ -219,7 +220,7 @@ already adding it.
 ## Everything else
 
 - **Which agents run, or pausing one,** is configured in Hive, outside this
-  repository. [README.md](../README.md#maintained-with-hive-acmm-l5) links to it.
+  repository. [README.md](../README.md#maintained-with-hive-acmm-l6) links to it.
 - **What a number is worth,** as opposed to what to do about it, is in
   [quality.md](quality.md) and [metrics.md](metrics.md).
 - **Before a Fedora major-release bump,** the checks to run first are in
