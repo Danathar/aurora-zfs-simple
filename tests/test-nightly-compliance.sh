@@ -722,6 +722,22 @@ assert_eq "every published_image step has only the keys this test knows" \
 assert_eq "no published_image step sets continue-on-error" \
     "" "$(wf '.jobs.published_image.steps[] | select(has("continue-on-error")) | .name')"
 
+# The step key set above has to allow `if:`, because four steps need it. That
+# leaves `if:` free on every other step too, and a skipped step does not fail
+# the job. `if: false` on "Resolve the published :latest" leaves `present`
+# empty, so the verify steps after it skip and the summary reports "No
+# published `:latest` to check" on a green run: the never-published exemption,
+# taken for an image that is published. The same guard on Checkout, the login
+# or the cosign install is caught only if a later step happens to fail without
+# it. So which steps are guarded is a closed set as well, and every step before
+# the resolve runs unconditionally.
+assert_eq "only the steps that depend on the resolve, and the summary, carry an if:" \
+    "Verify the published signature|Verify :latest is readable without credentials|Verify the date tags still share that digest|Summarize" \
+    "$(wf '[.jobs.published_image.steps[] | select(has("if")) | .name] | join("|")')"
+assert_eq "every step up to and including the resolve runs unconditionally" \
+    "Checkout|Prepare environment|Ensure skopeo is present|Install Cosign|Log in to GitHub Container Registry|Resolve the published :latest" \
+    "$(wf '[.jobs.published_image.steps[] | select(has("if") | not) | .name] | join("|")')"
+
 # =============================================================================
 # G. the wiring around the run: bodies
 # =============================================================================
