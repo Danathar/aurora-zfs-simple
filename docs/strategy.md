@@ -27,8 +27,9 @@ what the README already commits to, in three places:
   refreshed, and the **last good build** badge is the signal a user is told to
   watch. If that badge stops advancing, the README tells them to leave.
 - **[Maintained with Hive (ACMM L6)](../README.md#maintained-with-hive-acmm-l6).**
-  Agents propose work, and nothing an agent opens lands without a human's
-  approval.
+  Agents propose work. Their pull requests merge once checks pass, except
+  outreach pull requests and paths that always need a human, which wait for a
+  human's approval.
 
 So "on track" has two halves: the image keeps being built and refreshed, and the
 work that gets merged is about that, with the decisions only a person can make
@@ -68,10 +69,10 @@ the published image is, and what a pass rate does and does not mean, is in
 ## Is the work going there?
 
 **What is waiting on a human.** Issues an agent stopped on because the next step
-is a person's decision carry `needs-human`. Outreach pull requests the agents open carry
-`hold`, which keeps them from merging until a maintainer reviews them. Nothing
-under either moves until a person acts. These are only read here: the page
-never recommends applying either label.
+is a person's decision carry `needs-human`. Outreach pull requests the agents
+open carry `hold`, which keeps them from merging until a maintainer reviews
+them. Nothing under either moves until a person acts. These are only read here:
+the page never recommends applying either label.
 
 ```bash
 gh issue list --repo Danathar/aurora-zfs-simple --label needs-human --state open --limit 1000
