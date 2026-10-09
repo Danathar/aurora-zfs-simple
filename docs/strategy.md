@@ -26,7 +26,7 @@ what the README already commits to, in three places:
   asked it). It says what is promised: the published `:latest` image keeps being
   refreshed, and the **last good build** badge is the signal a user is told to
   watch. If that badge stops advancing, the README tells them to leave.
-- **[Maintained with Hive (ACMM L5)](../README.md#maintained-with-hive-acmm-l5).**
+- **[Maintained with Hive (ACMM L6)](../README.md#maintained-with-hive-acmm-l6).**
   Agents propose work, and nothing an agent opens lands without a human's
   approval.
 
@@ -68,7 +68,7 @@ the published image is, and what a pass rate does and does not mean, is in
 ## Is the work going there?
 
 **What is waiting on a human.** Issues an agent stopped on because the next step
-is a person's decision carry `needs-human`. Pull requests the agents open carry
+is a person's decision carry `needs-human`. Outreach pull requests the agents open carry
 `hold`, which keeps them from merging until a maintainer reviews them. Nothing
 under either moves until a person acts. These are only read here: the page
 never recommends applying either label.

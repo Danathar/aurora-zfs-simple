@@ -7,7 +7,7 @@
 [![OpenZFS/kernel status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FDanathar%2Faurora-zfs-simple%2Fstatus%2Fakmods-badge.json)](AGENTS.md#dominant-failure-mode-kernel--zfs-akmod-skew)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Danathar/aurora-zfs-simple)
 [![Maintenance assisted by Hivecommons Hive](https://img.shields.io/badge/maintenance%20assisted%20by-Hivecommons%20Hive-1f6feb)](https://github.com/hivecommons/hive)
-[![ACMM L5 Semi-Autonomous](https://img.shields.io/badge/ACMM-L5%20Semi--Autonomous-2da44e)](#maintained-with-hive-acmm-l5)
+[![ACMM L6 Fully Autonomous](https://img.shields.io/badge/ACMM-L6%20Fully%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
 [![AI assisted](https://img.shields.io/badge/AI-assisted-d29922)](#about-this-project)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -436,8 +436,9 @@ own signed image from your own key, from the same source, at any time.
 
 **Maintenance model.** This is a single-maintainer project, assisted by AI
 agents as described below in [Maintained with Hive
-(ACMM L5)](#maintained-with-hive-acmm-l5); every change an agent proposes is
-held for human review before it merges. There is currently no co-maintainer
+(ACMM L6)](#maintained-with-hive-acmm-l6); agent pull requests merge once
+checks pass, except outreach pull requests and paths that always need a human,
+which are held for human review. There is currently no co-maintainer
 and no succession plan if the maintainer becomes unavailable. If that matters
 to your use case, the lowest-risk path is to fork this repository now, while
 it is small and easy to read, rather than depend on it staying maintained
@@ -466,18 +467,19 @@ signal to switch back to upstream Aurora or to a fork you control.
 > unbootable system, a failed build, or other consequences that may result from
 > using this image.
 
-## Maintained with Hive (ACMM L5)
+## Maintained with Hive (ACMM L6)
 
 Maintenance on this repository is assisted by
 [Hivecommons Hive](https://github.com/hivecommons/hive), a system that runs a
 fleet of AI agents to continuously review this codebase. This repository's Hive
-runs at **ACMM level 5, Semi-Autonomous (L5)**. Here that means:
+runs at **ACMM level 6, Fully Autonomous (L6)**. Here that means:
 
 - The agents may file issues and open pull requests. Every pull request an agent
-  opens gets a `hold` label automatically and does not merge on its own: a human
-  maintainer reviews the held pull requests in batches, and nothing an agent
-  opens lands without that approval.
-- L5 adds a reviewer agent, which comments on open pull requests with file:line
+  opens auto-merges once its checks pass; non-outreach pull requests carry no
+  level-based `hold`. Outreach pull requests stay held with a `hold` label for
+  human review, and so does anything touching the paths that always need a
+  human (see the last bullet below).
+- L5 added a reviewer agent, which comments on open pull requests with file:line
   evidence but never merges, approves or closes one; an architect agent for RFCs
   and structural changes; and a strategist agent that coordinates the others.
   The telemetry and operations agents ship paused.

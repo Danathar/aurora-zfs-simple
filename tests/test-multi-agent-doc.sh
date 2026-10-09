@@ -274,12 +274,12 @@ check("ai-fix.yml still guards on a bot sender before doing anything",
 
 # --- README.md still says what the page quotes it for -----------------------
 
-hive = squash(section(readme, "Maintained with Hive (ACMM L5)"))
+hive = squash(section(readme, "Maintained with Hive (ACMM L6)"))
 check("README's Maintained with Hive section exists", bool(hive))
 for term in ("`hold`", "reviewer agent", "architect agent", "strategist agent"):
     check(f"README's Maintained with Hive section still mentions {term}", term in hive)
 check("the page links to that section",
-      "(../README.md#maintained-with-hive-acmm-l5)" in squash(page).replace("\n", " "))
+      "(../README.md#maintained-with-hive-acmm-l6)" in squash(page).replace("\n", " "))
 
 # --- the roster ---------------------------------------------------------------
 

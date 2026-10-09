@@ -84,8 +84,9 @@ there.
    issues, so those are picked up by Hive instead.
 3. The issue is worked on a branch of its own and arrives as one pull request.
    The README's [*Maintained with
-   Hive*](../README.md#maintained-with-hive-acmm-l5) section says every pull
-   request an agent opens gets a `hold` label.
+   Hive*](../README.md#maintained-with-hive-acmm-l6) section says outreach pull
+   requests an agent opens get a `hold` label; other agent pull requests merge
+   once checks pass.
 
 Issue labels that say the issue is already taken, which an agent reads before
 starting:
@@ -132,11 +133,12 @@ document, or a document and the test that reads it, update the second from
 
 ## Who merges
 
-A person. The README's *Maintained with Hive* section states the policy:
-nothing an agent opens lands without a maintainer's approval, and held pull
-requests are reviewed in batches. An agent never merges its own pull request,
-and the reviewer never merges, approves or closes one. The `hold` label is how
-that shows on a pull request.
+At ACMM L6 agent pull requests auto-merge once checks pass, so a person is
+needed only for the held ones. The README's *Maintained with Hive* section
+states the policy: outreach pull requests, and changes to paths that always
+need a human, are held until a maintainer reviews them. The reviewer never
+merges, approves or closes a pull request. The `hold` label is how a held
+pull request shows.
 
 The ruleset does not ask for an approval. `required_approving_review_count` is
 `0`, because GitHub does not let anyone approve their own pull request and
