@@ -355,6 +355,13 @@ assert_contains "the cheap event filter still gates on the ai-fix-requested labe
     "${preflight_if}" "ai-fix-requested"
 assert_contains "the cheap event filter still gates on the @claude phrase" \
     "${preflight_if}" "@claude"
+# Compared, not searched for. Both fragments survive `github.event_name !=
+# 'issue_comment'`, which no comment event can pass, so every @claude request
+# would be dropped before preflight with nothing red; and `== 'issues' ||`,
+# which starts a runner for any label at all.
+assert_eq "the cheap event filter is exactly a labeled issue or an @claude comment" \
+    "(github.event_name == 'issues' && github.event.label.name == 'ai-fix-requested') || (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))" \
+    "${preflight_if}"
 
 # --- B2. the gate between the two jobs --------------------------------------
 

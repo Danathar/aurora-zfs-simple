@@ -165,6 +165,12 @@ assert_contains "the publish step is gated on the akmods badge having been writt
     "${publish_if}" "steps.badges.outputs.akmods_updated == 'true'"
 assert_contains "the publish step is gated on the last-good badge having been written" \
     "${publish_if}" "steps.badges.outputs.last_good_updated == 'true'"
+# Either badge alone is enough. Both fragments survive `&&` in place of `||`,
+# and then a run that could read only one input -- the case the step's own
+# comment is written for -- publishes neither badge.
+assert_eq "the publish step runs when either badge was written" \
+    "steps.badges.outputs.akmods_updated == 'true' || steps.badges.outputs.last_good_updated == 'true'" \
+    "${publish_if}"
 
 # The gate names two outputs of another file. Nothing else in the repository
 # ties the two together, so a rename in the script would leave a condition that
