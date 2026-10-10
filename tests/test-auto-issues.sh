@@ -290,6 +290,11 @@ assert_eq "runs are serialised per watched workflow" \
     '"auto-issues-${{ github.event.workflow_run.name }}"' "$(wf '.concurrency.group | tojson')"
 assert_eq "and a queued report never cancels one in progress" \
     "false" "$(wf '.concurrency["cancel-in-progress"] | tojson')"
+# cancel-in-progress covers only the running report. GitHub keeps one pending
+# run per group by default, so without queue: max a third completion (a pull
+# request build finishing) replaces a scheduled failure that is still waiting.
+assert_eq "and a waiting report is never replaced by a newer one" \
+    '"max"' "$(wf '.concurrency.queue | tojson')"
 
 # shellcheck disable=SC2016 # Actions expressions, compared as literal text
 assert_eq "the token is the job's own github.token" \

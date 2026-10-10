@@ -65,9 +65,14 @@ on:
 
 # Two failures of one workflow minutes apart must not both find no open issue
 # and open two. Serialising per workflow lets the second see the first.
+# `queue: max` keeps every waiting run. With the default `queue: single`, a
+# third completion of the same workflow (a pull request build, say) cancels the
+# one already pending, before its step runs, so a scheduled failure waiting
+# behind another report would be dropped and no issue opened.
 concurrency:
   group: auto-issues-${{ github.event.workflow_run.name }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   report:
