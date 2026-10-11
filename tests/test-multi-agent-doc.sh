@@ -272,6 +272,50 @@ check("ai-fix.yml allows no bot to start it, as the intake section says",
 check("ai-fix.yml still guards on a bot sender before doing anything",
       'SENDER_TYPE}" = "Bot"' in json.dumps(ai_fix).replace('\\"', '"'))
 
+# The checks above pin the workflow; these pin the page's own words to it. The
+# intake section names each trigger as an event span followed by its type span,
+# the comment phrase in a code span, and the job a run stops at without
+# credentials. Compared as sets both ways, so a type the page drops, adds or
+# misnames fails here and not only when the workflow moves.
+EVENT = r"issues|issue_comment|pull_request\w*|push|schedule|workflow_\w+|repository_dispatch"
+page_triggers = set(re.findall(rf"`({EVENT})` `([a-z_]+)`", intake))
+wf_triggers = {(event, kind) for event, spec in (on.items() if isinstance(on, dict) else [])
+               for kind in ((spec or {}).get("types") or [])}
+check("the intake section's `event` `type` pairs are ai-fix.yml's triggers",
+      page_triggers == wf_triggers, f"page: {sorted(page_triggers)}", f"workflow: {sorted(wf_triggers)}")
+
+phrase = inputs.get("trigger_phrase")
+page_phrases = set(re.findall(r"`(@[\w-]+)`", intake))
+check("the comment phrase the intake section names is ai-fix.yml's trigger_phrase",
+      bool(phrase) and page_phrases == {phrase}, f"page: {sorted(page_phrases)}", f"trigger_phrase: {phrase}")
+check("the preflight filter fires on that same phrase",
+      bool(phrase) and f"contains(github.event.comment.body, '{phrase}')" in preflight_if, preflight_if)
+
+ai_jobs = ai_fix.get("jobs", {})
+agent_jobs = [job_id for job_id, job in ai_jobs.items()
+              if any(AGENT_ACTION.match(str(s.get("uses", ""))) for s in job.get("steps", []))]
+stops = re.findall(r"stops at its `([\w-]+)` job", intake)
+check("the intake section names the job a run stops at once", len(stops) == 1, f"found {stops}")
+if stops:
+    gate = stops[0]
+    needs = [ai_jobs.get(j, {}).get("needs") for j in agent_jobs]
+    check(f"`{gate}` is an ai-fix.yml job every agent job needs",
+          gate in ai_jobs and bool(agent_jobs)
+          and all(n == gate or (isinstance(n, list) and gate in n) for n in needs),
+          f"jobs: {sorted(ai_jobs)}", f"agent jobs need: {needs}")
+    gate_text = json.dumps(ai_jobs.get(gate, {}))
+    check(f"`{gate}` is the job that reads the agent credentials",
+          "secrets.ANTHROPIC_API_KEY" in gate_text and "secrets.CLAUDE_CODE_OAUTH_TOKEN" in gate_text)
+
+# §What this repository does not run names the grant that makes ai-fix.yml an
+# escalation path; it must be one the agent job holds.
+granted = {f"{scope}: {level}" for job_id in agent_jobs
+           for scope, level in effective_permissions(ai_fix, ai_jobs[job_id]).items()}
+named_grants = set(re.findall(r"`([a-z-]+: write)`", squash(section(page, NOT_RUN))))
+check("§What this repository does not run names a write grant", bool(named_grants))
+check("every write grant §What this repository does not run names is held by ai-fix.yml's agent job",
+      named_grants <= granted, f"page: {sorted(named_grants)}", f"agent job: {sorted(granted)}")
+
 # --- README.md still says what the page quotes it for -----------------------
 
 hive = squash(section(readme, "Maintained with Hive (ACMM L6)"))
