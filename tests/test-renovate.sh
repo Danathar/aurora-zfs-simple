@@ -4,8 +4,8 @@
 # e2e script, README; the set is re-derived from the tracked files) and the
 # ignorePaths that could hide one, then the division
 # of labour between the two dependency bots: which of renovate.json and
-# .github/dependabot.yml owns each ecosystem, and last the cosign CLI release
-# manager.
+# .github/dependabot.yml owns each ecosystem, then the cosign CLI release
+# manager, and last when Renovate rebases its own branches.
 #
 # Renovate uses RE2's JavaScript-style named captures; Python's equivalent is
 # substituted below so the repository's existing Python dependency can run the
@@ -750,5 +750,19 @@ assert_eq "no packageRule turns a cosign bump off, in any workflow, for any upda
     "" "${COSIGN[disabled]-missing}"
 assert_eq "and none, applied in order, leaves a cosign bump set to automerge" \
     "" "${COSIGN[automerged]-missing}"
+
+# =============================================================================
+# When Renovate rewrites its own branches
+# =============================================================================
+#
+# Renovate opens a minor and a major PR for the same pin side by side, both
+# editing the same line. Once one merges the other conflicts, and with
+# rebaseWhen "never" it stays conflicted until someone ticks its rebase
+# checkbox: the cosign v3 PR did exactly that after the v2.6.5 one merged.
+# "conflicted" regenerates a branch only when it conflicts, so a branch that is
+# merely behind main costs no extra CI run. Not "auto", which turns into
+# "behind-base-branch" once automerge or required up-to-date branches appear.
+assert_eq "Renovate rebases a pull request only once it conflicts with main" \
+    "conflicted" "$(jq -r '.rebaseWhen // "unset"' "${CONFIG}")"
 
 finish
