@@ -34,6 +34,19 @@
       "depNameTemplate": "quay.io/coreos/chunkah",
       "datasourceTemplate": "docker",
       "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the cosign CLI release that build.yml signs the image with and nightly-compliance.yml verifies it with. Dependabot moves the sigstore/cosign-installer SHA, but the action's cosign-release input is a plain string that neither bot reads without this manager. Both pins are in workflows, so one PR moves them together, which tests/test-nightly-compliance.sh requires.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.*\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "cosign-release:\\s*[\"']?(?<currentValue>v\\d+\\.\\d+\\.\\d+)[\"']?"
+      ],
+      "depNameTemplate": "sigstore/cosign",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver-coerced"
     }
   ],
 
@@ -57,6 +70,11 @@
       "description": "Containerfile images are hand-managed via ARGs; the weekly scheduled build tracks :stable by design. Do not update or pin them.",
       "enabled": false,
       "matchManagers": ["dockerfile"]
+    },
+    {
+      "description": "Never automerge a cosign CLI bump. The signature it writes is what README.md's `cosign verify --key cosign.pub` and the nightly verify check, and cosign 3 changed the default signature format, so each new release needs a reviewer to confirm both still verify.",
+      "matchPackageNames": ["sigstore/cosign"],
+      "automerge": false
     }
   ]
 }

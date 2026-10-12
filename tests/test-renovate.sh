@@ -4,7 +4,8 @@
 # e2e script, README; the set is re-derived from the tracked files) and the
 # ignorePaths that could hide one, then the division
 # of labour between the two dependency bots: which of renovate.json and
-# .github/dependabot.yml owns each ecosystem.
+# .github/dependabot.yml owns each ecosystem, and last the cosign CLI release
+# manager.
 #
 # Renovate uses RE2's JavaScript-style named captures; Python's equivalent is
 # substituted below so the repository's existing Python dependency can run the
@@ -537,5 +538,109 @@ assert_eq "and names the package it pins" \
     "true" "${FACT[readme_pin_claim_names_package]}"
 assert_eq "and no longer says the pin is a tag only" \
     "0" "${FACT[readme_stale_pin_claims]}"
+
+# =============================================================================
+# The cosign CLI release: build.yml signs with it, the nightly check verifies
+# =============================================================================
+#
+# sigstore/cosign-installer's `cosign-release` input is a plain string inside a
+# `with:` block. Dependabot moves the action's SHA and never reads the input,
+# so without a custom manager the release that signs every published image
+# stays wherever it was last typed. That happened once already: the pin sat at
+# the template's v2.6.1 while v2.6.2 to v2.6.5 shipped.
+#
+# Every `cosign-release:` line in a tracked file is derived here rather than
+# listed, so a new signing or verifying step is checked the day it lands.
+cosign_facts=""
+if cosign_facts=$(python3 - "${CONFIG}" "${REPO_ROOT}" <<'PY'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+config = json.loads(pathlib.Path(sys.argv[1]).read_text())
+repo_root = pathlib.Path(sys.argv[2])
+
+managers = [
+    manager
+    for manager in config.get("customManagers", [])
+    if manager.get("customType") == "regex"
+    and manager.get("depNameTemplate") == "sigstore/cosign"
+]
+print(f"manager_count\t{len(managers)}")
+manager = managers[0] if len(managers) == 1 else {}
+print(f"datasource\t{manager.get('datasourceTemplate', '')}")
+
+file_patterns = [
+    re.compile(pattern.strip("/")) for pattern in manager.get("managerFilePatterns", [])
+]
+matchers = [
+    re.compile(re.sub(r"\(\?<([A-Za-z][A-Za-z0-9_]*)>", r"(?P<\1>", expression))
+    for expression in manager.get("matchStrings", [])
+]
+
+tracked = subprocess.run(
+    ["git", "-C", str(repo_root), "ls-files"], check=True, capture_output=True, text=True
+).stdout.splitlines()
+pin_line = re.compile(r"^\s*cosign-release:\s*(\S+)(?:\s+#.*)?$")
+
+pins = []
+unmatched = []
+for relative in tracked:
+    path = repo_root / relative
+    if not path.is_file():
+        continue
+    try:
+        lines = path.read_text().splitlines()
+    except UnicodeDecodeError:
+        continue
+    for number, line in enumerate(lines, 1):
+        found = pin_line.match(line)
+        if not found:
+            continue
+        pins.append(found.group(1).strip("'\""))
+        selected = any(pattern.search(relative) for pattern in file_patterns)
+        captured = [
+            match.group("currentValue")
+            for matcher in matchers
+            for match in [matcher.search(line)]
+            if match
+        ]
+        if not selected or captured != [found.group(1).strip("'\"")]:
+            unmatched.append(f"{relative}:{number}")
+
+print(f"pin_count\t{len(pins)}")
+print(f"unmatched\t{' '.join(unmatched)}")
+
+automerge = None
+for rule in config.get("packageRules", []):
+    if "sigstore/cosign" in rule.get("matchPackageNames", []) and "automerge" in rule:
+        automerge = rule["automerge"]
+print(f"last_automerge\t{json.dumps(automerge)}")
+PY
+); then
+    _pass "the cosign manager can be evaluated"
+else
+    _fail "the cosign manager can be evaluated" "failed to load renovate.json or the tracked files"
+fi
+
+declare -A COSIGN=()
+while IFS=$'\t' read -r key value; do
+    [[ -n "${key}" ]] && COSIGN["${key}"]="${value}"
+done <<<"${cosign_facts}"
+
+assert_eq "exactly one regex manager tracks the cosign CLI release" \
+    "1" "${COSIGN[manager_count]:-}"
+assert_eq "and reads its versions from cosign's GitHub releases" \
+    "github-releases" "${COSIGN[datasource]:-}"
+assert_eq "the tree still pins the cosign release in both workflows" \
+    "2" "${COSIGN[pin_count]:-}"
+assert_eq "every cosign-release pin is selected and captured by that manager" \
+    "" "${COSIGN[unmatched]-missing}"
+# The signature format is what README.md's `cosign verify` and the nightly
+# check depend on, so a new release is reviewed, never merged by the bot.
+assert_eq "the last packageRule that decides it never automerges a cosign bump" \
+    "false" "${COSIGN[last_automerge]:-}"
 
 finish
