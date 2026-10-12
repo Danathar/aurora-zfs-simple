@@ -235,6 +235,9 @@ pinning = sorted(
 print("@pin-files", ",".join(path for path in pinning if path != EXEMPT), sep="\t")
 print("@listed-files", ",".join(sorted(path for path, _ in files)), sep="\t")
 print("@exempt-still-pins", str(EXEMPT in pinning).lower(), sep="\t")
+# Every tracked file ignorePaths hides from every manager, for the cosign cases
+# below: a cosign pin in one of these is a pin Renovate never opens.
+print("@ignored-tracked", ",".join(path for path in tracked if path and ignored(path)), sep="\t")
 
 # A match string with no currentDigest group gives Renovate nowhere to write a
 # digest, and with digest pinning on that errors the whole update branch (this
@@ -552,7 +555,7 @@ assert_eq "and no longer says the pin is a tag only" \
 # Every `cosign-release:` line in a tracked file is derived here rather than
 # listed, so a new signing or verifying step is checked the day it lands.
 cosign_facts=""
-if cosign_facts=$(python3 - "${CONFIG}" "${REPO_ROOT}" <<'PY'
+if cosign_facts=$(python3 - "${CONFIG}" "${REPO_ROOT}" "${DERIVED[@ignored-tracked]-}" <<'PY'
 import json
 import pathlib
 import re
@@ -561,6 +564,7 @@ import sys
 
 config = json.loads(pathlib.Path(sys.argv[1]).read_text())
 repo_root = pathlib.Path(sys.argv[2])
+ignored_files = set(filter(None, sys.argv[3].split(",")))
 
 managers = [
     manager
@@ -586,6 +590,7 @@ tracked = subprocess.run(
 pin_line = re.compile(r"^\s*cosign-release:\s*(\S+)(?:\s+#.*)?$")
 
 pins = []
+pin_files = []
 unmatched = []
 for relative in tracked:
     path = repo_root / relative
@@ -600,6 +605,7 @@ for relative in tracked:
         if not found:
             continue
         pins.append(found.group(1).strip("'\""))
+        pin_files.append(relative)
         selected = any(pattern.search(relative) for pattern in file_patterns)
         captured = [
             match.group("currentValue")
@@ -612,6 +618,98 @@ for relative in tracked:
 
 print(f"pin_count\t{len(pins)}")
 print(f"unmatched\t{' '.join(unmatched)}")
+print(f"ignored\t{' '.join(sorted(set(pin_files) & ignored_files))}")
+
+
+# Replay packageRules the way Renovate applies them to one update: a rule
+# applies when every match* key it carries matches, and a later applying rule
+# overrides an earlier one. Reading only the rule that names sigstore/cosign
+# misses a rule that reaches cosign some other way -- a later matchDepNames
+# automerge, or matchManagers ["custom.regex"] with enabled: false, which also
+# stops the bump and leaves the suite green. A match key or pattern this does
+# not model raises, so a new rule cannot be misread as "does not apply".
+def file_glob(pattern):
+    # minimatch with dot: true, for the subset matchFileNames uses here: "**"
+    # as a whole segment spans directories, "*" and "**" inside a segment stay
+    # in it.
+    if re.search(r"[\[\]{}()!+@?\\]", pattern):
+        raise SystemExit(f"matchFileNames entry outside the modeled glob subset: {pattern!r}")
+    out = []
+    for segment in pattern.split("/"):
+        if segment == "**":
+            out.append(None)
+        else:
+            out.append(re.sub(r"(?:\\\*)+", "[^/]*", re.escape(segment)))
+    expression = ""
+    for index, segment in enumerate(out):
+        last = index == len(out) - 1
+        if segment is None:
+            expression += ".*" if last else "(?:[^/]+/)*"
+        else:
+            expression += segment + ("" if last else "/")
+    return re.compile(expression + r"\Z")
+
+
+def literal(values, key):
+    for value in values:
+        if value.startswith("/") or re.search(r"[*?!{}]", value):
+            raise SystemExit(f"{key} entry outside the modeled literal subset: {value!r}")
+    return values
+
+
+def applies(rule, update):
+    for key, values in rule.items():
+        if key.startswith("exclude"):
+            raise SystemExit(f"packageRules key not modeled: {key}")
+        if not key.startswith("match"):
+            continue
+        if key in ("matchPackageNames", "matchDepNames"):
+            if update["name"] not in literal(values, key):
+                return False
+        elif key == "matchManagers":
+            if update["manager"] not in literal(values, key):
+                return False
+        elif key == "matchDatasources":
+            if update["datasource"] not in literal(values, key):
+                return False
+        elif key == "matchUpdateTypes":
+            if update["type"] not in values:
+                return False
+        elif key == "matchDepTypes":
+            # The regex manager sets no depType without depTypeTemplate.
+            if manager.get("depTypeTemplate") not in values:
+                return False
+        elif key == "matchFileNames":
+            if not any(file_glob(value).match(update["file"]) for value in values):
+                return False
+        else:
+            raise SystemExit(f"packageRules key not modeled: {key}")
+    return True
+
+
+disabled = []
+automerged = []
+for relative in sorted(set(pin_files)):
+    for update_type in ("major", "minor", "patch"):
+        update = {
+            "name": "sigstore/cosign",
+            "manager": "custom.regex",
+            "datasource": manager.get("datasourceTemplate", ""),
+            "type": update_type,
+            "file": relative,
+        }
+        enabled = config.get("enabled", True)
+        automerge = config.get("automerge", False)
+        for rule in config.get("packageRules", []):
+            if applies(rule, update):
+                enabled = rule.get("enabled", enabled)
+                automerge = rule.get("automerge", automerge)
+        if enabled is False:
+            disabled.append(f"{relative}:{update_type}")
+        if automerge is True:
+            automerged.append(f"{relative}:{update_type}")
+print(f"disabled\t{' '.join(disabled)}")
+print(f"automerged\t{' '.join(automerged)}")
 
 automerge = None
 for rule in config.get("packageRules", []):
@@ -642,6 +740,16 @@ assert_eq "every cosign-release pin is selected and captured by that manager" \
 # check depend on, so a new release is reviewed, never merged by the bot.
 assert_eq "the last packageRule that decides it never automerges a cosign bump" \
     "false" "${COSIGN[last_automerge]:-}"
+# The same question asked of every rule, in order, for a major, minor and patch
+# bump of each pin: the one that names cosign can be overridden by a later rule
+# that reaches it another way, and a rule that turns it off is as silent as no
+# manager at all.
+assert_eq "no cosign-release pin sits in a path ignorePaths hides from Renovate" \
+    "" "${COSIGN[ignored]-missing}"
+assert_eq "no packageRule turns a cosign bump off, in any workflow, for any update type" \
+    "" "${COSIGN[disabled]-missing}"
+assert_eq "and none, applied in order, leaves a cosign bump set to automerge" \
+    "" "${COSIGN[automerged]-missing}"
 
 # =============================================================================
 # When Renovate rewrites its own branches
