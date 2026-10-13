@@ -383,8 +383,12 @@ Your ZFS pools should import normally.
 ## Signature Verification
 
 ```bash
-cosign verify --key cosign.pub ghcr.io/danathar/aurora-zfs-simple:latest
+cosign verify --key cosign.pub --new-bundle-format=false ghcr.io/danathar/aurora-zfs-simple:latest
 ```
+
+`--new-bundle-format=false` makes cosign 3 look for the signature where a host
+reads it (the `sha256-<digest>.sig` tag), so a pass here means a host can find
+it too.
 
 This is a one-shot manual check, and it proves only what `:latest` pointed at
 while the command was running. It does not make anything on the host verify a

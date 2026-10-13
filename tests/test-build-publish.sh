@@ -595,6 +595,16 @@ assert_contains "the private key reaches cosign through that variable" \
 # Without -y cosign prompts for confirmation and the unattended job hangs until
 # the 90-minute job timeout.
 assert_contains "the signing is non-interactive" "${sign_calls}" "-y"
+# cosign 3 defaults to a Sigstore bundle attached as an OCI referrer. Hosts
+# enforcing the README's sigstoreSigned policy (use-sigstore-attachments) read
+# only the legacy `sha256-<digest>.sig` tag, so without these flags every host
+# that requires a signature refuses the update (#393).
+assert_contains "the signature is written in the legacy format hosts read" \
+    "${sign_calls}" "--new-bundle-format=false"
+assert_contains "the signing config does not switch it back to a bundle" \
+    "${sign_calls}" "--use-signing-config=false"
+assert_contains "the signature is stored as a .sig tag, not an OCI referrer" \
+    "${sign_calls}" "--registry-referrers-mode=legacy"
 
 # =============================================================================
 # F. the wiring between the steps

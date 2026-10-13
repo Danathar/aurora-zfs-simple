@@ -164,7 +164,10 @@ jobs:
           DIGEST: ${{ steps.latest.outputs.digest }}
         run: |
           set -euo pipefail
-          cosign verify --key cosign.pub "${IMAGE_REF}@${DIGEST}" > /dev/null
+          # --new-bundle-format=false reads only the legacy `.sig` attachment,
+          # the one a host's containers/image policy reads. Without it cosign v3
+          # also accepts a new-format bundle that hosts cannot see.
+          cosign verify --key cosign.pub --new-bundle-format=false "${IMAGE_REF}@${DIGEST}" > /dev/null
           echo "Signature verifies against cosign.pub"
 
       # Every step above reads the registry as this repository, and a token
