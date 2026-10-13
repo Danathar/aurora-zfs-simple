@@ -991,7 +991,9 @@ assert_contains "the suite the table names is run with shellcheck installed" \
 # was verified" is the assertion; the two steps read one output.
 require_claim "${RUBRIC_DOC}" "signing applies to the digest that was verified" \
     "signing still applies to the same digest that was verified"
-sign_block="$(awk -v n="${sign_line}" 'NR >= n && NR < n + 12' "${BUILD_WF}")"
+# The whole step, up to the next `- name:`, rather than a fixed line count: the
+# sign step's comment and cosign flags (#393) push its env: block past 12 lines.
+sign_block="$(awk -v n="${sign_line}" 'NR > n && /^ *- name: /{exit} NR >= n' "${BUILD_WF}")"
 verify_block="$(awk -v n="${verify_line}" 'NR >= n && NR < n + 12' "${BUILD_WF}")"
 # shellcheck disable=SC2016
 assert_contains "the sign step signs by digest, not by tag" \

@@ -350,7 +350,14 @@ jobs:
       - name: Sign container image
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         run: |
+          # cosign v3 defaults to the Sigstore bundle format attached as an OCI
+          # referrer. Hosts that enforce the README's sigstoreSigned policy with
+          # use-sigstore-attachments only find the legacy `sha256-<digest>.sig`
+          # tag, so sign in that format. Same flag set as zfs-aurora-complex's
+          # ci_tools/sign_image.py.
           cosign sign -y --key env://COSIGN_PRIVATE_KEY \
+            --new-bundle-format=false --use-signing-config=false \
+            --registry-referrers-mode=legacy \
             "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}"
         env:
           COSIGN_EXPERIMENTAL: false

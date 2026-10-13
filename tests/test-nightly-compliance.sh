@@ -402,6 +402,11 @@ assert_contains "a verifying signature is reported" \
     "${S_STDOUT}" "verifies against cosign.pub"
 assert_contains "the signature is checked against the committed public key" \
     "${S_CALLS}" "--key cosign.pub"
+# Without this cosign 3 also accepts a new-format bundle that a host's
+# containers/image policy cannot see, and the check passes while hosts fail
+# to update (#393).
+assert_contains "only the legacy .sig attachment a host reads counts" \
+    "${S_CALLS}" "--new-bundle-format=false"
 # By digest, not by tag: re-resolving :latest here would verify whatever the tag
 # points at now, which is not necessarily the digest the previous step reported
 # and is exactly the drift this job is looking for.
