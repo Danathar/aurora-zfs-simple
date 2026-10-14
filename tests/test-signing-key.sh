@@ -362,6 +362,25 @@ assert_contains "it verifies against the committed key, not a key fetched at run
     "${verify_cmd}" "--key cosign.pub"
 assert_eq "and it names this repository's published :latest" \
     "${PUBLISHED_REF}:${DEFAULT_TAG}" "$(awk '{print $NF}' <<<"${verify_cmd}")"
+# cosign 3's `verify` also accepts a Sigstore bundle stored as an OCI referrer,
+# which a host's containers/image policy never reads (#393). Without the flag
+# the README's check can pass on an image every host refuses.
+assert_contains "it reads only the legacy .sig attachment a host reads" \
+    "${verify_cmd}" "--new-bundle-format=false"
+
+# The README's one-shot check and the nightly re-check stand for the same host,
+# so they pass the same options. Compared as a set, one option per line, with
+# the reference each one verifies cut off: README.md's is the last word, the
+# nightly's starts at the first quote, `"${IMAGE_REF}@${DIGEST}" > /dev/null`.
+verify_options() {
+    sed -e 's/^.*cosign verify //' -e 's/ --/\n--/g' | sort
+}
+nightly_verify="$(grep -E '^[[:space:]]+cosign verify ' "${NIGHTLY_YML}")"
+assert_eq "the nightly workflow has one cosign verify command" "1" \
+    "$(grep -c . <<<"${nightly_verify}")"
+assert_eq "and the README's verification passes the same options as the nightly one" \
+    "$(verify_options <<<"${nightly_verify%% \"*}")" \
+    "$(verify_options <<<"${verify_cmd% *}")"
 
 SWITCH_SECTION="$(section_body '## Switching To This Image' "${README_MD}")"
 switch_cmd="$(printf '%s\n' "${SWITCH_SECTION}" | fenced_content bash |
