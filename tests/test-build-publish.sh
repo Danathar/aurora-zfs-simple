@@ -683,6 +683,8 @@ assert_eq "an empty digest never reaches cosign" "" "${SV_CALLS}"
 NIGHTLY_WF="${REPO_ROOT}/.github/workflows/nightly-compliance.yml"
 nightly_verify_opts="$(grep -E '^[[:space:]]+cosign verify ' "${NIGHTLY_WF}" |
     sed -e 's/^.*cosign verify //' -e 's/ "\$.*$//' | tr ' ' '\n' | grep . | LC_ALL=C sort)"
+# The empty-digest case above left SV_CALLS empty; record a passing call again.
+sigverify "${DIGEST_A}" 0
 build_verify_opts="$(head -n1 <<<"${SV_CALLS}" |
     sed -e 's/^verify //' -e 's/ [^ ]*@sha256:.*$//' | tr ' ' '\n' | grep . | LC_ALL=C sort)"
 if [[ -n "${nightly_verify_opts}" ]]; then
