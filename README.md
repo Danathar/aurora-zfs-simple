@@ -290,7 +290,7 @@ layer reuse and update resumability; it does not change the files installed in
 the image.
 
 The workflow pins Chunkah to an explicit stable release tag and its digest,
-`quay.io/coreos/chunkah:v0.7.0@sha256:8b56578258d1d10d3e1c7b0f71a4d05317c5fde331c4f483576a1b60e65f0cea`, instead of the floating `latest` tag. A custom
+`quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523`, instead of the floating `latest` tag. A custom
 manager in [`renovate.json`](renovate.json) matches that `CHUNKAH_IMAGE:` line
 and opens a PR when a newer stable `vX.Y.Z` is published.
 
