@@ -49,7 +49,7 @@ REPO_ROOT="$(cd "${E2E_DIR}/../.." && pwd)"
 
 # Matches the workflow's pin. Renovate's regex manager tracks both this file
 # and the workflow (see renovate.json), so this stays in sync automatically.
-CHUNKAH_IMAGE="${CHUNKAH_IMAGE:-quay.io/coreos/chunkah:v0.7.0@sha256:8b56578258d1d10d3e1c7b0f71a4d05317c5fde331c4f483576a1b60e65f0cea}"
+CHUNKAH_IMAGE="${CHUNKAH_IMAGE:-quay.io/coreos/chunkah:v0.7.1@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523}"
 
 RECHUNK=0
 CLEAN=0
