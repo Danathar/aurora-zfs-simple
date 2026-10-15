@@ -364,6 +364,28 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           DIGEST: ${{ steps.push.outputs.digest }}
 
+      # Hosts follow `latest` and read only the legacy `sha256-<digest>.sig`
+      # tag. Check the signature the way they will, against the committed
+      # cosign.pub, before `latest` moves: if this fails, the job stops here
+      # and `latest` still names the last image hosts can verify. Same command
+      # as nightly-compliance.yml's "Verify the published signature" (#400).
+      - name: Verify the signature as hosts read it
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "push step did not expose a digest" >&2
+            exit 1
+          fi
+          # --new-bundle-format=false reads only the legacy `.sig` attachment,
+          # the one a host's containers/image policy reads. Without it cosign v3
+          # also accepts a new-format bundle that hosts cannot see.
+          cosign verify --key cosign.pub --new-bundle-format=false \
+            "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}" > /dev/null
+          echo "Signature verifies against cosign.pub"
+
       # The cosign signature says this repository's key signed the digest. It
       # does not say which commit or workflow run produced it. A SLSA
       # provenance attestation names both, and anyone can check it with

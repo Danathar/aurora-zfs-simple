@@ -7,6 +7,7 @@
 #   Prepare environment              lower-cases the registry/image reference
 #   Pick the tag to push first       the dated tag, never the `latest` hosts follow
 #   Sign container image             signs the pushed digest
+#   Verify the signature as hosts read it   checks that signature before `latest` moves
 #   Propagate tags from the pushed digest   copies it onto every tag, `latest` last
 #   Verify pushed tags share one digest     fails on a split tag set
 #
@@ -607,6 +608,93 @@ assert_contains "the signature is stored as a .sig tag, not an OCI referrer" \
     "${sign_calls}" "--registry-referrers-mode=legacy"
 
 # =============================================================================
+# E2. "Verify the signature as hosts read it"
+# =============================================================================
+#
+# Hosts follow `latest` and accept it only with a signature they can read: the
+# legacy `sha256-<digest>.sig` tag, checked against the committed cosign.pub.
+# On 2026-10-12 an image signed only in cosign 3's new bundle format moved
+# `latest` anyway (#393), and every host following the README refused the
+# update until someone noticed. This step checks the signature the way a host
+# does, before `latest` is copied, so a signing regression turns the run red
+# and leaves `latest` on the last image hosts can verify (#400).
+
+SIGVERIFY="${TMP_ROOT}/sigverify.sh"
+extract "${SIGVERIFY}" "Verify the signature as hosts read it" 'cosign verify'
+
+sigverify_dir="$(mktemp -d "${TMP_ROOT}/sigverify.XXXXXX")"
+mkdir -p "${sigverify_dir}/bin"
+{
+    printf '#!/usr/bin/env bash\n'
+    # shellcheck disable=SC2016 # these expansions belong to the generated stub
+    printf 'printf "%%s\\n" "$*" >> %q\n' "${sigverify_dir}/calls"
+    # shellcheck disable=SC2016 # likewise
+    printf 'exit "${COSIGN_STUB_STATUS:-0}"\n'
+} >"${sigverify_dir}/bin/cosign"
+chmod +x "${sigverify_dir}/bin/cosign"
+
+# Runs the extracted body with the given digest and stub exit status.
+# Sets SV_STATUS, SV_OUTPUT and SV_CALLS.
+sigverify() {
+    local digest=$1 stub_status=$2
+    : >"${sigverify_dir}/calls"
+    SV_OUTPUT="$(
+        PATH="${sigverify_dir}/bin:${PATH}" \
+            COSIGN_STUB_STATUS="${stub_status}" \
+            IMAGE_REGISTRY="${IMAGE_REGISTRY}" \
+            IMAGE_NAME="${IMAGE_NAME}" \
+            DIGEST="${digest}" \
+            bash "${SIGVERIFY}" 2>&1
+    )"
+    SV_STATUS=$?
+    SV_CALLS="$(cat "${sigverify_dir}/calls")"
+}
+
+sigverify "${DIGEST_A}" 0
+assert_eq "the signature check passes when cosign verifies" "0" "${SV_STATUS}"
+assert_contains "and says so in the log" "${SV_OUTPUT}" "Signature verifies against cosign.pub"
+assert_eq "cosign is called exactly once" "1" "$(grep -c . <<<"${SV_CALLS}")"
+assert_contains "it runs cosign verify" "${SV_CALLS}" "verify "
+assert_contains "it checks the digest that was signed, not a tag" \
+    "${SV_CALLS}" "${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST_A}"
+assert_not_contains "no tag reference is verified" "${SV_CALLS}" "${IMAGE_NAME}:"
+# The committed key, as a host's policy.json names it. A key fetched or derived
+# at run time would pass on whatever the signing secret currently holds.
+assert_contains "it verifies against the committed public key" "${SV_CALLS}" "--key cosign.pub"
+# Without the flag cosign 3 also accepts a new-format bundle stored as an OCI
+# referrer, which a host never reads, so the check would pass on exactly the
+# image #393 published.
+assert_contains "it reads only the legacy .sig attachment a host reads" \
+    "${SV_CALLS}" "--new-bundle-format=false"
+
+# The whole point: a signature hosts cannot verify fails the job here, before
+# the propagate step moves `latest`.
+sigverify "${DIGEST_A}" 1
+assert_eq "a signature cosign cannot verify fails the step" "1" "${SV_STATUS}"
+assert_not_contains "and does not claim it verified" "${SV_OUTPUT}" "Signature verifies"
+
+sigverify "" 0
+assert_eq "an empty digest fails the signature check" "1" "${SV_STATUS}"
+assert_contains "an empty digest says why" "${SV_OUTPUT}" "push step did not expose a digest"
+assert_eq "an empty digest never reaches cosign" "" "${SV_CALLS}"
+
+# The step runs the same check as the nightly re-check, so the two stand for
+# the same host. Compared as a set of options, the reference cut off.
+NIGHTLY_WF="${REPO_ROOT}/.github/workflows/nightly-compliance.yml"
+nightly_verify_opts="$(grep -E '^[[:space:]]+cosign verify ' "${NIGHTLY_WF}" |
+    sed -e 's/^.*cosign verify //' -e 's/ "\$.*$//' | tr ' ' '\n' | grep . | LC_ALL=C sort)"
+build_verify_opts="$(head -n1 <<<"${SV_CALLS}" |
+    sed -e 's/^verify //' -e 's/ [^ ]*@sha256:.*$//' | tr ' ' '\n' | grep . | LC_ALL=C sort)"
+if [[ -n "${nightly_verify_opts}" ]]; then
+    _pass "the nightly workflow's cosign verify options were read"
+else
+    _fail "the nightly workflow's cosign verify options were read" \
+        "no cosign verify line in ${NIGHTLY_WF}"
+fi
+assert_eq "the build checks the signature with the nightly re-check's options" \
+    "${nightly_verify_opts}" "${build_verify_opts}"
+
+# =============================================================================
 # F. the wiring between the steps
 # =============================================================================
 #
@@ -616,7 +704,8 @@ assert_contains "the signature is stored as a .sig tag, not an OCI referrer" \
 # because there is nothing to execute: an expression pointing at another step's
 # output would still parse, still run, and still produce an empty digest.
 
-for step in "Propagate tags from the pushed digest" "Verify pushed tags share one digest" "Sign container image"; do
+for step in "Propagate tags from the pushed digest" "Verify pushed tags share one digest" "Sign container image" \
+    "Verify the signature as hosts read it"; do
     # shellcheck disable=SC2016 # an Actions expression, compared as literal text
     assert_eq "'${step}' takes its digest from the push step's output" \
         '${{ steps.push.outputs.digest }}' "$(step_field "${step}" 'env.DIGEST')"
@@ -653,7 +742,7 @@ assert_contains "the push guard also requires the default branch" \
 
 for step in "Login to GitHub Container Registry" "Pick the tag to push first" "Propagate tags from the pushed digest" \
     "Verify pushed tags share one digest" "Install Cosign" "Sign container image" \
-    "Attest build provenance"; do
+    "Verify the signature as hosts read it" "Attest build provenance"; do
     assert_eq "'${step}' runs under exactly the push step's guard" \
         "${PUSH_GUARD}" "$(step_field "${step}" "if")"
 done
@@ -720,6 +809,19 @@ else
         "a copy before signing moves latest onto an image that is not signed yet"
 fi
 
+# The signature check has to sit between signing and the first copy. Before
+# signing it has nothing to verify; after the propagate step `latest` has
+# already moved, which is what let #393's unreadable signature reach hosts.
+sigverify_at="$(step_index "Verify the signature as hosts read it")"
+if [[ -n "${sign_at}" && -n "${sigverify_at}" && -n "${propagate_at}" &&
+    "${sign_at}" -lt "${sigverify_at}" && "${sigverify_at}" -lt "${propagate_at}" ]]; then
+    _pass "the signature is verified as hosts read it after signing and before latest is copied"
+else
+    _fail "the signature is verified as hosts read it after signing and before latest is copied" \
+        "got sign=${sign_at} sigverify=${sigverify_at} propagate=${propagate_at}" \
+        "verifying after the copy lets latest move onto a signature hosts cannot read"
+fi
+
 
 # =============================================================================
 # G. what can quietly skip or soften a step
@@ -761,6 +863,7 @@ Pick the tag to push first|env,id,if,name,run
 Push To GHCR|env,id,if,name,uses,with
 Install Cosign|if,name,uses,with
 Sign container image|env,if,name,run
+Verify the signature as hosts read it|env,if,name,run
 Attest build provenance|if,name,uses,with
 Propagate tags from the pushed digest|env,if,name,run
 Verify pushed tags share one digest|env,if,name,run
@@ -771,9 +874,9 @@ assert_eq "every build_push step has exactly its expected keys, in order, so non
     "${expected_step_keys}" "${actual_step_keys}"
 
 # The row comparison above would also pass if the jq read nothing on both
-# sides, so prove it read the real job: seventeen steps, none without a name.
+# sides, so prove it read the real job: eighteen steps, none without a name.
 assert_eq "the key-set check read every build_push step" \
-    "17" "$(wf '[.jobs.build_push.steps[] | select(.name != null)] | length')"
+    "18" "$(wf '[.jobs.build_push.steps[] | select(.name != null)] | length')"
 
 # No step anywhere in the file may carry continue-on-error, whatever its value:
 # the tests job is the gate build_push needs, and a softened suite there
