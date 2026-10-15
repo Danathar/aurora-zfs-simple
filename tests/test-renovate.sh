@@ -332,7 +332,7 @@ if ! "${WORKFLOW_PYTHON}" -c 'import yaml' >/dev/null 2>&1; then
 fi
 
 bot_facts=""
-if ! bot_facts=$("${WORKFLOW_PYTHON}" -B - "${REPO_ROOT}" <<'PY'
+if ! bot_facts=$("${WORKFLOW_PYTHON}" -B - "${REPO_ROOT}" "${DERIVED[@pin-files]}" <<'PY'
 import json
 import pathlib
 import sys
@@ -340,7 +340,11 @@ import sys
 import yaml
 
 repo_root = pathlib.Path(sys.argv[1])
+chunkah_pin_files = sorted(filter(None, sys.argv[2].split(",")))
 renovate = json.loads((repo_root / "renovate.json").read_text())
+
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from renovate_rules import decide  # noqa: E402
 dependabot = yaml.safe_load((repo_root / ".github" / "dependabot.yml").read_text())
 
 # Dependabot names an ecosystem, Renovate names a manager, and the two
@@ -383,13 +387,32 @@ managers = [
     for manager in renovate.get("customManagers", [])
     if manager.get("description") == "Track stable Chunkah container releases"
 ]
-chunkah_dep_name = managers[0].get("depNameTemplate", "") if len(managers) == 1 else ""
+chunkah_manager = managers[0] if len(managers) == 1 else {}
+chunkah_dep_name = chunkah_manager.get("depNameTemplate", "")
 
-package_rules = [rule for rule in renovate.get("packageRules", []) if rule.get("matchPackageNames")]
-chunkah_disabled_types = set()
-for rule in package_rules:
-    if rule.get("enabled") is False and chunkah_dep_name in rule["matchPackageNames"]:
-        chunkah_disabled_types.update(rule.get("matchUpdateTypes", []))
+# Every rule replayed in order against every update Renovate can open for each
+# pin: a release (major, minor, patch, which also moves the digest), a re-pushed
+# tag (digest), and adding a digest to a bare tag (pin, pinDigest). A rule that
+# only names the package is not the only way to switch one off: matchDepNames,
+# matchDatasources ["docker"], matchFileNames or a bare matchUpdateTypes reach
+# it just as well.
+chunkah_disabled = []
+for relative in chunkah_pin_files:
+    for update_type in ("major", "minor", "patch", "digest", "pin", "pinDigest"):
+        enabled, _ = decide(
+            renovate,
+            {
+                "name": chunkah_dep_name,
+                "manager": "custom.regex",
+                "datasource": chunkah_manager.get("datasourceTemplate", ""),
+                # The regex manager sets no depType without depTypeTemplate.
+                "dep_type": chunkah_manager.get("depTypeTemplate"),
+                "type": update_type,
+                "file": relative,
+            },
+        )
+        if enabled is False:
+            chunkah_disabled.append(f"{relative}:{update_type}")
 
 renovate_owns_actions = "github-actions" not in blanket_disabled
 dependabot_owns_actions = "github-actions" in ecosystems
@@ -463,7 +486,9 @@ facts = {
         sorted(eco for eco in ecosystems if ECOSYSTEM_TO_MANAGER.get(eco) == "dockerfile")
     ),
     "chunkah_dep_name": chunkah_dep_name,
-    "chunkah_disabled_update_types": ",".join(sorted(chunkah_disabled_types)),
+    "chunkah_datasource": chunkah_manager.get("datasourceTemplate", ""),
+    "chunkah_replayed_files": ",".join(chunkah_pin_files),
+    "chunkah_disabled": " ".join(chunkah_disabled),
     "bot_configs": ",".join(bot_configs),
     "bot_configs_missing_from_tier_2": ",".join(
         name for name in bot_configs if name not in tier_row
@@ -524,8 +549,12 @@ assert_eq "and no Dependabot ecosystem updates the Containerfile either" \
 # the README's promise below with nothing behind it.
 assert_eq "the Chunkah manager tracks the image the workflow pins" \
     "quay.io/coreos/chunkah" "${FACT[chunkah_dep_name]}"
-assert_eq "no packageRule turns updates off for that package" \
-    "" "${FACT[chunkah_disabled_update_types]}"
+assert_eq "and reads its releases from the image registry" \
+    "docker" "${FACT[chunkah_datasource]}"
+assert_eq "every Chunkah pin file is replayed against the packageRules" \
+    "${DERIVED[@pin-files]}" "${FACT[chunkah_replayed_files]}"
+assert_eq "no packageRule, applied in order, turns a Chunkah update off in any pin file" \
+    "" "${FACT[chunkah_disabled]}"
 
 assert_eq "the repository configures exactly these two dependency bots" \
     "renovate.json,.github/dependabot.yml" "${FACT[bot_configs]}"
@@ -555,7 +584,7 @@ assert_eq "and no longer says the pin is a tag only" \
 # Every `cosign-release:` line in a tracked file is derived here rather than
 # listed, so a new signing or verifying step is checked the day it lands.
 cosign_facts=""
-if cosign_facts=$(python3 - "${CONFIG}" "${REPO_ROOT}" "${DERIVED[@ignored-tracked]-}" <<'PY'
+if cosign_facts=$(python3 -B - "${CONFIG}" "${REPO_ROOT}" "${DERIVED[@ignored-tracked]-}" <<'PY'
 import json
 import pathlib
 import re
@@ -564,6 +593,9 @@ import sys
 
 config = json.loads(pathlib.Path(sys.argv[1]).read_text())
 repo_root = pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(repo_root / "tests" / "lib"))
+from renovate_rules import decide  # noqa: E402
+
 ignored_files = set(filter(None, sys.argv[3].split(",")))
 
 managers = [
@@ -621,72 +653,8 @@ print(f"unmatched\t{' '.join(unmatched)}")
 print(f"ignored\t{' '.join(sorted(set(pin_files) & ignored_files))}")
 
 
-# Replay packageRules the way Renovate applies them to one update: a rule
-# applies when every match* key it carries matches, and a later applying rule
-# overrides an earlier one. Reading only the rule that names sigstore/cosign
-# misses a rule that reaches cosign some other way -- a later matchDepNames
-# automerge, or matchManagers ["custom.regex"] with enabled: false, which also
-# stops the bump and leaves the suite green. A match key or pattern this does
-# not model raises, so a new rule cannot be misread as "does not apply".
-def file_glob(pattern):
-    # minimatch with dot: true, for the subset matchFileNames uses here: "**"
-    # as a whole segment spans directories, "*" and "**" inside a segment stay
-    # in it.
-    if re.search(r"[\[\]{}()!+@?\\]", pattern):
-        raise SystemExit(f"matchFileNames entry outside the modeled glob subset: {pattern!r}")
-    out = []
-    for segment in pattern.split("/"):
-        if segment == "**":
-            out.append(None)
-        else:
-            out.append(re.sub(r"(?:\\\*)+", "[^/]*", re.escape(segment)))
-    expression = ""
-    for index, segment in enumerate(out):
-        last = index == len(out) - 1
-        if segment is None:
-            expression += ".*" if last else "(?:[^/]+/)*"
-        else:
-            expression += segment + ("" if last else "/")
-    return re.compile(expression + r"\Z")
-
-
-def literal(values, key):
-    for value in values:
-        if value.startswith("/") or re.search(r"[*?!{}]", value):
-            raise SystemExit(f"{key} entry outside the modeled literal subset: {value!r}")
-    return values
-
-
-def applies(rule, update):
-    for key, values in rule.items():
-        if key.startswith("exclude"):
-            raise SystemExit(f"packageRules key not modeled: {key}")
-        if not key.startswith("match"):
-            continue
-        if key in ("matchPackageNames", "matchDepNames"):
-            if update["name"] not in literal(values, key):
-                return False
-        elif key == "matchManagers":
-            if update["manager"] not in literal(values, key):
-                return False
-        elif key == "matchDatasources":
-            if update["datasource"] not in literal(values, key):
-                return False
-        elif key == "matchUpdateTypes":
-            if update["type"] not in values:
-                return False
-        elif key == "matchDepTypes":
-            # The regex manager sets no depType without depTypeTemplate.
-            if manager.get("depTypeTemplate") not in values:
-                return False
-        elif key == "matchFileNames":
-            if not any(file_glob(value).match(update["file"]) for value in values):
-                return False
-        else:
-            raise SystemExit(f"packageRules key not modeled: {key}")
-    return True
-
-
+# Every rule replayed in order, for a major, minor and patch bump of each
+# pin; see tests/lib/renovate_rules.py.
 disabled = []
 automerged = []
 for relative in sorted(set(pin_files)):
@@ -695,15 +663,12 @@ for relative in sorted(set(pin_files)):
             "name": "sigstore/cosign",
             "manager": "custom.regex",
             "datasource": manager.get("datasourceTemplate", ""),
+            # The regex manager sets no depType without depTypeTemplate.
+            "dep_type": manager.get("depTypeTemplate"),
             "type": update_type,
             "file": relative,
         }
-        enabled = config.get("enabled", True)
-        automerge = config.get("automerge", False)
-        for rule in config.get("packageRules", []):
-            if applies(rule, update):
-                enabled = rule.get("enabled", enabled)
-                automerge = rule.get("automerge", automerge)
+        enabled, automerge = decide(config, update)
         if enabled is False:
             disabled.append(f"{relative}:{update_type}")
         if automerge is True:
