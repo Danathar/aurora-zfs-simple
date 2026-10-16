@@ -24,7 +24,13 @@
 #      the workflow declares under `workflow_dispatch`;
 #   6. the page applies no label, and names none of the labels SECURITY-AI.md
 #      says Hive reads as approval to auto-merge;
-#   7. every relative link resolves, and every `#anchor` is a heading.
+#   7. every relative link resolves, and every `#anchor` is a heading;
+#   8. every name the page gives another file is still that file's: the
+#      ai-fix jobs, label, trigger phrase, branch prefix and grant; the
+#      failure issue's title and the workflows it is opened for; the build
+#      step the "main is red" table hands to its next row; the badge branch;
+#      the nightly key; agent-audit.yml's signature line and date input; and
+#      every repository path in a code span.
 #
 # Nothing here pins the page's wording beyond the quoted messages.
 
@@ -293,5 +299,151 @@ while IFS= read -r target; do
         _fail "link ${target} resolves to a heading" "${file#"${REPO_ROOT}"/} has no heading that slugs to ${fragment}"
     fi
 done <<<"${LINKS}"
+
+# --- 8. names the page gives other files ---------------------------------------
+
+# The tables and the ai-fix section name jobs, a label, a phrase, a branch, a
+# step, a key file and an issue title that live in other files. Each is read
+# back out of the page (the first span after a fixed phrase) and looked up
+# where it is defined, so renaming one there leaves this page red, not wrong.
+
+# The first backticked span in the flattened page that follows $1.
+span_after() {
+    local escaped
+    escaped="$(sed -E 's/[][\.*^$/]/\\&/g' <<<"$1")"
+    sed -nE "s/.*${escaped} \`([^\`]+)\`.*/\1/p" <<<"${DOC_FLAT}"
+}
+
+# One `with:` value of ai-fix.yml's agent step, quotes dropped.
+ai_fix_input() {
+    sed -nE "s/^          $1: '?([^']*[^' ])'?[[:space:]]*\$/\1/p" "${AI_FIX}"
+}
+
+AI_FIX_JOBS="$(awk '/^jobs:/ { inside = 1; next } inside && /^[^ #]/ { exit } inside' "${AI_FIX}" |
+    sed -nE 's/^  ([a-z0-9_-]+):[[:space:]]*$/\1/p')"
+require_nonempty "ai-fix.yml's job ids" "${AI_FIX_JOBS}"
+
+stops_at="$(span_after 'A run that stops at')"
+require_nonempty "the job a run 'stops at'" "${stops_at}" &&
+    assert_contains "ai-fix.yml has the job '${stops_at}' a quiet run stops at" "${AI_FIX_JOBS}" "${stops_at}"
+assert_contains "the workflow table's ai-fix row names that same job" \
+    "${DOC_FLAT}" "stopped at \`${stops_at}\`"
+
+red_job="$(sed -nE 's/.*A red `([a-z0-9_-]+)` job is the agent.*/\1/p' <<<"${DOC_FLAT}")"
+require_nonempty "the job 'A red ... job' names" "${red_job}" &&
+    assert_contains "ai-fix.yml has the job '${red_job}' that runs the agent" "${AI_FIX_JOBS}" "${red_job}"
+assert_contains "and that job is the one that needs ${stops_at}" \
+    "$(awk -v job="  ${red_job}:" '$0 == job { inside = 1; next } inside && /^  [a-z]/ { exit } inside' "${AI_FIX}")" \
+    "needs: ${stops_at}"
+
+label="$(span_after 'issues and applies')"
+require_nonempty "the label a bot applies" "${label}" &&
+    assert_eq "the label the page says a bot applies is ai-fix.yml's label_trigger" \
+        "$(ai_fix_input label_trigger)" "${label}"
+assert_contains "and the ${stops_at} job's event filter reads that label" \
+    "$(cat "${AI_FIX}")" "github.event.label.name == '${label}'"
+
+phrase="$(span_after 'relays a request with a')"
+require_nonempty "the phrase a maintainer relays with" "${phrase}" &&
+    assert_eq "the phrase the page says a maintainer uses is ai-fix.yml's trigger_phrase" \
+        "$(ai_fix_input trigger_phrase)" "${phrase}"
+assert_contains "and the ${stops_at} job's event filter reads that phrase" \
+    "$(cat "${AI_FIX}")" "contains(github.event.comment.body, '${phrase}')"
+
+branch_glob="$(span_after 'check whether it pushed an')"
+require_nonempty "the branch an agent pushes" "${branch_glob}" &&
+    assert_eq "the branch the page says the agent pushes is ai-fix.yml's branch_prefix" \
+        "$(ai_fix_input branch_prefix)*" "${branch_glob}"
+
+grant="$(span_after 'Why the workflow holds')"
+require_nonempty "the grant the page explains" "${grant}" &&
+    assert_contains "the ${red_job} job holds the grant the page explains (${grant})" \
+        "$(awk -v job="  ${red_job}:" '$0 == job { inside = 1; next } inside && /^  [a-z]/ { exit } inside' "${AI_FIX}" |
+            sed -nE 's/^      ([a-z-]+: [a-z]+).*/\1/p')" "${grant}"
+
+# The failure issue: the title the page says to look for is the one
+# auto-issues.yml creates, with its workflow name as the placeholder.
+AUTO_ISSUES="${WORKFLOW_DIR}/auto-issues.yml"
+page_title="$(sed -nE 's/.*An issue titled `([^`]+)` comes from `auto-issues\.yml`.*/\1/p' <<<"${DOC_FLAT}")"
+require_nonempty "the failure issue title on the page" "${page_title}" &&
+    assert_eq "the failure issue title is the one auto-issues.yml creates" \
+        "$(sed -nE 's/^ *title="(.*)\$\{WORKFLOW_NAME\}"$/\1<workflow>/p' "${AUTO_ISSUES}")" "${page_title}"
+
+# The same paragraph says the issue comes from the image build or the nightly
+# check. auto-issues.yml watches by workflow `name:`, so resolve each to a file.
+watched_files="$(
+    awk '/^    workflows:/ { inside = 1; next } inside && !/^      - / { exit } inside' "${AUTO_ISSUES}" |
+        sed -nE 's/^      - "?([^"]*)"?$/\1/p' |
+        while IFS= read -r name; do
+            grep -lxF "name: ${name}" "${WORKFLOW_DIR}"/*.yml | sed 's|.*/||'
+        done | as_set
+)"
+assert_eq "the failure issue is opened for the image build and the nightly check, as the page says" \
+    $'build.yml\nnightly-compliance.yml' "${watched_files}"
+
+# "If the red step is `Push To GHCR` or later, read the next row": that step
+# has to come after the step the next row counts from, or the reader is sent
+# to a row that does not cover it.
+push_step="$(span_after 'If the red step is')"
+require_nonempty "the step the 'main is red' table hands to the next row" "${push_step}" &&
+    assert_contains "build.yml has the step '${push_step}'" "${build_steps}" "${push_step}"
+next_row_step="$(grep -E '^A step after ' <<<"${MAIN_RED}" | tail -n1)"
+next_row_step="${next_row_step#A step after }"
+push_at="$(grep -nxF -- "${push_step}" <<<"${build_steps}" | cut -d: -f1)"
+next_at="$(grep -nxF -- "${next_row_step}" <<<"${build_steps}" | cut -d: -f1)"
+if [[ -n "${push_at}" && -n "${next_at}" && "${next_at}" -lt "${push_at}" ]]; then
+    _pass "'${push_step}' comes after '${next_row_step}', the step the next row counts from"
+else
+    _fail "'${push_step}' comes after '${next_row_step}', the step the next row counts from" \
+        "got ${push_step}=${push_at:-none} ${next_row_step}=${next_at:-none}"
+fi
+
+# The badges live on the branch status-badges.yml pushes to.
+badge_branch="$(sed -nE 's/.*The badge files on the `([^`]+)` branch.*/\1/p' <<<"${DOC_FLAT}")"
+require_nonempty "the badge branch on the page" "${badge_branch}" &&
+    assert_contains "status-badges.yml pushes to the branch the page names (${badge_branch})" \
+        "$(cat "${WORKFLOW_DIR}/status-badges.yml")" "git push origin HEAD:${badge_branch}"
+assert_contains "the stale-badge advice names that same branch" \
+    "${DOC_FLAT}" "then the \`${badge_branch}\` branch"
+
+# The nightly signature row names the key the step verifies against.
+nightly_key="$(span_after 'The image no longer verifies against')"
+require_nonempty "the key the nightly signature row names" "${nightly_key}" &&
+    assert_contains "nightly-compliance.yml verifies against ${nightly_key}" \
+        "$(cat "${NIGHTLY}")" "cosign verify --key ${nightly_key} "
+assert_file_exists "${nightly_key} is committed" "${REPO_ROOT}/${nightly_key}"
+
+# The agent-audit row: the signature line it looks for and its date input.
+AGENT_AUDIT="${WORKFLOW_DIR}/agent-audit.yml"
+signature="$(span_after 'enforcement date lacks its')"
+require_nonempty "the signature line the agent-audit row names" "${signature}" &&
+    assert_contains "agent-audit.yml looks for the '${signature}' line" \
+        "$(cat "${AGENT_AUDIT}")" "startswith(\"${signature}\")"
+audit_input="$(sed -nE 's/.*the window hit the cap, or `([a-z_]+)` was malformed.*/\1/p' <<<"${DOC_FLAT}")"
+require_nonempty "the agent-audit input the row names" "${audit_input}" &&
+    if awk '/^  workflow_dispatch:/ { inside = 1; next } inside && /^  [a-z]/ { exit } inside' "${AGENT_AUDIT}" |
+        grep -qE "^      ${audit_input}:"; then
+        _pass "agent-audit.yml takes the input '${audit_input}'"
+    else
+        _fail "agent-audit.yml takes the input '${audit_input}'" "no such input under workflow_dispatch"
+    fi
+
+# Every repository path the page puts in a code span exists. Same filter as
+# test-docs-paths.sh's inline pass, which reads only README.md and AGENTS.md:
+# a span with a `/` is a path only when its first segment is a top-level entry.
+top_level="$(cd "${REPO_ROOT}" && git ls-files | cut -d/ -f1 | as_set)"
+named_paths=0
+while IFS= read -r span; do
+    [[ "${span}" =~ ^[A-Za-z0-9_.][A-Za-z0-9_./-]*/[A-Za-z0-9_./-]*$ ]] || continue
+    grep -qxF -- "${span%%/*}" <<<"${top_level}" || continue
+    named_paths=$((named_paths + 1))
+    if [[ -e "${REPO_ROOT}/${span%/}" ]]; then
+        _pass "the page names an existing path: ${span}"
+    else
+        _fail "the page names an existing path: ${span}" "no such path in the repository"
+    fi
+done < <(outside_fences "${RUNBOOK}" | grep -oE '`[^`]+`' | tr -d '`' | as_set)
+assert_eq "the page's code spans yielded paths to check" "yes" \
+    "$([[ "${named_paths}" -gt 0 ]] && echo yes || echo no)"
 
 finish
