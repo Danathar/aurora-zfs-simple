@@ -29,6 +29,14 @@
 #     `gh pr merge`, which the page says is asked, not denied;
 #   * agent-audit.yml runs on a schedule, and the page's CODEOWNERS section
 #     stands only while no CODEOWNERS file exists where GitHub reads one.
+#
+# And the other way round, the names the page quotes are the files' names: a
+# file-named link's text is the file it opens, a quoted workflow or script
+# exists, and each job, grant, secret, skip reason, branch, runner pattern,
+# settings key and ruleset value the page puts in a sentence is read back from
+# the file that owns it. Without that half a link could open the right file
+# under another file's name, and a renamed job or branch prefix would leave the
+# page quoting the old one, with every check above still green.
 
 set -uo pipefail
 
@@ -282,6 +290,110 @@ check("no CODEOWNERS file exists while the page says there is none", not present
 
 multi = open(os.path.join(root, "docs/multi-agent.md"), encoding="utf-8").read()
 check("docs/multi-agent.md links to the page", "](agent-boundaries.md)" in multi)
+
+# --- the names the page gives other files -----------------------------------
+#
+# The checks above hold the files to the page's claims; these hold the page's
+# own words to the files. A link whose target is right but whose text names
+# another file, or a job, key, secret or branch quoted in a sentence, can drift
+# while every check above stays green.
+
+flat = squash(page)
+
+
+def span_after(phrase):
+    """The first backticked span after `phrase` in the flattened page."""
+    match = re.search(re.escape(phrase) + r"[^`]*`([^`]+)`", flat)
+    return match.group(1) if match else None
+
+
+# A link whose text is a file name says which file it opens.
+links = re.findall(r"\[`([^`]+\.[a-z]+)`\]\(([^)#]+)(?:#[^)]*)?\)", page)
+check("the page's file-named links were found", len(links) >= 10, len(links))
+for text, target in links:
+    resolved = os.path.normpath(os.path.join("docs", target))
+    check(f"the link text `{text}` names the file it opens ({target})",
+          resolved == text or resolved.endswith("/" + text), resolved)
+
+workflow_names = sorted(set(re.findall(r"(?<!\[)`([a-z-]+\.yml)`(?!\])", page)))
+check("the page names workflows in its prose", bool(workflow_names))
+for name in workflow_names:
+    check(f"the workflow the page names, {name}, exists",
+          os.path.isfile(os.path.join(root, ".github/workflows", name)))
+
+for row in rows:
+    for named in re.findall(r"`([^`*?]*\.sh)`", row[1]):
+        check(f"the gate row names a script that exists: {named}",
+              os.path.isfile(os.path.join(root, named)))
+
+check("the job the Shell tests row says needs the suite is build.yml's publishing job",
+      span_after("In `build.yml`,") == "build_push" and tests_job in needs,
+      span_after("In `build.yml`,"))
+check("the workflow-permissions row says the policy test fails inside the required check",
+      span_after("fails, inside") in required, span_after("fails, inside"), required)
+
+check("the ruleset row's 'Deleting or rewriting' is the ruleset's deletion and non_fast_forward rules",
+      "Deleting or rewriting `main`" in flat
+      and {"deletion", "non_fast_forward"} <= {r["type"] for r in ruleset["rules"]})
+
+preflight_row = row_for("`preflight` job")
+preflight_job = (re.search(r"`([^`]+)` job", preflight_row[0]) or [None, None])[1]
+check("the preflight row names ai-fix.yml's preflight job", preflight_job in ai_fix["jobs"], preflight_job)
+started = squash(preflight_row[1])
+agent_job = (re.search(r"The `([^`]+)` job it starts", started) or [None, None])[1]
+check("the preflight row names the agent job that needs the preflight job",
+      agent_job in ai_fix["jobs"] and ai_fix["jobs"][agent_job].get("needs") == preflight_job, agent_job)
+grant, secret = re.findall(r"no `([^`]+)`", started)[:2] or [None, None]
+scope, _, level = (grant or "").partition(": ")
+check(f"the scope the preflight row says the agent job lacks is one build_push holds: {grant}",
+      build["jobs"]["build_push"].get("permissions", {}).get(scope) == level
+      and scope not in (ai_fix["jobs"].get(agent_job, {}).get("permissions") or {}), grant)
+build_text = open(os.path.join(root, ".github/workflows/build.yml"), encoding="utf-8").read()
+check(f"the secret the preflight row says the agent job lacks is the one build.yml signs with: {secret}",
+      bool(secret) and f"secrets.{secret}" in build_text, secret)
+skips = re.findall(r'echo "Skipped: ([^"]*)"',
+                   open(os.path.join(root, ".github/workflows/ai-fix.yml"), encoding="utf-8").read())
+reasons = {"a bot": "which is a bot", "a fork's pull request": "from a fork",
+           "no credentials set": "no agent credentials"}
+check("the preflight row lists every reason preflight skips, and only those",
+      len(skips) == len(reasons)
+      and all(p in started and any(s in k for k in skips) for p, s in reasons.items()), *skips)
+
+prune_tools = sorted({rule_command(r).split()[0] for r in perms["deny"]
+                      if (rule_command(r) or "").split()[:1] in (["podman"], ["buildah"])})
+check("the settings row names each tool whose prune and remove-all commands are denied",
+      bool(prune_tools) and all(f"`{tool}`" in settings_row for tool in prune_tools), prune_tools)
+
+runner_row = squash(row_for("tests/run-tests.sh")[1])
+pattern, directory = re.findall(r"`([^`]+)`", runner_row)[:2] or [None, None]
+runner = open(os.path.join(root, "tests/run-tests.sh"), encoding="utf-8").read()
+check("the runner row's file pattern and directory are the ones tests/run-tests.sh selects by",
+      directory == "tests/" and pattern and f"== {pattern} ]]" in runner
+      and f"-name '{pattern}'" in runner, pattern, directory)
+note = re.findall(r"`(_note_[a-z_]+)`", row_for("tests/run-tests.sh")[3])
+check("the runner row's settings key is the note on the runner's allow rule",
+      len(note) == 1 and "`./tests/run-tests.sh`" in settings.get(note[0], ""), note)
+
+asked = squash(section(page, ASKED))
+branch = re.search(r"runs on a push to `([^`]+)` only, so pushing an `([^`]+)` branch", asked)
+branch = branch.groups() if branch else (None, None)
+prefix = next((s.get("with", {}).get("branch_prefix") for s in fix.get("steps", [])
+               if "branch_prefix" in (s.get("with") or {})), None)
+check("§What is asked's push branch is build.yml's, and its agent branch is ai-fix.yml's branch_prefix",
+      branch == (build["on"]["push"]["branches"][0], f"{prefix}*"), branch, prefix)
+check("§What is asked's grant on a pull request's copy of build.yml is build_push's",
+      build["jobs"]["build_push"].get("permissions", {}).get("packages") == "write"
+      and "with `packages: write` and the repository's secrets" in asked)
+contributing = open(os.path.join(root, "CONTRIBUTING.md"), encoding="utf-8").read()
+conversation = re.search(r"Changes that need a conversation first\*\*(.*?)\[", asked)
+check("§What is asked has its changes-that-need-a-conversation bullet", bool(conversation))
+for name in re.findall(r"`([^`]+)`", conversation.group(1) if conversation else ""):
+    check(f"`{name}`, which §What is asked says needs a conversation, is in CONTRIBUTING.md's list",
+          f"`{name}`" in section(contributing, "Changes that need a conversation first"))
+
+key, value = span_after("The ruleset sets"), span_after("The ruleset sets `require_code_owner_review` to")
+check("§Why there is no CODEOWNERS file quotes the ruleset's key and value",
+      key in pr_rule and json.dumps(pr_rule[key]) == value, key, value)
 
 print("\n".join(out))
 PY
