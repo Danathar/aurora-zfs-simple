@@ -22,6 +22,7 @@ that does one only when it has been told to.
 ```bash
 gh run list --repo Danathar/aurora-zfs-simple --branch main -L 10
 gh run list --repo Danathar/aurora-zfs-simple --workflow nightly-compliance.yml -L 7
+gh run list --repo Danathar/aurora-zfs-simple --workflow boot-test.yml -L 7
 gh run list --repo Danathar/aurora-zfs-simple --workflow status-badges.yml -L 7
 gh pr list --repo Danathar/aurora-zfs-simple --state open --label hold
 gh issue list --repo Danathar/aurora-zfs-simple --state open --label ai-fix-requested
@@ -66,6 +67,7 @@ explanation lives; the first thing to do is what to try before reading a log.
 | `ai-fix.yml`             | A maintainer-requested agent run failed, or stopped at `preflight`.                                                                                  | Read the run summary: [An `ai-fix.yml` run did nothing](#an-ai-fixyml-run-did-nothing-or-failed). | [SECURITY-AI.md](SECURITY-AI.md#agent-authored-pull-requests)                           |
 | `auto-issues.yml`        | The failure issue was not opened or commented on. The failure it was reporting still happened.                                                       | Open the watched workflow's latest run yourself.                                                  | [SECURITY-AI.md](SECURITY-AI.md#failure-issues-hold-issues-write)                       |
 | `auto-qa.yml`            | A job was killed at its timeout, or its slowest run is close to it.                                                                                  | Open the run summary table for the job and its slowest run.                                       | [quality.md](quality.md#the-gates), `.github/auto-qa-tuning.json`                       |
+| `boot-test.yml`          | The published `:latest` did not boot or did not load the zfs module, or the runner could not start the VM.                                          | Read the run summary: it names the digest, the commit and each check's result.                    | [Boot test failed](#boot-test-failed)                                                   |
 | `build.yml`              | See [`main` is red](#main-is-red).                                                                                                                   | Check the OpenZFS/kernel badge.                                                                   | [AGENTS.md](../AGENTS.md), [quality.md](quality.md#reading-a-red-build)                 |
 | `coverage-gate.yml`      | The shell suite failed on a change `build.yml` ignores, or on a workflow edit.                                                                       | Run the failing test locally.                                                                     | [risk-tiers.md](risk-tiers.md#evidence-by-tier)                                         |
 | `labeler.yml`            | The `area/*` labelling failed. It classifies a change and checks nothing.                                                                            | Re-run it; do not apply a label by hand.                                                          | [SECURITY-AI.md](SECURITY-AI.md#labels-carry-authority--automation-must-not-apply-them) |
@@ -73,9 +75,10 @@ explanation lives; the first thing to do is what to try before reading a log.
 | `status-badges.yml`      | The badge files on the `status` branch were not refreshed.                                                                                           | Check whether the badge moved: it keeps its last value when an input cannot be read.              | [quality.md](quality.md#the-badges)                                                     |
 
 An issue titled `Unattended run failed: <workflow>` comes from `auto-issues.yml`
-when the image build on `main` (scheduled or after a push) or the nightly check
-fails. Its body names the run and the first step to take; while it is open,
-later failures add comments to it. Close it by hand once the cause is fixed.
+when the image build on `main` (scheduled or after a push), the nightly check,
+or the boot test that follows a build of `main` fails. Its body names the run
+and the first step to take; while it is open, later failures add comments to
+it. Close it by hand once the cause is fixed.
 
 ## Nightly compliance failed
 
@@ -104,6 +107,33 @@ failure to read the image is fatal on purpose. What the job does not cover, the
 contents of the image after the rechunk, is in
 [quality.md](quality.md#what-each-one-does-not-cover). Signing keys and who may
 touch them are in [SECURITY-AI.md](SECURITY-AI.md#signing-keys-and-secrets).
+
+## Boot test failed
+
+`boot-test.yml` starts after every `build.yml` run on `main` finishes. It boots
+`:latest` by digest in a throwaway VM on the runner and checks over SSH that
+boot finished, `zfs` and `kmod-zfs` are installed, the zfs module loaded at
+boot, and `zpool list` reaches it. It runs after `:latest` has moved, so it
+gates nothing: a red run is about the image machines would pull right now.
+
+First tell the image from the runner. The run summary says which:
+
+| Summary says                                      | Means                                                                                                                       |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `failed checks:` naming `module:zfs`              | The image booted, but zfs.ko did not load against its kernel. Compare the kernel and `zfs version` in the summary.          |
+| `failed checks:` naming `zpool:list`              | The module loaded but userspace cannot reach it: a userspace and kmod version split.                                        |
+| `failed checks:` naming a `package:` check        | The ZFS packages are not in the image. `post-check.sh` should have stopped that build; read its log.                        |
+| `failed checks:` naming `boot:finished`           | systemd never finished starting. The `boot-1/` journal in the run's artifact says which unit held it.                       |
+| `never reached the point where the checks finish` | No SSH session, twice. Usually the runner (KVM, bcvk, a slow host); the console log in the artifact says if the kernel ran. |
+
+A failed check means the VM booted and logged in, so the image is the suspect.
+Machines that follow `:latest` boot it after their next update and reboot; one
+that already did goes back with `sudo bootc rollback` and a reboot. Re-run the
+workflow only when the summary says the VM never reported:
+
+```bash
+gh workflow run boot-test.yml --repo Danathar/aurora-zfs-simple
+```
 
 ## A scheduled run is missing
 

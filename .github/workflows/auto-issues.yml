@@ -14,6 +14,10 @@ name: Auto issues
 #   - `Build container image` (build.yml): decides whether there is a new image.
 #   - `Nightly compliance` (nightly-compliance.yml): the only thing that notices
 #     a published tag or signature going bad after the build that made it.
+#   - `Boot test` (boot-test.yml): the only thing that starts the published
+#     image. It has no schedule of its own; build.yml's completion starts it
+#     (`workflow_run`), after the weekly build and every push build of main,
+#     so those are its unattended runs and the only ones of its runs acted on.
 #
 #   - `Status badges` is not watched. It republishes two JSON files; a failure
 #     leaves a stale badge and costs nothing else, and a red build already files
@@ -38,8 +42,10 @@ name: Auto issues
 # run's own fields, because the job-level `if:` below is only a cheap filter.
 #
 # Acts only when the run failed or timed out, ran on the default branch of this
-# repository, and was started by a schedule or a push. Pull requests are not
-# acted on: their author is looking at the check, and a fork's run is not ours.
+# repository, and was started by a schedule or a push, or, for `Boot test`
+# alone, by a build's completion. Pull requests are not acted on: their author
+# is looking at the check, and a fork's run is not ours. A dispatched run is
+# not either: whoever dispatched it is watching it.
 #
 # One open issue per workflow, found by the hidden marker in its body (or by its
 # exact title, if someone edited the body). It must also have been opened by
@@ -60,6 +66,7 @@ on:
     workflows:
       - "Build container image"
       - "Nightly compliance"
+      - "Boot test"
     types:
       - completed
 
@@ -116,7 +123,13 @@ jobs:
           esac
           case "${RUN_EVENT}" in
             schedule|push) ;;
-            *) echo "Run was started by '${RUN_EVENT}', not a schedule or a push; nothing to report."; exit 0 ;;
+            workflow_run)
+              if [ "${WORKFLOW_NAME}" != "Boot test" ]; then
+                echo "${WORKFLOW_NAME} was started by 'workflow_run'; only Boot test's runs of that kind are reported."
+                exit 0
+              fi
+              ;;
+            *) echo "Run was started by '${RUN_EVENT}', not a schedule, a push or a build's completion; nothing to report."; exit 0 ;;
           esac
           if [ "${HEAD_BRANCH}" != "${DEFAULT_BRANCH}" ]; then
             echo "Run was on '${HEAD_BRANCH}', not '${DEFAULT_BRANCH}'; nothing to report."
@@ -146,6 +159,9 @@ jobs:
               ;;
             "Nightly compliance")
               next="Open the failed job's log and the run summary. The header of [nightly-compliance.yml](${blob}/.github/workflows/nightly-compliance.yml) says what each of its checks protects; a failed signature or tag check concerns the published image, so read the check's output before re-running anything."
+              ;;
+            "Boot test")
+              next="Open the run summary: it names the digest and commit that were booted and each check's result. [Boot test failed](${blob}/docs/ai-ops-runbook.md#boot-test-failed) says how to tell an image that does not boot or load ZFS from a runner that could not start the VM. Machines that follow \`:latest\` boot this image after their next update and reboot, so read the result before re-running anything."
               ;;
             *)
               next="Open the run and read the failing step's log."

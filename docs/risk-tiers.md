@@ -119,8 +119,10 @@ strongest evidence available, and it is *not* proof:
   which is what actually gets pushed and signed
   ([`docs/quality.md`](quality.md#what-each-one-does-not-cover) is blunt about
   this);
-- it does **not** prove a pool imports or that the image boots. No CI job here
-  does.
+- it does **not** prove a pool imports or that the image boots. No pull
+  request check does. `boot-test.yml` boots `:latest` and checks the zfs module
+  loaded, but only after a build of `main` has published it, so it finds a
+  break after the merge, not before.
 
 So a Tier 3 pull request says which of those gaps it is exposed to, and how it
 was covered — a local `tests/e2e/run-e2e.sh --rechunk` run, a rebase onto a real

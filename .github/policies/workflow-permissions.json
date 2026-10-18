@@ -26,6 +26,12 @@
         "tune": {"contents": "read", "actions": "read"}
       }
     },
+    "boot-test.yml": {
+      "workflow": null,
+      "jobs": {
+        "boot": {"contents": "read"}
+      }
+    },
     "build.yml": {
       "workflow": null,
       "jobs": {

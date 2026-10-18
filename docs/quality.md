@@ -70,6 +70,14 @@ the far side of the rechunk.**
 the build those devices. It proves the image *contains* the right kernel
 modules, tools, libraries and boot integration.
 
+`boot-test.yml` is the one check that starts the image, and it is not a gate.
+It runs after every build of `main` has finished, so `:latest` has already
+moved. It boots `:latest` by digest in a VM and checks that boot finished, the
+ZFS packages are installed, the zfs module loaded at boot, and `zpool list`
+reaches it. A red run opens an issue through `auto-issues.yml`; it does not
+hold the image back. It re-runs neither `post-check.sh` nor the lint, and the
+VM has no pool to import. No pull request check boots the image.
+
 ## Reading a red build
 
 Start at the OpenZFS/kernel badge, not the logs. If it says `blocked`, the cause
@@ -85,5 +93,6 @@ Honest list, so nobody assumes otherwise:
   host, so the number would be meaningless
 - no performance or image-size tracking over time
 - no post-rechunk content validation in CI
-- no runtime verification that ZFS works on a booted system; the manual checks
-  after a rebase are in `README.md`
+- no runtime verification that a pool imports on a booted system; the boot test
+  proves only that the module loads, and the manual checks after a rebase are
+  in `README.md`

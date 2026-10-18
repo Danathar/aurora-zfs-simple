@@ -44,6 +44,7 @@ build_files/build.sh	UNCOVERED	runs its work at the top level; sourcing it execu
 build_files/kernel-akmods.sh	UNCOVERED	same, and it erases the running system's kernel RPMs. Exercised only by a real image build.
 build_files/zfs.sh	UNCOVERED	same. Its happy path is exercised by the Build container image workflow; its failure branches are not.
 build_files/post-check.sh	tests/test-post-check.sh
+ci/boot-test.sh	tests/test-boot-test.sh
 ci/write-badges.sh	tests/test-write-badges.sh
 EOF
 )

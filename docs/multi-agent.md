@@ -71,8 +71,8 @@ there.
    Hive's maturity evaluation, whose issues are titled `[ACMM Lx]` and carry the
    `acmm` and `ai-fix-requested` labels, or by
    [`.github/workflows/auto-issues.yml`](../.github/workflows/auto-issues.yml)
-   when an unattended build or nightly check fails. That workflow applies no
-   label and starts no agent.
+   when an unattended build, nightly check or boot test fails. That workflow
+   applies no label and starts no agent.
 2. The `ai-fix-requested` label is the repository's own hand-off.
    [`.github/workflows/ai-fix.yml`](../.github/workflows/ai-fix.yml) runs on
    `issues` `labeled` and on `issue_comment` `created` (`@claude`), and starts

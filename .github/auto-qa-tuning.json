@@ -76,6 +76,12 @@
       "note": "Two skopeo inspects and a git push. 15 matches nightly-compliance.yml's Published image, which does the same kind of registry work."
     },
     {
+      "workflow": "boot-test.yml",
+      "job": "Boot the published image",
+      "timeout_minutes": 60,
+      "note": "A budget, not yet a measurement: up to two boots of 15 minutes each (BOOT_TIMEOUT_SECONDS and BOOT_ATTEMPTS in ci/boot-test.sh) plus host setup and the pull. zfs-aurora-complex's boot of the same Aurora base took six minutes in all."
+    },
+    {
       "workflow": "auto-qa.yml",
       "job": "Compare timeouts against observed durations",
       "timeout_minutes": 10,
