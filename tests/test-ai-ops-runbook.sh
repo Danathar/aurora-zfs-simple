@@ -16,7 +16,9 @@
 #   3. the nightly step table is the nightly job's checking steps, in order,
 #      by their step names, and the `Shell tests` / `Build and push image`
 #      names in the "main is red" table are job names in build.yml, with the
-#      first one the ruleset's required check;
+#      first one the ruleset's required check, and the section's opening
+#      claim that a pull request has to be up to date with `main` is present
+#      exactly while the ruleset's required check is strict;
 #   4. every message the page quotes is still printed by the file that prints
 #      it, and the gate hook still exits 2 with a `blocked:` message;
 #   5. every `gh` command names this repository, every `gh workflow run` and
@@ -32,7 +34,8 @@
 #      the nightly key; agent-audit.yml's signature line and date input; and
 #      every repository path in a code span.
 #
-# Nothing here pins the page's wording beyond the quoted messages.
+# Nothing here pins the page's wording beyond the quoted messages and the
+# up-to-date clause in item 3.
 
 # The page quotes Markdown code spans, and so do the patterns that find them;
 # those backticks are literal text, not command substitution.
@@ -187,6 +190,23 @@ assert_contains "the page's required check is the ruleset's" "${required_checks}
 assert_contains "the page says Shell tests is the one required check" \
     "${DOC_FLAT}" '`Shell tests` is the only check the ruleset requires'
 assert_eq "the ruleset requires exactly one check" "1" "$(wc -l <<<"${required_checks}" | tr -d ' ')"
+
+# The section opens by saying two pull requests that each passed cannot land
+# untested together. That holds only while the required check is strict, so
+# the clause is held to the ruleset's value. `jq -c`, not `-r`: a string
+# "true" must not read as the boolean.
+strict="$(jq -c '.rules[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy' "${RULESET}")"
+MAIN_RED_FLAT="$(section_body '## `main` is red' "${RUNBOOK}" | flatten)"
+for clause in 'A pull request has to be up to date with `main` before it merges' \
+    'cannot land untested together'; do
+    if [[ "${strict}" == "true" ]]; then
+        assert_contains "the 'main is red' section says '${clause}' while the check is strict" \
+            "${MAIN_RED_FLAT}" "${clause}"
+    else
+        assert_not_contains "the 'main is red' section drops '${clause}' once the check is not strict (strict: ${strict})" \
+            "${MAIN_RED_FLAT}" "${clause}"
+    fi
+done
 assert_contains "coverage-gate.yml also runs a job named Shell tests" \
     "$(sed -nE 's/^    name: (.*)$/\1/p' "${WORKFLOW_DIR}/coverage-gate.yml")" "Shell tests"
 

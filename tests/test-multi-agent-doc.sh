@@ -178,6 +178,22 @@ if strict:
     check("the page warns about a non-strict check exactly when the ruleset is not strict",
           ("red together" in squash(section(page, OVERLAP))) == (actual is False),
           f"strict: {actual}")
+    # The rest of the paragraph tells an agent what a strict check means for
+    # its pull request: it has to carry the latest `main`, GitHub blocks it as
+    # behind after every merge, and that block wants an update, not a fix.
+    # Each sentence is true only while the check is strict, so each is held to
+    # the ruleset the same way, or a paragraph rewritten back to the old
+    # warning (or a ruleset turned off with the stated value) stays green.
+    STRICT_SAYS = [
+        "**Expect a pull request to fall behind `main`.**",
+        "has to contain the latest `main`, and pass `Shell tests` with it, before it can merge",
+        "blocks each one as behind `main` until it is updated from `main`",
+        "needs an update from `main`, not a fix",
+    ]
+    for phrase in STRICT_SAYS:
+        check(f"the page says '{phrase[:40]}...' exactly when the ruleset is strict",
+              (phrase in squash(section(page, OVERLAP))) == (actual is True),
+              f"strict: {actual}")
 
 approvals = re.findall(r"`required_approving_review_count` is `(\d+)`", squash(prose))
 check("the page states the approval count once", len(approvals) == 1, f"found {approvals}")
