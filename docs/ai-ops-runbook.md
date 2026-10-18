@@ -35,8 +35,10 @@ those lists and is not is a signal too. See
 
 ## `main` is red
 
-Two pull requests that each passed alone can fail together, and a scheduled
-build runs on `main` with no pull request at all. Find which job is red, then:
+A pull request has to be up to date with `main` before it merges, so two
+that each passed alone cannot land untested together; a scheduled build,
+though, runs on `main` with no pull request at all. Find which job is red,
+then:
 
 | Red job                                           | Means                                                                                                                                      | First thing                                                                                                                                                                                                                                   |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
