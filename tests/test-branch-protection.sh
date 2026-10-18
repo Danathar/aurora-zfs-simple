@@ -199,6 +199,15 @@ if approvals:
     check("the approval count the page states is the ruleset's",
           int(approvals.group(1)) == actual, f"page: {approvals.group(1)}", f"ruleset: {actual}")
 
+# The live ruleset asks for an extra approval when a pull request carries
+# changes nobody is attributed for, and the file was brought in line with it
+# (issue #407). The Status section's PUT replaces the live rules with this
+# file, so the key going false or missing here turns the rule off on GitHub
+# the next time someone re-applies it; nothing else in the tree reads it.
+check("main.json keeps require_extra_approval_for_unattributed_changes on",
+      rules.get("pull_request", {}).get("require_extra_approval_for_unattributed_changes") is True,
+      f"pull_request: {rules.get('pull_request')}")
+
 NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 key, body = lead(r"required checks?")
 check("the page has one bullet about required checks", key is not None, f"leads: {sorted(leads)}")
