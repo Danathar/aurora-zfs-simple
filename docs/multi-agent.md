@@ -121,15 +121,17 @@ gh pr list --repo Danathar/aurora-zfs-simple --state open --json number,headRefN
 touches in the pull request body lets the next agent see an overlap without
 reading the diff. Nothing enforces it.
 
-**Expect two green pull requests to be red together.** The `main` ruleset
-requires `Shell tests`, but `strict_required_status_checks_policy` is `false`
-in [`.github/rulesets/main.json`](../.github/rulesets/main.json): a pull
-request does not have to be tested against the latest `main` before it merges.
-Two pull requests that each pass can therefore land one after the other and
-leave `main` red, for instance one that adds a workflow and one that adds a
-test counting the workflows. When two open pull requests touch the same
-document, or a document and the test that reads it, update the second from
-`main` before it merges so that `Shell tests` runs on the pair.
+**Expect a pull request to fall behind `main`.** The `main` ruleset requires
+`Shell tests`, and `strict_required_status_checks_policy` is `true` in
+[`.github/rulesets/main.json`](../.github/rulesets/main.json): a pull request
+has to contain the latest `main`, and pass `Shell tests` with it, before it
+can merge. Every merge makes the other open pull requests stale, so GitHub
+blocks each one as behind `main` until it is updated from `main` and
+`Shell tests` runs again. That is the cost, and it is paid so that two pull
+requests that each pass, for instance one that adds a workflow and one that
+adds a test counting the workflows, cannot land one after the other and leave
+`main` red. A pull request blocked as behind needs an update from `main`, not
+a fix, unless `Shell tests` then fails on the pair.
 
 ## Who merges
 
