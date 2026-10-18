@@ -34,6 +34,9 @@ on:
     types:
       - completed
   workflow_dispatch:
+  push:
+    branches:
+      - test/411-boot-test-hosted
 
 concurrency:
   group: ${{ github.workflow }}
@@ -47,7 +50,7 @@ jobs:
     # after it would test an image the pull request did not make. A cancelled
     # build was replaced by a newer one, which starts its own boot.
     if: >-
-      github.event_name == 'workflow_dispatch'
+      github.event_name != 'workflow_run'
       || (github.event.workflow_run.event != 'pull_request'
       && github.event.workflow_run.head_branch == github.event.repository.default_branch
       && github.event.workflow_run.head_repository.full_name == github.repository
