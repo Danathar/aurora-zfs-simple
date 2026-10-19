@@ -62,6 +62,14 @@ if [[ "$1" == "pull" && -n "${PODMAN_PULL_FAIL:-}" ]]; then
 fi
 STUB
 
+# timeout records how it was asked to bound a command, then bounds it.
+REAL_TIMEOUT="$(command -v timeout)"
+cat >"${STUB_DIR}/timeout" <<STUB
+#!/usr/bin/env bash
+printf 'timeout %s\n' "\$*" >>"\${STUB_CALLS}"
+exec "${REAL_TIMEOUT}" "\$@"
+STUB
+
 # bcvk: record the call, then either run the command after `--` the way the
 # guest would, or print the canned session. ssh joins the command's words with
 # spaces and hands the string to the remote shell, so the stub does the same.
@@ -145,6 +153,8 @@ mkdir -p "${LOADED_SYS}/module/zfs" "${UNLOADED_SYS}/module"
 echo "2.4.3-1" >"${LOADED_SYS}/module/zfs/version"
 
 # run_boot [VAR=value]... -- [script argument]...
+# The work directory is always ${TMP_ROOT}/work; RUN_BOOT_WORK spells it some
+# other way on the command line, for a caller that has cd'd to ${TMP_ROOT}.
 run_boot() {
     local work="${TMP_ROOT}/work"
     local -a envs=()
@@ -166,7 +176,7 @@ run_boot() {
         GUEST_SYS="${LOADED_SYS}" \
         GITHUB_STEP_SUMMARY="${TMP_ROOT}/step-summary" \
         "${envs[@]}" \
-        bash "${SCRIPT}" --work "${work}" "$@" 2>&1
+        bash "${SCRIPT}" --work "${RUN_BOOT_WORK:-${work}}" "$@" 2>&1
 }
 
 result() {
@@ -206,6 +216,10 @@ output="$(run_boot SKOPEO_DIGEST=latest -- "${LATEST[@]}")"
 assert_eq "an answer that is not a digest is a setup error" "2" "$?"
 assert_contains "the bad answer is named" "${output}" "which is not a digest"
 
+output="$(run_boot SKOPEO_DIGEST=sha256:0123 -- "${LATEST[@]}")"
+assert_eq "a sha256: prefix without 64 hex digits is not a digest either" "2" "$?"
+assert_eq "and nothing boots" "0" "$(bcvk_calls)"
+
 output="$(run_boot PODMAN_PULL_FAIL=1 -- "${LATEST[@]}")"
 assert_eq "a failed pull is a setup error" "2" "$?"
 assert_eq "nothing boots when the pull failed" "0" "$(bcvk_calls)"
@@ -237,6 +251,10 @@ assert_eq "failed units are recorded" "rpm-ostreed-automatic.service" \
 assert_contains "failed units are listed as not judged" "${output}" \
     'Failed units (not judged): `rpm-ostreed-automatic.service`'
 assert_eq "the kernel is read back from the guest" "$(uname -r)" "$(result .report.kernel)"
+# The stub's login shell prints a terminal query ahead of the first marker, on
+# the same line, as a real one can; that first marked line is the state.
+assert_eq "the systemd state is read back from behind a terminal query" "degraded" \
+    "$(result .report.state)"
 assert_eq "the zfs version is read back after the checks" "zfs-2.4.3-1 zfs-kmod-2.4.3-1" \
     "$(result '.report.zfs_version | join(" ")')"
 # OpenZFS loads the module from any zfs or zpool command, so the only commands
@@ -244,6 +262,15 @@ assert_eq "the zfs version is read back after the checks" "zfs-2.4.3-1 zfs-kmod-
 assert_eq "no zfs or zpool command runs before the module check" "zpool list zfs version" \
     "$(grep -E '^(zpool|zfs) ' "${CALLS}" | xargs)"
 assert_eq "one boot is enough when it reports" "1" "$(bcvk_calls)"
+# bcvk only gives up on SSH by itself; a VM that answers and then hangs has to
+# be stopped from outside, and killed if it ignores the stop.
+assert_contains "the boot is bounded at fifteen minutes, then killed" \
+    "$(grep '^timeout .*bcvk ' "${CALLS}")" "timeout --kill-after=30 900 bcvk ephemeral run-ssh "
+# In the guest: the checks wait for boot to settle, but not for ever, and a
+# zpool that hangs on the module cannot hold the session open past bcvk's.
+assert_eq "the guest waits up to five minutes for boot to settle, and bounds zpool" \
+    $'timeout 300 systemctl is-system-running --wait\ntimeout 60 zpool list' \
+    "$(grep '^timeout ' "${CALLS}" | grep -v ' bcvk ')"
 assert_contains "the VM container is removed after the boot" \
     "$(grep '^podman rm' "${CALLS}")" "--force --ignore aurora-zfs-simple-boot-test-"
 assert_contains "the summary reaches the job summary" \
@@ -258,10 +285,19 @@ assert_eq "sshd is wanted by default.target whether or not the image enables it"
     "/usr/lib/systemd/system/sshd.service" "$(readlink "${units}/default.target.wants/sshd.service")"
 assert_contains "the roothome unit runs before tmpfiles writes the key" \
     "$(cat "${units}/aurora-zfs-simple-roothome.service")" "Before=systemd-tmpfiles-setup.service"
+assert_contains "and creates the directory /root points at, not /root itself" \
+    "$(cat "${units}/aurora-zfs-simple-roothome.service")" "ExecStart=/usr/bin/mkdir -p -m 0700 /var/roothome"
 assert_contains "bcvk is handed the units directory by absolute path" \
     "$(grep '^bcvk ' "${CALLS}")" "--systemd-units ${TMP_ROOT}/work/units "
 assert_file_exists "the check script the guest ran is kept for the artifact" \
     "${TMP_ROOT}/work/checks/checks.sh"
+
+# A relative --work, as a developer runs it by hand. bcvk is started with the
+# path as given, and ignored a relative --systemd-units without a word.
+output="$(cd "${TMP_ROOT}" && RUN_BOOT_WORK=work run_boot -- "${LATEST[@]}")"
+assert_eq "a relative --work boots" "0" "$?"
+assert_contains "and bcvk is still handed the units directory by absolute path" \
+    "$(grep '^bcvk ' "${CALLS}")" "--systemd-units ${TMP_ROOT}/work/units "
 
 # Untagged, so the only colon is the registry's port: a script that stripped
 # from the last colon of the whole reference would cut the port off.
@@ -276,6 +312,11 @@ assert_eq "an image given by digest boots the digest it resolves to" \
 
 output="$(run_boot SKOPEO_REVISION= -- "${LATEST[@]}")"
 assert_eq "a missing revision label is recorded as unknown" "unknown" "$(result .revision)"
+
+# skopeo's Go template prints this, not an empty string, for a label the image
+# does not have.
+output="$(run_boot SKOPEO_REVISION='<no value>' -- "${LATEST[@]}")"
+assert_eq "skopeo's <no value> for a missing label is recorded as unknown" "unknown" "$(result .revision)"
 
 # --- failing checks -------------------------------------------------------------
 
@@ -326,6 +367,27 @@ output="$(run_boot BCVK_MODE=canned BCVK_EXIT=255 -- "${LATEST[@]}")"
 assert_eq "a failed check cut off before DONE fails" "1" "$?"
 assert_eq "a failed check cut off before DONE is not retried" "1" "$(bcvk_calls)"
 assert_contains "the cut-off boot is reported as unfinished" "$(result .summary)" "never reached the point"
+
+# bcvk gives the session a terminal, which ends lines with CR LF. A DONE that
+# kept its CR would read as a boot that never finished.
+printf '%s\r\n' \
+    "AZS-BOOT-STATE running" \
+    "AZS-BOOT-CHECK boot:finished pass running" \
+    "AZS-BOOT-CHECK package:zfs pass zfs-2.4.3-1.fc44.x86_64" \
+    "AZS-BOOT-CHECK package:kmod-zfs pass kmod-zfs-2.4.3-1.fc44.x86_64" \
+    "AZS-BOOT-CHECK module:zfs pass 2.4.3-1" \
+    "AZS-BOOT-CHECK zpool:list pass no pools available" \
+    "AZS-BOOT-DONE" >"${CANNED}"
+output="$(run_boot BCVK_MODE=canned -- "${LATEST[@]}")"
+assert_eq "a session with CR LF line ends passes" "0" "$?"
+assert_eq "and no CR is left in what it recorded" "running 2.4.3-1" \
+    "$(result '"\(.report.state) \(.report.checks[] | select(.name == "module:zfs") | .detail)"')"
+
+# A VM that answers SSH and then hangs is stopped by timeout, not by bcvk.
+: >"${CANNED}"
+output="$(run_boot BCVK_MODE=canned BCVK_EXIT=124 -- "${LATEST[@]}")"
+assert_eq "a boot that timed out fails" "1" "$?"
+assert_contains "and the log says it was the timeout" "${output}" "bcvk timed out after 900s"
 
 # Nothing from the guest at all: the one case a second boot is for.
 printf '%s\n' "Error: SSH connection timed out after 240s" >"${CANNED}"
@@ -389,6 +451,84 @@ for term in \
     assert_contains "the job's if: has ${term}" "${job_if}" "${term}"
 done
 
+# Having the terms is not having them joined right: one `&&` turned `||`, or
+# a parenthesis moved, keeps every term and changes which runs boot. So the
+# expression is evaluated, by the && / || / == / != rules Actions uses, against
+# the runs that reach it. A dispatched run has no workflow_run, so every field
+# under it is null there. A failed build still boots: `:latest` did not move,
+# and the image it still names is the one machines run.
+if_verdicts="$("${WORKFLOW_PYTHON}" -B - "${job_if}" <<'PY'
+import re, sys
+
+expr = sys.argv[1]
+token = re.compile(r"\s*(\(|\)|&&|\|\||==|!=|'[^']*'|[A-Za-z_][A-Za-z0-9_.-]*)")
+words, pos = [], 0
+while pos < len(expr.rstrip()):
+    found = token.match(expr, pos)
+    if not found:
+        print(f"fail\tthe job's if: is only the expression forms this test models (stuck at {expr[pos:]!r})")
+        sys.exit(0)
+    words.append(found.group(1))
+    pos = found.end()
+python = []
+for word in words:
+    if word in ("&&", "||"):
+        python.append({"&&": "and", "||": "or"}[word])
+    elif word in ("(", ")", "==", "!="):
+        python.append(word)
+    elif word.startswith("'"):
+        python.append(repr(word[1:-1]))
+    elif word.startswith("github."):
+        python.append(f"look({word!r})")
+    else:
+        print(f"fail\tthe job's if: is only the expression forms this test models (unknown word {word!r})")
+        sys.exit(0)
+code = " ".join(python)
+
+def run(event_name, **workflow_run):
+    github = {
+        "event_name": event_name,
+        "repository": "Danathar/aurora-zfs-simple",
+        "event": {"repository": {"default_branch": "main"}},
+    }
+    if event_name == "workflow_run":
+        base = {"event": "push", "head_branch": "main", "conclusion": "success",
+                "head_repository": {"full_name": "Danathar/aurora-zfs-simple"}}
+        base.update(workflow_run)
+        github["event"]["workflow_run"] = base
+    def look(path):
+        value = {"github": github}
+        for part in path.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value
+    return bool(eval(code, {"look": look}))
+
+fork = {"full_name": "someone/aurora-zfs-simple"}
+cases = [
+    ("a dispatched run boots", True, run("workflow_dispatch")),
+    ("a push build of main boots", True, run("workflow_run")),
+    ("the weekly build of main boots", True, run("workflow_run", event="schedule")),
+    ("a failed build of main still boots the unchanged :latest", True,
+     run("workflow_run", conclusion="failure")),
+    ("a cancelled build does not boot", False, run("workflow_run", conclusion="cancelled")),
+    ("a pull request's build does not boot", False, run("workflow_run", event="pull_request")),
+    ("a build of another branch does not boot", False, run("workflow_run", head_branch="feature")),
+    ("a fork's build does not boot", False, run("workflow_run", head_repository=fork)),
+    ("a fork's build of its main does not boot", False,
+     run("workflow_run", event="pull_request", head_repository=fork)),
+]
+for name, want, got in cases:
+    print(f"{'ok' if want == got else 'fail'}\tthe job's if: decides: {name}")
+PY
+)"
+assert_eq "the job's if: was evaluated for every case" "9" "$(grep -c . <<<"${if_verdicts}")"
+while IFS=$'\t' read -r verdict line; do
+    case "${verdict}" in
+        ok) _pass "${line}" ;;
+        *) _fail "${line}" ;;
+    esac
+done <<<"${if_verdicts}"
+
 assert_eq "the job's token can only read the repository" '{"contents":"read"}' \
     "$(wf '.jobs.boot.permissions | tojson')"
 assert_eq "no step reads a secret" "0" "$(grep -c 'secrets\.' "${BOOT_WF}")"
@@ -408,6 +548,60 @@ assert_contains "lowercased, as the registry requires" \
 install_step="$(wf '.jobs.boot.steps[] | select(.run // "" | contains("bcvk/releases"))  | .run')"
 assert_contains "the bcvk download is checked against a sha256 before use" \
     "${install_step}" "sha256sum -c -"
+# ...and a failed check stops the step: nothing swallows sha256sum's status,
+# and the file it checks is the file downloaded and the file unpacked.
+assert_contains "the step stops on the first failed command" "$(head -n 1 <<<"${install_step}")" \
+    "set -euo pipefail"
+# shellcheck disable=SC2016 # a shell expansion, compared as literal text
+assert_eq "the checksum line is a 64-digit sha256 of the downloaded tarball, and nothing else" "1" \
+    "$(grep -cxE '[[:space:]]*echo "[0-9a-f]{64}  \$\{RUNNER_TEMP\}/bcvk\.tar\.gz" \| sha256sum -c -' <<<"${install_step}")"
+# shellcheck disable=SC2016 # a shell expansion, compared as literal text
+assert_contains "the tarball checked is the tarball downloaded" "${install_step}" '-o "${RUNNER_TEMP}/bcvk.tar.gz"'
+# shellcheck disable=SC2016 # a shell expansion, compared as literal text
+assert_contains "and the tarball unpacked" "${install_step}" 'tar -xzf "${RUNNER_TEMP}/bcvk.tar.gz"'
+
+# bcvk's host setup has to run before anything installs packages or touches
+# podman, as the workflow's comment says; a step moved above it would run on
+# a host the setup has not prepared.
+setup_index="$(wf '[.jobs.boot.steps[].run // ""] | map(contains("bootc-host-setup")) | index(true)')"
+first_host_use="$(wf '[.jobs.boot.steps[].run // ""] | map(test("podman|apt-get|bcvk ")) | index(true)')"
+if [[ "${setup_index}" =~ ^[0-9]+$ && "${first_host_use}" =~ ^[0-9]+$ ]] &&
+    ((setup_index < first_host_use)); then
+    _pass "bcvk's host setup runs before any step that installs packages or uses podman"
+else
+    _fail "bcvk's host setup runs before any step that installs packages or uses podman" \
+        "host setup at step ${setup_index}, first use at step ${first_host_use}"
+fi
+
+# The logs a red run is diagnosed from have to be uploaded when the boot step
+# failed, and from where the script wrote them: the step's --work is the
+# upload step's env.WORK, and each uploaded path is one the script writes there.
+assert_eq "the logs are uploaded when the boot failed too" "always()" \
+    "$(wf '.jobs.boot.steps[] | select(.name == "Upload logs") | .if')"
+# shellcheck disable=SC2016 # a shell expansion, compared as literal text
+assert_contains "the script writes into the job's WORK" \
+    "$(jq -r '.run' <<<"${boot_step}")" '--work "${WORK}"'
+run_boot -- "${LATEST[@]}" >/dev/null
+upload_paths="$(wf '.jobs.boot.steps[] | select(.name == "Upload logs") | .with.path')"
+uploaded=0
+while IFS= read -r path; do
+    [[ -n "${path}" ]] || continue
+    uploaded=$((uploaded + 1))
+    relative="${path#"\${{ env.WORK }}/"}"
+    if [[ "${relative}" == "${path}" ]]; then
+        _fail "the uploaded path ${path} is under env.WORK"
+        continue
+    fi
+    # shellcheck disable=SC2206 # the glob in the path is the point
+    matches=("${TMP_ROOT}"/work/${relative%/})
+    if [[ -e "${matches[0]}" ]]; then
+        _pass "the uploaded path ${relative} is one the script writes"
+    else
+        _fail "the uploaded path ${relative} is one the script writes" \
+            "nothing at ${TMP_ROOT}/work/${relative} after a boot"
+    fi
+done <<<"${upload_paths}"
+assert_eq "the result, the check script and each boot's logs are uploaded" "3" "${uploaded}"
 
 timeout_minutes="$(wf '.jobs.boot["timeout-minutes"]')"
 boot_seconds="$(grep -E '^BOOT_TIMEOUT_SECONDS=' "${SCRIPT}" | sed -E 's/.*\(\(([0-9]+) \* 60\)\).*/\1/')"
