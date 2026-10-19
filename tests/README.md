@@ -19,7 +19,7 @@ when present and skipped when not.
 | File                        | Covers                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
-| `test-boot-test.sh`         | `ci/boot-test.sh` end to end, with `skopeo`, `podman` and `bcvk` stubbed and the generated guest script run against stub `systemctl`, `rpm`, `zpool` and `zfs` — the digest it boots, the verdict, the one retry for a silent boot, the units it injects; plus `.github/workflows/boot-test.yml`'s trigger, job filter, token and image |
+| `test-boot-test.sh`         | `ci/boot-test.sh` end to end, with `skopeo`, `podman` and `bcvk` stubbed and the generated guest script run against stub `systemctl`, `rpm`, `zpool` and `zfs` — the digest it boots, the verdict, the one retry for a silent boot, the units it injects; plus `.github/workflows/boot-test.yml`'s trigger, job filter (evaluated), token, image, bcvk checksum, step order and log upload |
 | `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
 | `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database; `check_zfs_modules`, `check_module_signatures` and `check_initramfs`, with `require_file` and `require_glob` pointed at a scratch root and `depmod`, `modinfo`, `lsinitrd` and `openssl` stubbed, failure branch by failure branch; and the package lists they demand against the ones `kernel-akmods.sh` and `zfs.sh` erase, install and versionlock |
 | `test-containerfile.sh`     | the `Containerfile`'s build-stage wiring: the `--mount` destinations on each `RUN` against the absolute paths the `build_files/` scripts read, extracted from the scripts rather than restated, plus the order the four are invoked in and their place inside one `RUN` |
@@ -502,10 +502,24 @@ What it holds:
 - a boot that reported any check is not retried, and a boot that reported
   nothing is retried once;
 - the injected roothome unit and the `sshd.service` link are in
-  `default.target.wants`, and bcvk gets the directory by absolute path;
+  `default.target.wants`, and bcvk gets the directory by absolute path, even
+  from a relative `--work`;
+- the marked lines are read past a terminal query ahead of them and past the
+  CR of a CR LF line end, and a skopeo `<no value>` revision reads as unknown;
+- the boot runs under `timeout --kill-after`, and in the guest the settle wait
+  and `zpool list` are bounded too (a `timeout` stub records each call);
 - the workflow starts only on `Build container image`'s completion or by hand,
-  boots only after builds of `main` from this repository, holds `contents:
-  read`, and its timeout outlasts every boot the script may take.
+  holds `contents: read`, and its timeout outlasts every boot the script may
+  take;
+- the job's `if:` is evaluated, not just searched for its terms, against the
+  runs that reach it: a dispatch, push, scheduled or failed build of `main`
+  boots; a cancelled, pull-request, other-branch or fork build does not;
+- the bcvk tarball's checksum line is a bare `sha256sum -c -` over the file
+  downloaded and unpacked, in a step that stops on error, and bcvk's host setup
+  runs before any step that installs packages or uses podman;
+- the logs are uploaded on failure too (`if: always()`), from the job's
+  `WORK` the script was given, and every uploaded path is one the script
+  writes there.
 
 What it cannot reach is whether bcvk, QEMU and the runner actually boot the
 image. Only a hosted run of the workflow says that.
