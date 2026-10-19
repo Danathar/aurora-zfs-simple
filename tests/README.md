@@ -19,6 +19,7 @@ when present and skipped when not.
 | File                        | Covers                                                                                     |
 | --------------------------- | ------------------------------------------------------------------------------------------ |
 | `test-write-badges.sh`      | `ci/write-badges.sh` end to end, with `skopeo` stubbed                                     |
+| `test-boot-test.sh`         | `ci/boot-test.sh` end to end, with `skopeo`, `podman` and `bcvk` stubbed and the generated guest script run against stub `systemctl`, `rpm`, `zpool` and `zfs` — the digest it boots, the verdict, the one retry for a silent boot, the units it injects; plus `.github/workflows/boot-test.yml`'s trigger, job filter, token and image |
 | `test-post-check.sh`        | the pure helpers in `build_files/post-check.sh`, with `rpm`, `ldd`, `find` and `modinfo` stubbed |
 | `test-post-check-checks.sh` | `check_kernel_tree` and `check_zfs_packages`, against a text stand-in for the RPM database; `check_zfs_modules`, `check_module_signatures` and `check_initramfs`, with `require_file` and `require_glob` pointed at a scratch root and `depmod`, `modinfo`, `lsinitrd` and `openssl` stubbed, failure branch by failure branch; and the package lists they demand against the ones `kernel-akmods.sh` and `zfs.sh` erase, install and versionlock |
 | `test-containerfile.sh`     | the `Containerfile`'s build-stage wiring: the `--mount` destinations on each `RUN` against the absolute paths the `build_files/` scripts read, extracted from the scripts rather than restated, plus the order the four are invoked in and their place inside one `RUN` |
@@ -481,6 +482,33 @@ must equal the one `build.yml` signs with) and the `concurrency` block. Before
 these checks, pointing the summary's `PRESENT` at a literal `'true'`, feeding the
 date-tag step a digest as its `DATE_TAG`, or logging in to another registry left
 the whole suite green.
+
+## The boot test
+
+`test-boot-test.sh` covers `ci/boot-test.sh`, the only thing here that starts
+the published image, and the shape of `.github/workflows/boot-test.yml` that
+runs it. No VM is involved. `bcvk` is stubbed, and in its default mode it
+decodes the check script the script would hand the guest, runs it against stub
+`systemctl`, `rpm`, `zpool` and `zfs` commands, and points `/sys/module/zfs` at
+a scratch directory. So a quoting mistake in the guest script, or a check that
+runs `zpool` before the module check, fails here.
+
+What it holds:
+
+- the tag is resolved to a digest, and the digest is what is pulled and booted;
+- the verdict passes only when the guest finished and every expected check ran
+  and passed. `degraded` counts as finished, and failed units are listed, not
+  judged;
+- a boot that reported any check is not retried, and a boot that reported
+  nothing is retried once;
+- the injected roothome unit and the `sshd.service` link are in
+  `default.target.wants`, and bcvk gets the directory by absolute path;
+- the workflow starts only on `Build container image`'s completion or by hand,
+  boots only after builds of `main` from this repository, holds `contents:
+  read`, and its timeout outlasts every boot the script may take.
+
+What it cannot reach is whether bcvk, QEMU and the runner actually boot the
+image. Only a hosted run of the workflow says that.
 
 ## The signing key
 

@@ -233,6 +233,7 @@ build_files/build.sh                      package and service customization insi
 build_files/kernel-akmods.sh              kernel replacement and common akmods installation
 build_files/post-check.sh                 final image validation for kernel and ZFS
 build_files/zfs.sh                        ZFS RPM installation and final initramfs generation
+ci/boot-test.sh                           boots the published image in a VM and checks ZFS loaded
 ci/write-badges.sh                        derives the README status badge JSON
 tests/                                    shell tests and Python/PyYAML workflow checks
 tests/e2e/                                manual end-to-end image build and rechunk check
@@ -240,11 +241,12 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/workflows/status-badges.yml       refresh the status badges on the `status` branch
 .github/workflows/coverage-gate.yml       run the suite on docs-only changes build.yml ignores
 .github/workflows/nightly-compliance.yml  re-check the published image's signature and tags
+.github/workflows/boot-test.yml           boot `:latest` in a VM after every build of main and check ZFS
 .github/workflows/auto-qa.yml             compare CI timeouts against observed durations
 .github/workflows/labeler.yml             apply the descriptive `area/*` labels
 .github/workflows/ai-fix.yml              hand a labelled issue or a review to an agent
 .github/workflows/agent-audit.yml         monthly read-back of merged agent pull requests' signature and sign-off record
-.github/workflows/auto-issues.yml         open one issue when the build or nightly check fails unattended
+.github/workflows/auto-issues.yml         open one issue when the build, nightly check or boot test fails unattended
 .github/rulesets/main.json                the ruleset that protects `main`, as applied to it
 .github/labeler.yml                       path-to-label map for the above
 .github/auto-qa-tuning.json               declared CI timeouts and the drift policy
@@ -349,6 +351,13 @@ These checks do not prove that a real pool imports because the GitHub runner
 does not provide those host devices to the image build. They do verify that the
 image contains the expected kernel modules, userspace tools, libraries, and boot
 integration before it is published.
+
+After every build of `main`, the `Boot test` workflow
+([`boot-test.yml`](.github/workflows/boot-test.yml)) boots the published
+`:latest` in a throwaway VM and checks that it finishes booting, that the zfs
+module loaded, and that `zpool list` reaches it. It does not hold the image
+back, because `:latest` has already moved by then; a failed run opens an issue
+instead. It cannot import a pool either: the VM has none.
 
 ## Rebase An Existing Aurora Install
 

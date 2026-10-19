@@ -477,6 +477,26 @@ assert_eq "a failed push-triggered run opens an issue" "1" "$(calls "${dir}" 'is
 assert_contains "that says a push started it" \
     "$(cat "${dir}/create-body")" "started by \`push\`"
 
+# --- the boot test, started by a build's completion, counts ------------------
+
+# boot-test.yml has no schedule: build.yml's completion starts it, so every one
+# of its unattended runs arrives here with the event `workflow_run`. Dropping
+# that event would leave the only check that starts the image reporting to
+# nobody, with every other case here still green.
+dir="$(new_case boot-test)"
+run_step "${dir}" WORKFLOW_NAME="Boot test" RUN_EVENT=workflow_run
+assert_eq "a failed boot test a build started opens an issue" "1" "$(calls "${dir}" 'issue create')"
+body="$(cat "${dir}/create-body")"
+assert_contains "with the boot test's own title" \
+    "$(grep '^issue create' "${dir}/gh-calls")" "--title Unattended run failed: Boot test"
+assert_contains "that says a build's completion started it" \
+    "${body}" "**Boot test** failure on \`main\`, started by \`workflow_run\`."
+assert_contains "and points at the runbook's boot test section" \
+    "${body}" "/blob/main/docs/ai-ops-runbook.md#boot-test-failed"
+assert_not_contains "and not at the akmod skew section" "${body}" "akmod-skew"
+assert_eq "the runbook has the section the boot test issue links to" \
+    "1" "$(grep -c '^## Boot test failed$' "${REPO_ROOT}/docs/ai-ops-runbook.md")"
+
 # --- the second failure comments --------------------------------------------
 
 # `gh issue list` reads authors over GraphQL, which spells the Actions bot this
@@ -642,6 +662,12 @@ expect_nothing "a pull request run" RUN_EVENT=pull_request
 expect_nothing "a manually dispatched run" RUN_EVENT=workflow_dispatch
 expect_nothing "a run on a pull request's branch" HEAD_BRANCH=feature/x
 expect_nothing "a run from a fork" HEAD_REPO=someone/aurora-zfs-simple
+expect_nothing "a build started by another workflow's completion" RUN_EVENT=workflow_run
+expect_nothing "a nightly check started by another workflow's completion" \
+    WORKFLOW_NAME="Nightly compliance" RUN_EVENT=workflow_run
+expect_nothing "a manually dispatched boot test" WORKFLOW_NAME="Boot test" RUN_EVENT=workflow_dispatch
+expect_nothing "a boot test from a fork" WORKFLOW_NAME="Boot test" RUN_EVENT=workflow_run \
+    HEAD_REPO=someone/aurora-zfs-simple
 
 # --- no label, no mention, no close -----------------------------------------
 

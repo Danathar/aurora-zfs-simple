@@ -631,8 +631,8 @@ assert_eq ".shellcheckrc names the same file" "true" \
     "$(fact shellcheckrc-names-write-badges)"
 assert_eq ".shellcheckrc still records why double brackets are not required" \
     "true" "$(fact shellcheckrc-double-bracket-note)"
-assert_eq "the shipped scripts are the six outside tests/" \
-    ".claude/hooks/gate-git-diff.sh build_files/build.sh build_files/kernel-akmods.sh build_files/post-check.sh build_files/zfs.sh ci/write-badges.sh" \
+assert_eq "the shipped scripts are the seven outside tests/" \
+    ".claude/hooks/gate-git-diff.sh build_files/build.sh build_files/kernel-akmods.sh build_files/post-check.sh build_files/zfs.sh ci/boot-test.sh ci/write-badges.sh" \
     "$(fact shipped-shell)"
 
 # =============================================================================

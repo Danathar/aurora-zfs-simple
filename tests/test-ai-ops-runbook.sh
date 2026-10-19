@@ -389,8 +389,9 @@ require_nonempty "the failure issue title on the page" "${page_title}" &&
     assert_eq "the failure issue title is the one auto-issues.yml creates" \
         "$(sed -nE 's/^ *title="(.*)\$\{WORKFLOW_NAME\}"$/\1<workflow>/p' "${AUTO_ISSUES}")" "${page_title}"
 
-# The same paragraph says the issue comes from the image build or the nightly
-# check. auto-issues.yml watches by workflow `name:`, so resolve each to a file.
+# The same paragraph says the issue comes from the image build, the nightly
+# check or the boot test. auto-issues.yml watches by workflow `name:`, so
+# resolve each to a file.
 watched_files="$(
     awk '/^    workflows:/ { inside = 1; next } inside && !/^      - / { exit } inside' "${AUTO_ISSUES}" |
         sed -nE 's/^      - "?([^"]*)"?$/\1/p' |
@@ -398,8 +399,8 @@ watched_files="$(
             grep -lxF "name: ${name}" "${WORKFLOW_DIR}"/*.yml | sed 's|.*/||'
         done | as_set
 )"
-assert_eq "the failure issue is opened for the image build and the nightly check, as the page says" \
-    $'build.yml\nnightly-compliance.yml' "${watched_files}"
+assert_eq "the failure issue is opened for the image build, the nightly check and the boot test, as the page says" \
+    $'boot-test.yml\nbuild.yml\nnightly-compliance.yml' "${watched_files}"
 
 # "If the red step is `Push To GHCR` or later, read the next row": that step
 # has to come after the step the next row counts from, or the reader is sent
