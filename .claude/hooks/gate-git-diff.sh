@@ -2417,7 +2417,9 @@ unlisted_program_refusal() {
   fi
   for ((pos = 0; pos < ${#indices[@]}; pos++)); do
     idx=${indices[pos]}
-    ((idx > first)) && [[ "${kinds[idx]}" == word ]] || continue
+    if ((idx <= first)) || [[ "${kinds[idx]}" != word ]]; then
+      continue
+    fi
     if names_gated_command "${words[idx]}"; then
       inner=''
       for cut in "${indices[@]:pos}"; do
@@ -2437,8 +2439,9 @@ unlisted_program_refusal() {
       done
     fi
     for text in "${texts[@]}"; do
-      [[ -n "${text}" ]] && mentions_gated_command "${text}" || continue
-      refuse_if_refused_alone "${program}" "${text}"
+      if [[ -n "${text}" ]] && mentions_gated_command "${text}"; then
+        refuse_if_refused_alone "${program}" "${text}"
+      fi
     done
   done
 }

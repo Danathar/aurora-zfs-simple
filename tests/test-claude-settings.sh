@@ -2682,6 +2682,7 @@ corpus_row refuse "4 name: nice" "nice git diff /dev/null ./cosign.key"
 corpus_row refuse "4 name: time" "time git diff /dev/null ./cosign.key"
 corpus_row refuse "4 name: timeout" "timeout 60 git diff /dev/null ./cosign.key"
 corpus_row refuse "4 name: setsid" "setsid podman images >cosign.pub"
+corpus_row refuse "4 name: setsid behind a redirection" ">cosign.pub setsid podman images"
 corpus_row refuse "4 name: ionice" "ionice -c2 podman images >cosign.pub"
 corpus_row refuse "4 name: chrt" "chrt -f 1 podman images >cosign.pub"
 corpus_row refuse "4 name: taskset" "taskset -c 0 podman images >cosign.pub"
@@ -2729,6 +2730,8 @@ corpus_row refuse "4 name: a wrapper path outside the system directories" \
 # target (review on sensi#259).
 corpus_row refuse "4 name: a backslash bash removes and the matcher cuts at" \
     "/usr/bin\\timeout 5 podman ps >out"
+corpus_row refuse "4 name: the same backslash behind a redirection" \
+    ">out /usr/bin\\timeout 5 podman ps"
 corpus_row refuse "4 name: a backslash before a wrapper name" "x\\nohup podman ps >out"
 corpus_row refuse "4 name: a backslash in a path to a wrapper before shellcheck" \
     "/usr/bin\\nohup shellcheck tests/run-tests.sh >out"
@@ -3103,10 +3106,16 @@ mutation "reading a path to shellcheck as shellcheck" \
 mutation "the += spelling of the SHELLCHECK_OPTS assignment" \
     '"${words[idx]}" == SHELLCHECK_OPTS+=*' '"${words[idx]}" == SHELLCHECK_OPTSxx+=*' \
     "SHELLCHECK_OPTS+=./.env shellcheck tests/run-tests.sh"
+# The three wrapper witnesses below put the redirection in front of the
+# wrapper. With the wrapper rule disabled, a redirection after the gated
+# command is still refused by the reading of a command behind a program this
+# gate does not step over (#421), which carries it along; one in front is the
+# unlisted program's own, so only the wrapper rule ties it to the gated
+# command.
 mutation "the process wrappers a gated command can sit behind" \
     'setsid | ionice | chrt | taskset | unshare | flock)' \
     'setsidx | ionicex | chrtx | tasksetx | unsharex | flockx)' \
-    "setsid podman images >cosign.pub"
+    ">cosign.pub setsid podman images"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "flock's -c/--command handing its argument to a shell" \
     'refuse "${WRAPPER_SHELL_MSG}"' ':' \
@@ -3117,7 +3126,7 @@ mutation "refusing a relocated diff before its operands are counted" \
     "git -C /etc diff HEAD~1"
 mutation "noglob among the wrappers Claude Code's matcher steps over" \
     'nohup | noglob | nice' 'nohup | nice' \
-    "noglob podman ps >out"
+    ">cosign.pub noglob git diff HEAD"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "refusing xargs in front of git or an allow-listed command" \
     'refuse "${XARGS_MSG}"' ':' \
@@ -3129,7 +3138,7 @@ mutation "a literal path to a wrapper read as that wrapper" \
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "deciding a wrapper on the word as typed, backslashes kept" \
     'for wrapper_base in "${typed_base}" ' 'for wrapper_base in ' \
-    "/usr/bin\\timeout 5 podman ps >out"
+    ">out /usr/bin\\timeout 5 podman ps"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "refusing a path to a wrapper other than the system one" \
     '*) refuse "${WRAPPER_PATH_MSG}" ;;' '*) ;;' \
