@@ -38,7 +38,7 @@ SETTINGS="${REPO_ROOT}/.claude/settings.json"
 
 # SHA-256 of the canonical tests/fixtures/gate-refusal-corpus.json in
 # Danathar/atomic-image-builder. Copy the file from there; never edit it here.
-CANONICAL_SHA256="8a4bf0f7118af630f2549633cb91d33a324312d5750bbc83e0f0a8489700cf71"
+CANONICAL_SHA256="de16d01afbf010ddb6d63d55c3a182f457e02b3b04319085f57d8f530b65a44d"
 
 for required in "${CORPUS}" "${SETTINGS}"; do
     assert_file_exists "${required#"${REPO_ROOT}/"} is present" "${required}"
@@ -91,7 +91,7 @@ assert_eq "the schema version is one this file reads" \
 bad_rows="$(jq -r '
     .rows[]
     | select(
-        (keys != ["class", "command", "id", "requires", "verdict", "why"])
+        ((keys - ["wraps"]) != ["class", "command", "id", "requires", "verdict", "why"])
         or ((.verdict == "refuse" or .verdict == "allow") | not)
         or ((.requires | length) == 0)
         or any(.requires[]; . != (. | gsub("^\\s+|\\s+$"; "")))
@@ -101,6 +101,26 @@ bad_rows="$(jq -r '
     | .id
 ' "${CORPUS}")"
 assert_eq "every row has exactly the documented fields" "" "${bad_rows}"
+
+# `wraps` (optional) names a wrapper no allow rule covers, such as `flock` in
+# `flock /tmp/l git diff ...`. It is the command's first word, and never the
+# first word of a prefix the row requires, or the row would run only where the
+# wrapper itself is allowed. A row without it is read as before.
+bad_wraps="$(jq -r '
+    .rows[]
+    | select(has("wraps"))
+    | .wraps as $w
+    | select(
+        ($w | type) != "string"
+        or ($w | test("^\\S+$") | not)
+        or (.command | startswith($w + " ") | not)
+        or any(.requires[]; split(" ")[0] == $w)
+      )
+    | .id
+' "${CORPUS}")"
+assert_eq "every wrapped row starts with the wrapper it names" "" "${bad_wraps}"
+assert_eq "the corpus has wrapped rows for the check above to read" \
+    "true" "$(jq -r '[.rows[] | select(has("wraps"))] | length > 0' "${CORPUS}")"
 
 assert_eq "row ids are unique" \
     "$(jq -r '.rows | length' "${CORPUS}")" \
