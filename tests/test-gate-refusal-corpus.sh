@@ -88,39 +88,107 @@ assert_eq "the copy matches the pinned canonical corpus" \
 assert_eq "the schema version is one this file reads" \
     "1" "$(jq -r '.schema' "${CORPUS}")"
 
-bad_rows="$(jq -r '
-    .rows[]
-    | select(
-        ((keys - ["wraps"]) != ["class", "command", "id", "requires", "verdict", "why"])
-        or ((.verdict == "refuse" or .verdict == "allow") | not)
-        or ((.requires | length) == 0)
-        or any(.requires[]; . != (. | gsub("^\\s+|\\s+$"; "")))
-        or ((.command | gsub("\\s"; "")) == "")
-        or ((.why | gsub("\\s"; "")) == "")
-      )
-    | .id
-' "${CORPUS}")"
-assert_eq "every row has exactly the documented fields" "" "${bad_rows}"
+# shape_problems FILE / wrap_problems FILE print the id of every row that
+# breaks the table's shape, or "row N" when the row has no string id. Each
+# field's type is checked before anything reads it as that type: jq stops at
+# the first error and prints nothing more, so a check that ran gsub over a
+# null `command` would hide every bad row after it and pass on an empty
+# answer. A filter that errors anyway prints "jq failed", never nothing.
+shape_problems() {
+    jq -r '
+        .rows | to_entries[] | .key as $i | .value
+        | select(
+            (type != "object")
+            or ((keys - ["wraps"]) != ["class", "command", "id", "requires", "verdict", "why"])
+            or ([.id, .class, .command, .why] | any(type != "string"))
+            or ((.requires | type) != "array")
+            or any(.requires[]; type != "string")
+            or ((.verdict == "refuse" or .verdict == "allow") | not)
+            or ((.requires | length) == 0)
+            or any(.requires[]; . != (. | gsub("^\\s+|\\s+$"; "")))
+            or ((.command | gsub("\\s"; "")) == "")
+            or ((.why | gsub("\\s"; "")) == "")
+          )
+        | if type == "object" and (.id | type) == "string" then .id else "row \($i)" end
+    ' "$1" || echo "jq failed"
+}
 
 # `wraps` (optional) names a wrapper no allow rule covers, such as `flock` in
 # `flock /tmp/l git diff ...`. It is the command's first word, and never the
 # first word of a prefix the row requires, or the row would run only where the
-# wrapper itself is allowed. A row without it is read as before.
-bad_wraps="$(jq -r '
-    .rows[]
-    | select(has("wraps"))
-    | .wraps as $w
-    | select(
-        ($w | type) != "string"
-        or ($w | test("^\\S+$") | not)
-        or (.command | startswith($w + " ") | not)
-        or any(.requires[]; split(" ")[0] == $w)
-      )
-    | .id
-' "${CORPUS}")"
-assert_eq "every wrapped row starts with the wrapper it names" "" "${bad_wraps}"
+# wrapper itself is allowed. A row without it is read as before. Rows
+# shape_problems reports are skipped here: it has already named them.
+wrap_problems() {
+    jq -r '
+        .rows | to_entries[] | .key as $i | .value
+        | select(type == "object" and has("wraps"))
+        | select((.command | type) == "string" and (.requires | type) == "array")
+        | .wraps as $w
+        | select(
+            ($w | type) != "string"
+            or ($w | test("^\\S+$") | not)
+            or (.command | startswith($w + " ") | not)
+            or any(.requires[]; type == "string" and split(" ")[0] == $w)
+          )
+        | if (.id | type) == "string" then .id else "row \($i)" end
+    ' "$1" || echo "jq failed"
+}
+
+assert_eq "every row has exactly the documented fields" "" "$(shape_problems "${CORPUS}")"
+assert_eq "every wrapped row starts with the wrapper it names" "" "$(wrap_problems "${CORPUS}")"
 assert_eq "the corpus has wrapped rows for the check above to read" \
     "true" "$(jq -r '[.rows[] | select(has("wraps"))] | length > 0' "${CORPUS}")"
+
+# The canonical table is well formed, so the two checks above pass on it
+# whatever they test. Each bad row below must be reported by id, and the row
+# after it too, so a check that stops early, or forgets a field's type, fails
+# here instead of on the next copy of the table.
+good_row='{"class": "c", "command": "git diff x", "id": "good", "requires": ["git diff"], "verdict": "refuse", "why": "w"}'
+wrap_row='{"class": "c", "command": "flock /tmp/l git diff x", "id": "good", "requires": ["git diff"], "verdict": "refuse", "why": "w", "wraps": "flock"}'
+# check_bad_row LABEL CHECK BASE PATCH: BASE with PATCH merged in, as id "bad",
+# followed by a row with an empty command, id "next".
+check_bad_row() {
+    local label=$1 check=$2 base=$3 patch=$4 table got want
+    table="$(mktemp)"
+    jq -n --argjson g "${good_row}" --argjson b "${base}" --argjson p "${patch}" '
+        {schema: 1, rows: [$g, ($b + {id: "bad"} + $p), ($g + {id: "next", command: " "})]}
+    ' >"${table}"
+    got="$("${check}" "${table}" | tr '\n' ' ')"
+    rm -f "${table}"
+    want="bad "
+    [[ "${check}" == shape_problems ]] && want="bad next "
+    assert_eq "${check} reports ${label}" "${want}" "${got}"
+}
+check_bad_row "a null command" shape_problems "${good_row}" '{"command": null}'
+check_bad_row "a numeric command" shape_problems "${good_row}" '{"command": 5}'
+check_bad_row "a null why" shape_problems "${good_row}" '{"why": null}'
+check_bad_row "a numeric class" shape_problems "${good_row}" '{"class": 1}'
+check_bad_row "requires as a string" shape_problems "${good_row}" '{"requires": "git diff"}'
+check_bad_row "a numeric prefix in requires" shape_problems "${good_row}" '{"requires": [5]}'
+check_bad_row "empty requires" shape_problems "${good_row}" '{"requires": []}'
+check_bad_row "a padded prefix" shape_problems "${good_row}" '{"requires": [" git diff"]}'
+check_bad_row "an unknown verdict" shape_problems "${good_row}" '{"verdict": "warn"}'
+check_bad_row "a blank why" shape_problems "${good_row}" '{"why": "  "}'
+check_bad_row "an extra field" shape_problems "${good_row}" '{"extra": 1}'
+check_bad_row "a numeric wraps" wrap_problems "${wrap_row}" '{"wraps": 3}'
+check_bad_row "a two-word wraps" wrap_problems "${wrap_row}" '{"wraps": "flock -n", "command": "flock -n /tmp/l git diff x"}'
+check_bad_row "a wraps the command does not start with" wrap_problems "${wrap_row}" '{"wraps": "timeout"}'
+check_bad_row "a wraps that only prefixes the first word" wrap_problems "${wrap_row}" '{"command": "flockx /tmp/l git diff x"}'
+check_bad_row "a wraps a required prefix starts with" wrap_problems "${wrap_row}" '{"requires": ["flock /tmp/l"]}'
+
+numeric_id="$(mktemp)"
+jq -n --argjson g "${good_row}" '{schema: 1, rows: [$g, ($g + {id: 7}), "not a row"]}' >"${numeric_id}"
+assert_eq "shape_problems names a row without a string id by its index" \
+    "row 1 row 2 " "$(shape_problems "${numeric_id}" | tr '\n' ' ')"
+rm -f "${numeric_id}"
+assert_eq "shape_problems says so when jq cannot read the table" \
+    "jq failed" "$(echo '{"rows": 1}' | shape_problems /dev/stdin 2>/dev/null)"
+assert_eq "wrap_problems says so when jq cannot read the table" \
+    "jq failed" "$(echo '{"rows": 1}' | wrap_problems /dev/stdin 2>/dev/null)"
+assert_eq "shape_problems passes a well-formed row" "" \
+    "$(jq -n --argjson g "${good_row}" '{schema: 1, rows: [$g]}' | shape_problems /dev/stdin)"
+assert_eq "wrap_problems passes a well-formed wrapped row" "" \
+    "$(jq -n --argjson w "${wrap_row}" '{schema: 1, rows: [$w]}' | wrap_problems /dev/stdin)"
 
 assert_eq "row ids are unique" \
     "$(jq -r '.rows | length' "${CORPUS}")" \
