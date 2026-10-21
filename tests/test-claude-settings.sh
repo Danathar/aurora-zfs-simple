@@ -2773,6 +2773,41 @@ corpus_row allow "4 name: xargs runs grep, and git is its argument" \
     "git ls-files | xargs grep -l git"
 corpus_row allow "4 name: an xargs option's attached value" \
     "git ls-files | xargs -n1 rg shellcheck"
+# A program the gate neither checks nor steps over runs the words after it, or
+# hands a quoted string to a shell, and no allow row covers it, so bypass and
+# auto modes run it with no prompt (#421). The command it runs is read as a
+# command of its own and refused when it would be refused standing alone; one
+# that passes alone still passes.
+corpus_row refuse "4 name: gh behind a program no wrapper list names" \
+    "setarch x86_64 gh pr view 1 --json number --jq env"
+# shellcheck disable=SC2016 # $ENV is gojq's, handed to the hook as typed
+corpus_row refuse "4 name: gh behind a tracer with an option value before it" \
+    'strace -o /dev/null gh pr view 1 --json number -q '"'"'$ENV'"'"''
+corpus_row refuse "4 name: gh behind a util-linux program" "prlimit gh run list -q env"
+corpus_row refuse "4 name: a string script -c hands to a shell" \
+    "script -qc 'git diff /dev/null ./.env' /dev/null"
+corpus_row refuse "4 name: the string attached to script's short option" \
+    "script -qc'git diff /dev/null ./.env' /dev/null"
+corpus_row refuse "4 name: the string after a long option's =" \
+    "script --command='git diff /dev/null ./.env' /dev/null"
+corpus_row refuse "4 name: a string sh -c hands to a shell" \
+    "sh -c 'git diff /dev/null ./cosign.key'"
+corpus_row refuse "4 name: a path to bash is read like bash" \
+    "/usr/bin/bash -c 'git diff /dev/null ./.env'"
+corpus_row refuse "4 name: a shell string inside a shell string" \
+    "sh -c 'sh -c \"git diff /dev/null ./.env\"'"
+corpus_row refuse "4 name: gh behind the program after a substitution" \
+    "setarch x86_64 \$(true) gh pr view 1 --json number --jq env"
+corpus_row refuse "4 name: a wrapper's argument in front of the program" \
+    "flock echo watch -n1 'git diff /dev/null ./.env'"
+corpus_row refuse "4 name: bash -n behind a program" "setarch x86_64 bash -n -v .env"
+corpus_row allow "4 name: git behind a program, passing alone" "setarch x86_64 git diff HEAD"
+corpus_row allow "4 name: gh behind a program, naming a field" \
+    "setarch x86_64 gh pr view 1 --json number --jq .number"
+corpus_row allow "4 name: a shell string that passes alone" "sh -c 'git status'"
+corpus_row allow "4 name: a shell string inside a shell string, passing alone" \
+    "sh -c 'sh -c \"git diff HEAD\"'"
+corpus_row allow "4 name: a program that runs nothing of git's" "uname git diff HEAD"
 
 # 10e. shape 5: an option that loads or writes. Git's config layer runs
 # programs -- `diff.external` is `GIT_EXTERNAL_DIFF` by another name -- and its
@@ -3144,6 +3179,27 @@ mutation "refusing a login shell set up by exec -l or a dashed zeroth argument" 
 mutation "refusing gojq's env builtin in a gh --jq filter" \
     'jq_filter_reads_env "${gh_filter}" && refuse "${GH_JQ_ENV_MSG}"' ':' \
     "gh pr view 1 --json number --jq env"
+
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a gated command behind a program as a command of its own" \
+    'refuse_if_refused_alone "${program}" "${inner% }"' ':' \
+    "setarch x86_64 gh pr view 1 --json number --jq env"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a command string a program hands to a shell" \
+    'refuse_if_refused_alone "${program}" "${text}"' ':' \
+    "script -qc 'git diff /dev/null ./.env' /dev/null"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a path to bash as bash, whose -c takes a command string" \
+    '[[ "${program##*/}" == bash ]] ||' '[[ "${program}" == bash ]] ||' \
+    "/usr/bin/bash -c 'git diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a wrapped command whatever its first word is" \
+    'if ((names == 1)); then' 'if true; then' \
+    "flock echo watch -n1 'git diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the find and replace strings are the hook's own source text
+mutation "a quote mark as a boundary around a gated name in a string" \
+    '${1//[^A-Za-z0-9_.\/-]/ }' '${1//[$'"'"'\t\n;&|()`<>'"'"']/ }' \
+    "sh -c 'sh -c \"git diff /dev/null ./.env\"'"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"

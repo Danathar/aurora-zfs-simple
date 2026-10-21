@@ -238,6 +238,19 @@ the command name alone would have looked fine:
   than as an ordinary command word, which would let a gated command hide
   inside it — e.g. `flock /tmp/l -c 'cat ./cosign.key'` reading a
   `Read`-denied file while only `flock` itself is checked against allow rows.
+- **a gated command behind a program the gate does not step over.** No list
+  of programs that run their arguments is complete, and no allow row covers
+  such a program, so bypass and auto modes run it with no prompt.
+  `setarch x86_64 gh pr view 1 --json number --jq env` printed `GH_TOKEN`,
+  and `script -qc 'git diff /dev/null ./.env' /dev/null` printed `.env`
+  through the string `script` hands to a shell (#421). Behind such a
+  program, each later word where a gated command starts, and each command
+  string a later word carries (`sh -c '...'`, `--command='...'`), is read
+  as a command of its own and refused when it would be refused alone. A
+  command that passes alone still passes:
+  `setarch x86_64 git diff HEAD` is unaffected. `echo`, `printf`, `grep`
+  and `rg` print or match their arguments and are not read. Reading the
+  command again counts against the 10-second budget above.
 - **`git diff`'s plain-file mode.** When one of two paths is outside the
   checkout, git switches to `--no-index` without the flag, so
   `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`
