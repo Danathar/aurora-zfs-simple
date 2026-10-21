@@ -268,6 +268,31 @@ refuse() {
   exit 2
 }
 
+# A PreToolUse hook that runs past its timeout refuses nothing: Claude Code
+# gives up on it and runs the command. The settings entry sets no timeout, so
+# that is the 60-second default. Reading a command here costs more than its
+# length -- every character is taken with `${command_string:i:1}`, and the
+# word arrays are walked again by each scan below -- so a long enough string
+# outlasts the default: `git status -- a a ...` with 30000 pathspecs and then
+# `; git diff /dev/null ./cosign.key`, 60 KB in all, took 58 s to refuse
+# under LC_ALL=C and 98 s under C.UTF-8, and the plain-file read ran instead.
+# So the reading runs again under `timeout` with a budget well inside that
+# default, and running out of it is a refusal like the rest. The re-run is
+# marked by an argument rather than the environment, because Claude Code
+# passes the hook no arguments and nothing in a command string can add one.
+# Without `timeout` on PATH the hook refuses, as it does without jq.
+GATE_BUDGET_SECONDS=10
+# shellcheck disable=SC2016 # the backticks quote command spellings for the reader
+BUDGET_MSG="blocked: this command took longer than ${GATE_BUDGET_SECONDS} seconds to check, so this PreToolUse hook refuses it rather than let Claude Code's own hook timeout run it unchecked -- a hook that overruns its timeout refuses nothing. Reading a command here grows faster than the command does, and about 60 KB of allow-listed words in front of \`git diff /dev/null ./cosign.key\` was enough to outlast the 60-second default. Split the command into shorter ones."
+if [[ "${1-}" != --within-budget ]]; then
+  command -v timeout >/dev/null 2>&1 ||
+    refuse 'blocked: this PreToolUse hook needs timeout (coreutils) to bound how long it reads a command and timeout is not on PATH. A hook that overruns Claude Code'"'"'s hook timeout lets the command through unchecked, so it refuses rather than read without a bound. Install coreutils.'
+  timeout --kill-after=2 "${GATE_BUDGET_SECONDS}" "${BASH:-bash}" "${BASH_SOURCE[0]}" --within-budget
+  status=$?
+  ((status == 124 || status == 137)) && refuse "${BUDGET_MSG}"
+  exit "${status}"
+fi
+
 DIFF_MSG='blocked: this git diff would compare paths as plain files (git'"'"'s --no-index mode, which needs no flag once two operands are given), so it prints any file on disk -- cosign.key, a .env, a private key outside this repository -- past the Read(...) deny rules in .claude/settings.json. Describe such a file with ls -l or wc -c instead.'
 
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal
