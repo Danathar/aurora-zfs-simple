@@ -38,7 +38,7 @@ SETTINGS="${REPO_ROOT}/.claude/settings.json"
 
 # SHA-256 of the canonical tests/fixtures/gate-refusal-corpus.json in
 # Danathar/atomic-image-builder. Copy the file from there; never edit it here.
-CANONICAL_SHA256="de16d01afbf010ddb6d63d55c3a182f457e02b3b04319085f57d8f530b65a44d"
+CANONICAL_SHA256="f97af2089b17431276c763cea2c934527b0bc23db8cdf9006fdbe102c72c9da3"
 
 for required in "${CORPUS}" "${SETTINGS}"; do
     assert_file_exists "${required#"${REPO_ROOT}/"} is present" "${required}"
