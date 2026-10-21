@@ -1267,7 +1267,7 @@ assert_contains "and says why" "${PRE_ERR}" "parse"
 
 NOJQ="${WORK}/nojq-path"
 mkdir -p "${NOJQ}"
-for tool in bash env git cat; do
+for tool in bash env git cat timeout; do
     tool_path="$(command -v "${tool}" 2>/dev/null)" || continue
     ln -sf "${tool_path}" "${NOJQ}/${tool}"
 done
@@ -1279,6 +1279,41 @@ nojq_status=$?
 assert_eq "a host without jq gets a refusal, not an unchecked call" \
     "2" "${nojq_status}"
 assert_contains "and is told what is missing" "$(cat "${nojq_err}")" "jq"
+
+# 7f. a hook that overruns Claude Code's hook timeout refuses nothing: the
+# command runs. The reading grows faster than the command, and 60 KB of
+# allow-listed words in front of the plain-file read took 58 s under LC_ALL=C
+# and 98 s under C.UTF-8 before the budget. It must now be refused inside it.
+LONG_CMD="git status -- $(printf 'a %.0s' $(seq 30000)); git diff /dev/null ./cosign.key"
+long_start=${SECONDS}
+run_pre "$(pre_payload_for "${LONG_CMD}")"
+long_elapsed=$((SECONDS - long_start))
+assert_eq "a command too long to read in time is refused, not run" \
+    "2" "${PRE_STATUS}"
+assert_contains "and says it ran out of time" "${PRE_ERR}" "seconds to check"
+if ((long_elapsed < 30)); then
+    _pass "and is refused well inside the 60-second hook timeout"
+else
+    _fail "and is refused well inside the 60-second hook timeout" \
+        "took ${long_elapsed} s"
+fi
+
+# and without timeout there is no bound, so the hook refuses as it does
+# without jq.
+NOTIMEOUT="${WORK}/notimeout-path"
+mkdir -p "${NOTIMEOUT}"
+for tool in bash env git cat jq; do
+    tool_path="$(command -v "${tool}" 2>/dev/null)" || continue
+    ln -sf "${tool_path}" "${NOTIMEOUT}/${tool}"
+done
+notimeout_err="${WORK}/notimeout-err"
+printf '%s' "$(pre_payload_for "git diff HEAD")" |
+    (cd "${REPO_ROOT}" && PATH="${NOTIMEOUT}" CLAUDE_PROJECT_DIR="${REPO_ROOT}" \
+        bash -c "${PRE_COMMAND}") >/dev/null 2>"${notimeout_err}"
+notimeout_status=$?
+assert_eq "a host without timeout gets a refusal, not an unbounded read" \
+    "2" "${notimeout_status}"
+assert_contains "and is told what is missing" "$(cat "${notimeout_err}")" "timeout"
 
 # --- 8. the other allow-listed command that opens a file it is pointed at ---
 #

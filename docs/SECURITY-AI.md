@@ -203,6 +203,15 @@ and are repeated because the consequence is security-relevant, not just social:
   rather than the prose tier the rest of `.claude/` sits in. Narrowing the
   boundary — a new refusal, a removed allow row — is ordinary work.
 
+Every refusal below also depends on the gate finishing in time. Claude Code
+runs a command when its `PreToolUse` hook overruns the hook timeout (60
+seconds by default), and the gate's reading grows faster than the command:
+about 60 KB of allow-listed words in front of
+`git diff /dev/null ./cosign.key` took 98 seconds to refuse under a UTF-8
+locale, so the read ran unchecked. The gate reads each command under a
+10-second budget and refuses one it cannot finish in time, and refuses when
+`timeout` is not installed, as it does without `jq`.
+
 The gate's job is narrower than "block bad commands": every allow row it
 matches is a command this repo trusts to be safe by itself, so the gate exists
 to refuse the ways an allow-listed command's own options or environment turn
