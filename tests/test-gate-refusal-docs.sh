@@ -120,13 +120,14 @@ an unquoted leading `~`.|a tilde inside a word (`HEAD~1`)|git diff HEAD~1
 an unquoted leading `~`.|or a quoted one is a literal|git diff HEAD -- '~/.bashrc'
 an extglob pattern standing in for a path.|a quoted (`'@(x)'`)|shellcheck '@(x)'
 an extglob pattern standing in for a path.|or escaped (`\@(x)`)|shellcheck \@(x)
+a gated command behind a program the gate does not step over.|`setarch x86_64 git diff HEAD` is unaffected|setarch x86_64 git diff HEAD
 EOF
 )"
 
 # Messages the hook defines that no bullet describes today. The list is
 # "worth knowing", not exhaustive; naming them here makes leaving one out a
 # decision rather than an accident.
-NOT_LISTED="BASH_ECHO_MSG CMD_MSG EXPAND_MSG EXPORT_ENV_MSG GATED_HEREDOC_MSG GATED_REDIRECT_MSG GATED_SUBST_MSG GIT_GLOB_MSG REDIRECT_MSG SHELLCHECK_OPTS_MSG WRAPPER_PATH_MSG XARGS_MSG"
+NOT_LISTED="BASH_ECHO_MSG CMD_MSG EXPAND_MSG EXPORT_ENV_MSG GATED_HEREDOC_MSG GATED_REDIRECT_MSG GATED_SUBST_MSG GIT_GLOB_MSG REDIRECT_MSG SHELLCHECK_OPTS_MSG UNLISTED_PROGRAM_MSG WRAPPER_PATH_MSG XARGS_MSG"
 
 # --- helpers -----------------------------------------------------------------
 
