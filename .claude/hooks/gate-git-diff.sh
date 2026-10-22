@@ -1006,13 +1006,25 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # `/usr/bin/shellcheck ./.env` is rewritten for the same reason: it prints
   # the source line back exactly as the bare spelling does, and reading the
   # gate's coverage off whether an allow rule would have matched the prefix is
-  # what CMD_MSG says this gate does not assume.
+  # what CMD_MSG says this gate does not assume. The same holds for the first
+  # word of every other gated prefix: `/usr/bin/gh pr view 1 --json number
+  # --jq env` printed GH_TOKEN, `/usr/bin/bash -n -v .env` printed the file
+  # and `/usr/bin/podman images >cosign.pub` truncated the trust anchor,
+  # while each bare spelling was refused (#426).
   if [[ "${word}" == */git ]]; then
     words[idx]=git
     raw_words[idx]=git
   elif [[ "${word}" == */shellcheck ]]; then
     words[idx]=shellcheck
     raw_words[idx]=shellcheck
+  elif [[ "${word}" == */* ]]; then
+    case "${word##*/}" in
+    gh | bash | skopeo | podman)
+      raw_words[idx]="${word##*/}"
+      words[idx]="${word##*/}"
+      ;;
+    *) ;;
+    esac
   fi
   # A builtin that moves the directory every relative path in the rest of the
   # string is resolved against. `path_inside_worktree` resolves one against
@@ -2373,12 +2385,56 @@ names_gated_command() {
 # Whether a command string names one of them, so that reading it could
 # refuse anything: a string that names none is not read. Every character that
 # cannot be part of a name counts as a boundary, a quote mark included, so
-# `sh -c "git diff ..."` inside another string is still found.
+# `sh -c "git diff ..."` inside another string is still found. The shell the
+# string is handed to removes quotes and backslashes and expands braces
+# before it looks a name up, so `sh -c 'g""it diff /dev/null ./.env'`, `g\it`,
+# `g$""it` and `g{,}it` all run git: the string is read a second time with
+# those characters taken out, and a word holding a glob character is matched
+# as the pattern it is (`/usr/bin/g?t`). Read alone, each of these is refused
+# like any other git invocation. A name built from a variable (`G=gi; ${G}t`)
+# is not found here.
 mentions_gated_command() {
-  local text=" ${1//[^A-Za-z0-9_.\/-]/ } " first
+  local spelled="${1//[\"\'\\\$\{\},]/}" text first word
+  local -a globbed
+  text=" ${1//[^A-Za-z0-9_.\/-]/ } ${spelled//[^A-Za-z0-9_.\/-]/ } "
+  read -r -a globbed <<<"${spelled//[^A-Za-z0-9_.\/*?\[\]-]/ }"
   for first in "${GATED_FIRST_WORDS[@]}"; do
     [[ "${text}" == *[' /']"${first##*/}"' '* ]] && return 0
+    for word in "${globbed[@]}"; do
+      # shellcheck disable=SC2053 # the word is matched as a pattern on purpose
+      [[ "${word}" == *[*?[]* && "${first##*/}" == ${word##*/} ]] && return 0
+    done
   done
+  return 1
+}
+
+# Whether a word, as typed, is one the shell turns into a gated name only by
+# expanding it: a brace group (`{git,diff}` is `git diff`) or a glob that
+# holds a `/` (`/usr/bin/g?t` is `/usr/bin/git`). Sets `expanded` to the
+# words the shell makes of it, so the command is read from there as the shell
+# will run it: `ls /usr/bin/g*` reads `git` alone, which passes,
+# rather than a glob in command position, which is refused. A glob with no
+# `/` matches files in the working directory, not a program, so
+# `find . -name '*.sh'` is not read as the `*.sh` command.
+expands_to_gated_command() {
+  local spelled="${1//[\"\'\\\$]/}" first text
+  local -a parts
+  expanded=''
+  if [[ "$1" == *"{"* ]]; then
+    for text in "${spelled//[\{\},]/}" "${spelled//[\{\},]/ }"; do
+      read -r -a parts <<<"${text}"
+      expanded="${parts[*]}"
+      ((${#parts[@]})) && names_gated_command "${parts[0]}" && return 0
+    done
+  fi
+  if [[ "$1" == */* && "$1" == *[*?[]* ]]; then
+    for first in "${GATED_FIRST_WORDS[@]}"; do
+      expanded="${first}"
+      # shellcheck disable=SC2053 # the word is matched as a pattern on purpose
+      [[ "${first##*/}" == ${spelled##*/} ]] && return 0
+    done
+  fi
+  expanded=''
   return 1
 }
 
@@ -2397,7 +2453,7 @@ refuse_if_refused_alone() {
 # One command, given as the indices of its words in order: its program is
 # the first word that names a command, and every later word is read as above.
 unlisted_program_refusal() {
-  local indices=("$@") pos idx first=-1 names=0 program inner cut cluster text only
+  local indices=("$@") pos idx first=-1 names=0 program inner cut cluster text only expanded
   local -a texts
   for idx in "${indices[@]}"; do
     ((${command_names[idx]:-0})) || continue
@@ -2407,7 +2463,7 @@ unlisted_program_refusal() {
   ((first >= 0)) || return 0
   program="${words[first]}"
   if ((names == 1)); then
-    [[ "${program##*/}" == bash ]] || ! names_gated_command "${program}" || return 0
+    [[ "${program}" == bash ]] || ! names_gated_command "${program}" || return 0
     for only in "${ARGUMENT_ONLY_PROGRAMS[@]}"; do
       case "${raw_words[first]}" in
       "${only}" | /usr/bin/"${only}" | /bin/"${only}") return 0 ;;
@@ -2420,10 +2476,15 @@ unlisted_program_refusal() {
     if ((idx <= first)) || [[ "${kinds[idx]}" != word ]]; then
       continue
     fi
-    if names_gated_command "${words[idx]}"; then
+    expanded=''
+    if names_gated_command "${words[idx]}" || expands_to_gated_command "${raw_words[idx]}"; then
       inner=''
       for cut in "${indices[@]:pos}"; do
-        inner+="${redirects[cut]}${raw_words[cut]} "
+        if ((cut == idx)) && [[ -n "${expanded}" ]]; then
+          inner+="${redirects[cut]}${expanded} "
+        else
+          inner+="${redirects[cut]}${raw_words[cut]} "
+        fi
       done
       refuse_if_refused_alone "${program}" "${inner% }"
     fi
