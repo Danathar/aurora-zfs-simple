@@ -250,7 +250,13 @@ the command name alone would have looked fine:
   command that passes alone still passes:
   `setarch x86_64 git diff HEAD` is unaffected. `echo`, `printf`, `grep`
   and `rg` print or match their arguments and are not read. Reading the
-  command again counts against the 10-second budget above.
+  command again counts against the 10-second budget above. The search for a
+  gated name looks again with quote marks, backslashes and braces taken out,
+  and matches a word holding a glob character as a pattern, since the shell
+  does the same before it looks the name up:
+  `sh -c 'g""it diff /dev/null ./.env'`, `g\it`,
+  `setarch x86_64 {git,diff} ...` and `setarch x86_64 /usr/bin/g?t diff ...`
+  all run git (#426).
 - **`git diff`'s plain-file mode.** When one of two paths is outside the
   checkout, git switches to `--no-index` without the flag, so
   `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`

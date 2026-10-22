@@ -2811,6 +2811,38 @@ corpus_row allow "4 name: a shell string that passes alone" "sh -c 'git status'"
 corpus_row allow "4 name: a shell string inside a shell string, passing alone" \
     "sh -c 'sh -c \"git diff HEAD\"'"
 corpus_row allow "4 name: a program that runs nothing of git's" "uname git diff HEAD"
+# The shell removes quotes and backslashes and expands braces and globs
+# before it looks a name up, so a string or a word that spells git only once
+# those are gone still runs it.
+corpus_row refuse "4 name: an empty quote inside the name in a shell string" \
+    "sh -c 'g\"\"it diff /dev/null ./.env'"
+corpus_row refuse "4 name: a backslash inside the name, behind script" \
+    "script -qc 'g\\it diff /dev/null ./.env' /dev/null"
+corpus_row refuse "4 name: an empty ANSI-C or locale string inside the name" \
+    "sh -c 'g\$\"\"it diff /dev/null ./.env'"
+corpus_row refuse "4 name: a quoted gh name in a shell string" \
+    "sh -c 'g\"\"h pr view 1 --json number --jq env'"
+corpus_row refuse "4 name: a quoted name in the string watch hands to a shell" \
+    "watch -n1 'g\"\"it diff /dev/null ./.env'"
+corpus_row refuse "4 name: a glob the shell matches to /usr/bin/git in a string" \
+    "sh -c '/usr/bin/g?t diff /dev/null ./.env'"
+corpus_row refuse "4 name: a brace group the shell turns into git diff, behind a program" \
+    "setarch x86_64 {git,diff} /dev/null ./.env"
+corpus_row refuse "4 name: a glob the shell matches to /usr/bin/git, behind a program" \
+    "setarch x86_64 /usr/bin/g?t diff /dev/null ./.env"
+corpus_row refuse "4 name: a bracket glob behind a program" \
+    "setarch x86_64 /usr/bin/g[i]t diff /dev/null ./.env"
+corpus_row refuse "4 name: a short-option cluster with no space before the quote" \
+    "sh -c 'sh -c\"git diff /dev/null ./.env\"'"
+corpus_row allow "4 name: a quoted name in a string that passes alone" \
+    "sh -c 'g\"\"it status'"
+# shellcheck disable=SC2016 # $1 and $7 are awk's
+corpus_row allow "4 name: program text with quotes, a \$ and braces that names no gated command" \
+    "awk -F: '\$1 == \"root\" {print \$7}' /etc/passwd"
+corpus_row allow "4 name: a brace group behind a program that names no gated command" \
+    "setarch x86_64 cat {a,b}.txt"
+corpus_row allow "4 name: a quoted glob with no / behind a program, which matches files" \
+    "setarch x86_64 find . -name '*.sh'"
 
 # 10e. shape 5: an option that loads or writes. Git's config layer runs
 # programs -- `diff.external` is `GIT_EXTERNAL_DIFF` by another name -- and its
@@ -3208,7 +3240,20 @@ mutation "reading a wrapped command whatever its first word is" \
 # shellcheck disable=SC2016 # the find and replace strings are the hook's own source text
 mutation "a quote mark as a boundary around a gated name in a string" \
     '${1//[^A-Za-z0-9_.\/-]/ }' '${1//[$'"'"'\t\n;&|()`<>'"'"']/ }' \
-    "sh -c 'sh -c \"git diff /dev/null ./.env\"'"
+    "sh -c 'sh -c\"git diff /dev/null ./.env\"'"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a string again with its quotes, backslashes and braces taken out" \
+    '${spelled//[^A-Za-z0-9_.\/-]/ }' '' \
+    "sh -c 'g\"\"it diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the find and replace strings are the hook's own source text
+mutation "matching a word with a glob character as a pattern" \
+    '&& "${first##*/}" == ${word##*/} ]] && return 0' \
+    '&& "${first##*/}" == "${word##*/}" ]] && return 0' \
+    "sh -c '/usr/bin/g?t diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a word the shell expands into a gated name behind a program" \
+    '|| expands_to_gated_command "${raw_words[idx]}"; then' '; then' \
+    "setarch x86_64 {git,diff} /dev/null ./.env"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"
