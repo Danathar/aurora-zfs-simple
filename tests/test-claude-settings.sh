@@ -2843,6 +2843,12 @@ corpus_row allow "4 name: a brace group behind a program that names no gated com
     "setarch x86_64 cat {a,b}.txt"
 corpus_row allow "4 name: a quoted glob with no / behind a program, which matches files" \
     "setarch x86_64 find . -name '*.sh'"
+corpus_row allow "4 name: a path glob is read as the name it matches, which passes alone" \
+    "ls /usr/bin/g*"
+corpus_row allow "4 name: the same path glob in a shell string" \
+    "sh -c 'ls /usr/bin/g*'"
+corpus_row refuse "4 name: a path glob that matches gh, behind a program" \
+    "setarch x86_64 /usr/bin/g? pr view 1 --json number --jq env"
 
 # 10e. shape 5: an option that loads or writes. Git's config layer runs
 # programs -- `diff.external` is `GIT_EXTERNAL_DIFF` by another name -- and its
