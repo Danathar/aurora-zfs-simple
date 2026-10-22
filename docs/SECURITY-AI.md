@@ -256,7 +256,10 @@ the command name alone would have looked fine:
   does the same before it looks the name up:
   `sh -c 'g""it diff /dev/null ./.env'`, `g\it`,
   `setarch x86_64 {git,diff} ...` and `setarch x86_64 /usr/bin/g?t diff ...`
-  all run git (#426).
+  all run git (#426). A literal path to a gated command's first word is read
+  as that command, as `/usr/bin/git` already was: `/usr/bin/gh ... --jq env`,
+  `/usr/bin/bash -n -v .env` and `/usr/bin/podman images >cosign.pub` are
+  held to the rules their bare spellings are (#426).
 - **`git diff`'s plain-file mode.** When one of two paths is outside the
   checkout, git switches to `--no-index` without the flag, so
   `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`

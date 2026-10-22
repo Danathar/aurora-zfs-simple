@@ -2849,6 +2849,18 @@ corpus_row allow "4 name: the same path glob in a shell string" \
     "sh -c 'ls /usr/bin/g*'"
 corpus_row refuse "4 name: a path glob that matches gh, behind a program" \
     "setarch x86_64 /usr/bin/g? pr view 1 --json number --jq env"
+# A literal path to the first word of a gated prefix reaches the same tool,
+# and is read as that tool, the way /usr/bin/git and /usr/bin/shellcheck are.
+corpus_row refuse "4 name: a path to gh, held to the --jq env rule" \
+    "/usr/bin/gh pr view 1 --json number --jq env"
+corpus_row refuse "4 name: a path to bash, held to the bash -n rule" \
+    "/usr/bin/bash -n -v .env"
+corpus_row refuse "4 name: a path to podman, held to the redirection rule" \
+    "/usr/bin/podman images >cosign.pub"
+corpus_row refuse "4 name: a path to skopeo, held to the redirection rule" \
+    "/usr/bin/skopeo inspect docker://x >cosign.pub"
+corpus_row allow "4 name: a path to gh naming a field" \
+    "/usr/bin/gh pr view 1 --json number --jq .number"
 
 # 10e. shape 5: an option that loads or writes. Git's config layer runs
 # programs -- `diff.external` is `GIT_EXTERNAL_DIFF` by another name -- and its
@@ -3235,10 +3247,9 @@ mutation "reading a gated command behind a program as a command of its own" \
 mutation "reading a command string a program hands to a shell" \
     'refuse_if_refused_alone "${program}" "${text}"' ':' \
     "script -qc 'git diff /dev/null ./.env' /dev/null"
-# shellcheck disable=SC2016 # the find string is the hook's own source text
-mutation "reading a path to bash as bash, whose -c takes a command string" \
-    '[[ "${program##*/}" == bash ]] ||' '[[ "${program}" == bash ]] ||' \
-    "/usr/bin/bash -c 'git diff /dev/null ./.env'"
+# A path to bash is rewritten to bash by the name scan (#426), so the
+# unlisted-program reading sees `bash` and the basename test there has no
+# witness of its own; the path rewrite's mutation above holds the row.
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "reading a wrapped command whatever its first word is" \
     'if ((names == 1)); then' 'if true; then' \
@@ -3247,6 +3258,9 @@ mutation "reading a wrapped command whatever its first word is" \
 mutation "a quote mark as a boundary around a gated name in a string" \
     '${1//[^A-Za-z0-9_.\/-]/ }' '${1//[$'"'"'\t\n;&|()`<>'"'"']/ }' \
     "sh -c 'sh -c\"git diff /dev/null ./.env\"'"
+mutation "reading a path to a gated prefix's first word as that word" \
+    'gh | bash | skopeo | podman)' 'ghx | bashx | skopeox | podmanx)' \
+    "/usr/bin/gh pr view 1 --json number --jq env"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "reading a string again with its quotes, backslashes and braces taken out" \
     '${spelled//[^A-Za-z0-9_.\/-]/ }' '' \

@@ -1006,13 +1006,25 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # `/usr/bin/shellcheck ./.env` is rewritten for the same reason: it prints
   # the source line back exactly as the bare spelling does, and reading the
   # gate's coverage off whether an allow rule would have matched the prefix is
-  # what CMD_MSG says this gate does not assume.
+  # what CMD_MSG says this gate does not assume. The same holds for the first
+  # word of every other gated prefix: `/usr/bin/gh pr view 1 --json number
+  # --jq env` printed GH_TOKEN, `/usr/bin/bash -n -v .env` printed the file
+  # and `/usr/bin/podman images >cosign.pub` truncated the trust anchor,
+  # while each bare spelling was refused (#426).
   if [[ "${word}" == */git ]]; then
     words[idx]=git
     raw_words[idx]=git
   elif [[ "${word}" == */shellcheck ]]; then
     words[idx]=shellcheck
     raw_words[idx]=shellcheck
+  elif [[ "${word}" == */* ]]; then
+    case "${word##*/}" in
+    gh | bash | skopeo | podman)
+      raw_words[idx]="${word##*/}"
+      words[idx]="${word##*/}"
+      ;;
+    *) ;;
+    esac
   fi
   # A builtin that moves the directory every relative path in the rest of the
   # string is resolved against. `path_inside_worktree` resolves one against
@@ -2451,7 +2463,7 @@ unlisted_program_refusal() {
   ((first >= 0)) || return 0
   program="${words[first]}"
   if ((names == 1)); then
-    [[ "${program##*/}" == bash ]] || ! names_gated_command "${program}" || return 0
+    [[ "${program}" == bash ]] || ! names_gated_command "${program}" || return 0
     for only in "${ARGUMENT_ONLY_PROGRAMS[@]}"; do
       case "${raw_words[first]}" in
       "${only}" | /usr/bin/"${only}" | /bin/"${only}") return 0 ;;
