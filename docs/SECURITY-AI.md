@@ -265,7 +265,14 @@ the command name alone would have looked fine:
   `touch gh; setarch x86_64 g? pr view 1 --json number --jq env` ran gh and
   printed the environment (#429). Every gated name the glob matches is
   read, so a later glob word can refuse a command that only lists files
-  (`ls * *`), as `ls ./* ./*` already did.
+  (`ls * *`), as `ls ./* ./*` already did. An extglob pattern (`@(...)`,
+  `+(...)`, `!(...)`) is read as one word, the way bash reads it once a line
+  of the command has run `shopt -s extglob`: `/usr/bin/g@(i)t diff
+  /dev/null ./.env` ran git and printed `.env` (#431). It is refused as a
+  command name and read as the names it matches behind a program or in a
+  command string; a `$(...)`, a backtick or a process substitution written
+  inside the pattern is refused outright, since bash runs it before it
+  matches the pattern.
 - **`git diff`'s plain-file mode.** When one of two paths is outside the
   checkout, git switches to `--no-index` without the flag, so
   `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`
