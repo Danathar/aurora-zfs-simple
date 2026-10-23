@@ -259,7 +259,13 @@ the command name alone would have looked fine:
   all run git (#426). A literal path to a gated command's first word is read
   as that command, as `/usr/bin/git` already was: `/usr/bin/gh ... --jq env`,
   `/usr/bin/bash -n -v .env` and `/usr/bin/podman images >cosign.pub` are
-  held to the rules their bare spellings are (#426).
+  held to the rules their bare spellings are (#426). A glob with no `/`
+  that bash would expand is read too, since it matches files in the working
+  directory and the agent can make one named `git` or `gh` first:
+  `touch gh; setarch x86_64 g? pr view 1 --json number --jq env` ran gh and
+  printed the environment (#429). Every gated name the glob matches is
+  read, so a later glob word can refuse a command that only lists files
+  (`ls * *`), as `ls ./* ./*` already did.
 - **`git diff`'s plain-file mode.** When one of two paths is outside the
   checkout, git switches to `--no-index` without the flag, so
   `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`
