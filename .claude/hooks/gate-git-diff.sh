@@ -2409,33 +2409,33 @@ mentions_gated_command() {
 }
 
 # Whether a word, as typed, is one the shell turns into a gated name only by
-# expanding it: a brace group (`{git,diff}` is `git diff`) or a glob that
-# holds a `/` (`/usr/bin/g?t` is `/usr/bin/git`). Sets `expanded` to the
-# words the shell makes of it, so the command is read from there as the shell
-# will run it: `ls /usr/bin/g*` reads `git` alone, which passes,
-# rather than a glob in command position, which is refused. A glob with no
-# `/` matches files in the working directory, not a program, so
-# `find . -name '*.sh'` is not read as the `*.sh` command.
+# expanding it: a brace group (`{git,diff}` is `git diff`) or a glob
+# (`/usr/bin/g?t` is `/usr/bin/git`). Sets `expansions` to each reading the
+# shell can make of it, so the command is read from there as the shell will
+# run it: `ls /usr/bin/g*` reads `git` alone, which passes, rather than a
+# glob in command position, which is refused. A glob with no `/` matches
+# files in the working directory, and the agent makes those: after
+# `touch git`, `setarch x86_64 g?t diff /dev/null ./.env` ran git and printed
+# the file (#429). So it is read too, but only when bash would expand it, so
+# a quoted `find . -name '*.sh'` or `grep '*'` is not read as a command.
 expands_to_gated_command() {
   local spelled="${1//[\"\'\\\$]/}" first text
   local -a parts
-  expanded=''
+  expansions=()
   if [[ "$1" == *"{"* ]]; then
     for text in "${spelled//[\{\},]/}" "${spelled//[\{\},]/ }"; do
       read -r -a parts <<<"${text}"
-      expanded="${parts[*]}"
-      ((${#parts[@]})) && names_gated_command "${parts[0]}" && return 0
+      ((${#parts[@]})) && names_gated_command "${parts[0]}" && expansions+=("${parts[*]}")
     done
   fi
-  if [[ "$1" == */* && "$1" == *[*?[]* ]]; then
+  if [[ "$1" == */* && "$1" == *[*?[]* ]] || word_bash_would_rewrite "$1"; then
     for first in "${GATED_FIRST_WORDS[@]}"; do
-      expanded="${first}"
       # shellcheck disable=SC2053 # the word is matched as a pattern on purpose
-      [[ "${first##*/}" == ${spelled##*/} ]] && return 0
+      [[ "${first##*/}" == ${spelled##*/} && " ${expansions[*]} " != *" ${first} "* ]] &&
+        expansions+=("${first}")
     done
   fi
-  expanded=''
-  return 1
+  ((${#expansions[@]}))
 }
 
 # Runs this hook on `$1` as a command of its own, and refuses with its reason
@@ -2454,7 +2454,7 @@ refuse_if_refused_alone() {
 # the first word that names a command, and every later word is read as above.
 unlisted_program_refusal() {
   local indices=("$@") pos idx first=-1 names=0 program inner cut cluster text only expanded
-  local -a texts
+  local -a texts expansions
   for idx in "${indices[@]}"; do
     ((${command_names[idx]:-0})) || continue
     ((first < 0)) && first=${idx}
@@ -2476,8 +2476,13 @@ unlisted_program_refusal() {
     if ((idx <= first)) || [[ "${kinds[idx]}" != word ]]; then
       continue
     fi
-    expanded=''
-    if names_gated_command "${words[idx]}" || expands_to_gated_command "${raw_words[idx]}"; then
+    expansions=()
+    if names_gated_command "${words[idx]}"; then
+      expansions=('')
+    else
+      expands_to_gated_command "${raw_words[idx]}"
+    fi
+    for expanded in "${expansions[@]}"; do
       inner=''
       for cut in "${indices[@]:pos}"; do
         if ((cut == idx)) && [[ -n "${expanded}" ]]; then
@@ -2487,7 +2492,7 @@ unlisted_program_refusal() {
         fi
       done
       refuse_if_refused_alone "${program}" "${inner% }"
-    fi
+    done
     unquote_word "${raw_words[idx]}"
     texts=()
     [[ "${unquoted}" == *[$' \t\n;&|<>()`']* ]] && texts+=("${unquoted}")

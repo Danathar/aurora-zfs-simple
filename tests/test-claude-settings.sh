@@ -2832,6 +2832,22 @@ corpus_row refuse "4 name: a glob the shell matches to /usr/bin/git, behind a pr
     "setarch x86_64 /usr/bin/g?t diff /dev/null ./.env"
 corpus_row refuse "4 name: a bracket glob behind a program" \
     "setarch x86_64 /usr/bin/g[i]t diff /dev/null ./.env"
+# A glob with no / is matched against the working directory, and the agent
+# makes the files there: after `touch git`, g?t is git (#429).
+corpus_row refuse "4 name: a glob with no / matches a file named git, behind a program" \
+    "touch git; setarch x86_64 g?t diff /dev/null ./.env"
+corpus_row refuse "4 name: a name of wildcards alone, behind a program" \
+    "setarch x86_64 ??? diff /dev/null ./.env"
+corpus_row refuse "4 name: a lone star is git when git is the only file it matches" \
+    "setarch x86_64 * diff /dev/null ./.env"
+corpus_row refuse "4 name: a bracket glob with no /, behind a program" \
+    "setarch x86_64 g[i]t diff /dev/null ./.env"
+corpus_row refuse "4 name: a quoted part does not stop the unquoted glob beside it" \
+    "setarch x86_64 \"g\"?t diff /dev/null ./.env"
+corpus_row refuse "4 name: a glob with no / matches a file named gh, behind a program" \
+    "touch gh; setarch x86_64 g? pr view 1 --json number --jq env"
+corpus_row refuse "4 name: every gated name the glob matches is read, not only the first" \
+    "setarch x86_64 shellch?ck ./.env"
 corpus_row refuse "4 name: a short-option cluster with no space before the quote" \
     "sh -c 'sh -c\"git diff /dev/null ./.env\"'"
 corpus_row allow "4 name: a quoted name in a string that passes alone" \
@@ -2845,6 +2861,12 @@ corpus_row allow "4 name: a quoted glob with no / behind a program, which matche
     "setarch x86_64 find . -name '*.sh'"
 corpus_row allow "4 name: a path glob is read as the name it matches, which passes alone" \
     "ls /usr/bin/g*"
+corpus_row allow "4 name: a glob with no / read as git, which passes alone" \
+    "setarch x86_64 g?t status"
+corpus_row allow "4 name: a fully quoted pattern is a literal to bash and is not read" \
+    "setarch x86_64 ls 'g?t'"
+corpus_row allow "4 name: a glob that matches no gated name is not read" \
+    "setarch x86_64 cat *.md"
 corpus_row allow "4 name: the same path glob in a shell string" \
     "sh -c 'ls /usr/bin/g*'"
 corpus_row refuse "4 name: a path glob that matches gh, behind a program" \
@@ -3272,8 +3294,12 @@ mutation "matching a word with a glob character as a pattern" \
     "sh -c '/usr/bin/g?t diff /dev/null ./.env'"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "reading a word the shell expands into a gated name behind a program" \
-    '|| expands_to_gated_command "${raw_words[idx]}"; then' '; then' \
+    '      expands_to_gated_command "${raw_words[idx]}"' '      :' \
     "setarch x86_64 {git,diff} /dev/null ./.env"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a glob with no / that bash would expand behind a program" \
+    ' || word_bash_would_rewrite "$1"; then' '; then' \
+    "touch git; setarch x86_64 g?t diff /dev/null ./.env"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"
