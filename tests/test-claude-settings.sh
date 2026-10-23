@@ -2871,6 +2871,35 @@ corpus_row allow "4 name: the same path glob in a shell string" \
     "sh -c 'ls /usr/bin/g*'"
 corpus_row refuse "4 name: a path glob that matches gh, behind a program" \
     "setarch x86_64 /usr/bin/g? pr view 1 --json number --jq env"
+# An extglob pattern is one word to bash once a line of the command has run
+# `shopt -s extglob`, and it matches a name the way `?` does. Split at its
+# `(`, it was a word ending in `@` and a subshell, and neither was read as
+# git.
+corpus_row refuse "4 name: an extglob pattern the shell matches to /usr/bin/git" \
+    $'shopt -s extglob\n/usr/bin/g@(i)t diff /dev/null ./.env'
+corpus_row refuse "4 name: an extglob name with no /, beside a file named git" \
+    $'shopt -s extglob\ntouch git; g@(i)t diff /dev/null ./.env'
+corpus_row refuse "4 name: !(...) glued to the name is a glob, not a negated subshell" \
+    $'shopt -s extglob\n!(x) diff /dev/null ./.env'
+corpus_row refuse "4 name: an extglob name behind a program" \
+    "setarch x86_64 /usr/bin/+(g)it diff /dev/null ./.env"
+corpus_row refuse "4 name: an extglob name in a shell string" \
+    "sh -c '/usr/bin/@(gi)t diff /dev/null ./.env'"
+corpus_row refuse "4 name: an extglob name with a space inside it, behind a program" \
+    "setarch x86_64 /usr/bin/@(x |gi)t diff /dev/null ./.env"
+corpus_row refuse "4 name: a nested extglob name with a space inside it, in a shell string" \
+    "sh -c '/usr/bin/@(x |g@(i|y z))t diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the $(...) is the command under test
+corpus_row refuse "4 name: a command substitution inside an extglob pattern" \
+    'echo x@(a|$(cat .env))'
+corpus_row refuse "4 name: a process substitution inside an extglob pattern" \
+    'cat @(a|<(cat .env))'
+corpus_row allow "4 name: turning extglob on does not refuse an ordinary diff" \
+    $'shopt -s extglob\ngit diff HEAD'
+corpus_row allow "4 name: an extglob that only lists files, behind a program" \
+    "setarch x86_64 ls !(foo)"
+corpus_row allow "4 name: an extglob of directories that names no gated command" \
+    "setarch x86_64 ls @(docs|tests)"
 # A literal path to the first word of a gated prefix reaches the same tool,
 # and is read as that tool, the way /usr/bin/git and /usr/bin/shellcheck are.
 corpus_row refuse "4 name: a path to gh, held to the --jq env rule" \
@@ -3300,6 +3329,29 @@ mutation "reading a word the shell expands into a gated name behind a program" \
 mutation "reading a glob with no / that bash would expand behind a program" \
     ' || word_bash_would_rewrite "$1"; then' '; then' \
     "touch git; setarch x86_64 g?t diff /dev/null ./.env"
+
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "refusing an extglob pattern as a command name" \
+    '  word_has_extglob "${raw}" && return 1' ':' \
+    $'shopt -s extglob\n/usr/bin/g@(i)t diff /dev/null ./.env'
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading an extglob pattern as one word" \
+    'elif [[ "${ch}" == '"'"'('"'"' ]] && word_ends_in_unquoted_extglob_op "${raw_word}"; then' \
+    'elif false; then' \
+    "setarch x86_64 /usr/bin/+(g)it diff /dev/null ./.env"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "refusing a substitution inside an extglob pattern" \
+    '      refuse "${EXTGLOB_SUBST_MSG}"' ':' \
+    'echo x@(a|$(cat .env))'
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "cutting an extglob word in a string outside its parentheses only" \
+    '        depth=$((depth + 1))' '        depth=0' \
+    "sh -c '/usr/bin/@(x |g@(i|y z))t diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the find and replace strings are the hook's own source text
+mutation "matching an extglob word in a string as a pattern" \
+    '        [[ "${first##*/}" == ${word##*/} ]] && return 0' \
+    '        [[ "${first##*/}" == "${word##*/}" ]] && return 0' \
+    "sh -c '/usr/bin/@(gi)t diff /dev/null ./.env'"
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"

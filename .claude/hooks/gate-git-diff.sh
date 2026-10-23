@@ -327,6 +327,9 @@ REDIRECT_MSG='blocked: an output redirection (>, >>, >|, &>, &>>, N>, >&FILE, <>
 # shellcheck disable=SC2016 # the literal $HOME is what the reader has to see
 TILDE_MSG='blocked: an unquoted leading ~ is $HOME to bash and a literal directory inside this checkout to this gate, so the path checked here is not the path git would open: `git diff -- ~/.aws/credentials ~/.bashrc` resolved both operands inside the working tree and printed both files out of the home directory as a plain-file diff, past the Read(...) deny rules in .claude/settings.json. A word of a git invocation that begins with an unquoted ~ (~/..., ~user/..., or ~ alone) is refused rather than expanded. Spell the path out in full, relative to the checkout. A tilde inside a word (HEAD~1) and a quoted or escaped one are literals to bash and are not refused by this rule.'
 
+# shellcheck disable=SC2016 # the literal $(...) and backticks are what the reader has to see
+EXTGLOB_SUBST_MSG='blocked: a command substitution (`$(...)`, a backtick) or a process substitution (`<(...)`, `>(...)`) is written inside an extended glob (`@(...)`, `?(...)`, `*(...)`, `+(...)`, `!(...)`). Bash runs that command before it matches the pattern -- with `shopt -s extglob`, `echo x@(a|$(cat .env))` prints the file -- and this gate reads the whole pattern as one word, so it never checks the command inside. Run the command on its own line, outside the pattern, or quote the pattern in single quotes if it is meant literally.'
+
 # shellcheck disable=SC2016 # the literal $G and $(...) are what the reader has to see
 CMD_MSG='blocked: the name of a command in this string is not spelled literally -- it is built by an expansion (`$G diff ...`, `$(printf git) diff ...`, a backtick in command position), by a brace (`{,git} diff ...`), or by a glob (`g?t`, `/usr/bin/g[i]t`) -- so neither this gate nor the allow rule that matched the string'"'"'s literal prefix can tell which command bash will run, and `G=git; $G diff /dev/null ./cosign.key` runs the plain-file read this gate exists to refuse. Spell every command name literally, and drop a variable assignment that only exists to build one. After a wrapper such as command, env, exec, timeout or xargs the same holds for every word of that command, since the wrapper'"'"'s own options are not modelled here. A literal name after an assignment is not what this rule refuses -- the assignment has a refusal of its own -- and a literal path to git (`/usr/bin/git diff`) is read as git. env -S (--split-string) splits a quoted string into a command this gate never sees and is refused outright.'
 
@@ -491,6 +494,57 @@ redirect_pending=0 # the next word is the target of a redirection
 redirect_op=''     # the operator of that redirection, as typed
 after_redirect=0   # the previous unquoted character was `<` or `>`
 subst_depth=0      # open `$(` substitutions, whose `)` is not a subshell's
+extglob_depth=0    # open parentheses of an extended glob in the word being read
+
+# Whether the word ends in an extglob operator (`@`, `+`, `!`, `?`, `*`) that
+# bash leaves unquoted, so a `(` right after it opens an extglob pattern. The
+# quote state is walked rather than read off the character before the
+# operator: an empty quoted prefix (`''@(...)`, `""@(...)`) quotes nothing,
+# and the `@` after it is live (Codex on #262/#391). Only content characters
+# count; the quote marks themselves are not the operator.
+word_ends_in_unquoted_extglob_op() {
+  local raw="$1" quote='' escaped=0 i ch last='' last_unquoted=0
+  for ((i = 0; i < ${#raw}; i++)); do
+    ch="${raw:i:1}"
+    if ((escaped)); then
+      escaped=0
+      last="${ch}"
+      last_unquoted=0
+      continue
+    fi
+    if [[ -n "${quote}" ]]; then
+      if [[ "${ch}" == "${quote}" ]]; then
+        quote=''
+      elif [[ "${quote}" == '"' && "${ch}" == $'\\' ]]; then
+        escaped=1
+      else
+        last="${ch}"
+        last_unquoted=0
+      fi
+      continue
+    fi
+    case "${ch}" in
+    $'\\') escaped=1 ;;
+    "'" | '"') quote="${ch}" ;;
+    *)
+      last="${ch}"
+      last_unquoted=1
+      ;;
+    esac
+  done
+  ((last_unquoted)) && [[ "${last}" == [@+!?*] ]]
+}
+
+# Whether a word, as typed, opens an extglob pattern: an unquoted `(` right
+# after an unquoted `@`, `+`, `!`, `?` or `*`.
+word_has_extglob() {
+  local raw="$1" k
+  for ((k = 1; k < ${#raw}; k++)); do
+    [[ "${raw:k:1}" == '(' ]] || continue
+    word_ends_in_unquoted_extglob_op "${raw:0:k}" && return 0
+  done
+  return 1
+}
 
 push_word() {
   raw_words+=("${raw_word}")
@@ -533,6 +587,20 @@ for ((i = 0; i < ${#command_string}; i++)); do
     fi
     continue
   fi
+  # A command inside an extended glob. Bash expands the pattern before it
+  # matches it, so `x@(a|$(cat .env))` runs `cat .env`. A `$(` or a backtick
+  # there runs unquoted or in double quotes, and a `<(` or `>(` runs
+  # unquoted. The reader below keeps the pattern as the letters of one word,
+  # so none of these reaches the separators that split its body as a command
+  # of its own. They are refused rather than split: a command inside a glob
+  # has no use worth a second reader.
+  if ((extglob_depth)) && [[ "${raw_quote}" != "'" ]]; then
+    # shellcheck disable=SC2016 # the literal `$(` is the text matched
+    if [[ "${ch}" == '`' || "${ch}${next}" == '$(' ]] ||
+      [[ -z "${raw_quote}" && "${ch}" == [\<\>] && "${next}" == '(' ]]; then
+      refuse "${EXTGLOB_SUBST_MSG}"
+    fi
+  fi
   if [[ -n "${raw_quote}" ]]; then
     raw_word+="${ch}"
     if [[ "${ch}" == "${raw_quote}" ]]; then
@@ -540,6 +608,34 @@ for ((i = 0; i < ${#command_string}; i++)); do
     elif [[ "${raw_quote}" == '"' && "${ch}" == $'\\' ]]; then
       raw_escaped=1
     fi
+    continue
+  fi
+  # An extended glob. With `shopt -s extglob` -- one line of the command can
+  # set it for the next -- bash reads `@(`, `?(`, `*(`, `+(` and `!(` as the
+  # start of a pattern inside the word, up to the matching `)`, spaces and
+  # all, so `/usr/bin/g@(i)t` is one word that runs git. Split at the `(` it
+  # read as a word ending in `@` and a subshell, and neither half was a name
+  # this gate checks. It is kept as one word here, which every test of a
+  # word bash rewrites reads as the glob it is (see `word_opens_extglob`).
+  # Without extglob the same text is a syntax error and nothing runs, except
+  # `!(cmd)` in command position, which is then a negated subshell; that one
+  # is refused as a name (write `! (cmd)`).
+  if ((extglob_depth)); then
+    case "${ch}" in
+    $'\\' | "'" | '"') ;;
+    *)
+      raw_word+="${ch}"
+      if [[ "${ch}" == '(' ]]; then
+        ((extglob_depth++))
+      elif [[ "${ch}" == ')' ]]; then
+        ((extglob_depth--))
+      fi
+      continue
+      ;;
+    esac
+  elif [[ "${ch}" == '(' ]] && word_ends_in_unquoted_extglob_op "${raw_word}"; then
+    extglob_depth=1
+    raw_word+="${ch}"
     continue
   fi
   case "${ch}" in
@@ -707,11 +803,13 @@ end_word
 # after that command are its arguments rather than names (see below).
 #
 # Whether a word in a name position is spelled literally: no `$`, backtick,
-# `*` or `?`, no `[` other than the `[` and `[[` commands themselves, and no
-# brace bash would expand.
+# `*` or `?`, no extglob pattern (`/usr/bin/g@(i)t` is git once `shopt -s
+# extglob` is on), no `[` other than the `[` and `[[` commands themselves,
+# and no brace bash would expand.
 name_is_literal() {
   local raw="$1" word="$2"
   [[ "${raw}" == *'$'* || "${raw}" == *'`'* || "${raw}" == *'*'* || "${raw}" == *'?'* ]] && return 1
+  word_has_extglob "${raw}" && return 1
   brace_would_expand "${raw}" && return 1
   [[ "${raw}" == *'['* && "${word}" != '[' && "${word}" != '[[' ]] && return 1
   return 0
@@ -1147,58 +1245,17 @@ word_bash_would_rewrite() {
   return 1
 }
 
-# Whether the word ends in an extglob operator (`@`, `+`, `!`, `?`, `*`) that
-# bash leaves unquoted, so a `(` right after it opens an extglob pattern. The
-# quote state is walked rather than read off the character before the
-# operator: an empty quoted prefix (`''@(...)`, `""@(...)`) quotes nothing,
-# and the `@` after it is live (Codex on #262/#391). Only content characters
-# count; the quote marks themselves are not the operator.
-word_ends_in_unquoted_extglob_op() {
-  local raw="$1" quote='' escaped=0 i ch last='' last_unquoted=0
-  for ((i = 0; i < ${#raw}; i++)); do
-    ch="${raw:i:1}"
-    if ((escaped)); then
-      escaped=0
-      last="${ch}"
-      last_unquoted=0
-      continue
-    fi
-    if [[ -n "${quote}" ]]; then
-      if [[ "${ch}" == "${quote}" ]]; then
-        quote=''
-      elif [[ "${quote}" == '"' && "${ch}" == $'\\' ]]; then
-        escaped=1
-      else
-        last="${ch}"
-        last_unquoted=0
-      fi
-      continue
-    fi
-    case "${ch}" in
-    $'\\') escaped=1 ;;
-    "'" | '"') quote="${ch}" ;;
-    *)
-      last="${ch}"
-      last_unquoted=1
-      ;;
-    esac
-  done
-  ((last_unquoted)) && [[ "${last}" == [@+!?*] ]]
-}
-
-# Whether the word at index $1 opens an extglob pattern: `@(...)`, `+(...)`,
-# `!(...)`, `?(...)` or `*(...)` is one word to a bash with `shopt -s extglob`
-# on (Fedora's bash-completion turns it on), and it matches files the way `*`
-# does. The split ends the command at the unquoted `(`, so the path inside the
-# pattern is read as a new command and never reaches the operand checks; the
-# pattern is caught here as the word before it -- a word ending in one of those
-# five characters, unquoted, followed by a `(` separator (quality review on
-# #262; the same rewrite reached `bash -n` and shellcheck, issue #281).
+# Whether the word at index $1 carries an extglob pattern: `@(...)`,
+# `+(...)`, `!(...)`, `?(...)` or `*(...)` is one word to a bash with `shopt
+# -s extglob` on (Fedora's bash-completion turns it on, and one line of a
+# command can turn it on for the next), and it matches files the way `*`
+# does. The reader above keeps the pattern inside its word, so the path inside
+# it reaches the operand checks as part of a word bash rewrites rather than
+# as a command of its own (quality review on #262; the same rewrite reached
+# `bash -n` and shellcheck, issue #281). The test is whether the word, as
+# typed, holds a `(` that an unquoted operator opens.
 word_opens_extglob() {
-  local i="$1"
-  ((i + 1 < ${#words[@]})) &&
-    [[ "${kinds[i + 1]}" == sep && "${words[i + 1]}" == '(' ]] &&
-    word_ends_in_unquoted_extglob_op "${raw_words[i]}"
+  word_has_extglob "${raw_words[$1]}"
 }
 
 # Whether bash would brace-expand this word as typed. `brace_would_expand`
@@ -2391,11 +2448,22 @@ names_gated_command() {
 # `g$""it` and `g{,}it` all run git: the string is read a second time with
 # those characters taken out, and a word holding a glob character is matched
 # as the pattern it is (`/usr/bin/g?t`). Read alone, each of these is refused
-# like any other git invocation. A name built from a variable (`G=gi; ${G}t`)
-# is not found here.
+# like any other git invocation. So is an extglob pattern that matches one
+# (`/usr/bin/g@(i)t`, `/usr/bin/@(x |gi)t`), read as one word up to the
+# whitespace around it outside its parentheses. A name built from a variable (`G=gi; ${G}t`) is not found here.
 mentions_gated_command() {
   local spelled="${1//[\"\'\\\$\{\},]/}" text first word
   local -a globbed
+  if [[ "${spelled}" == *[@+!?*]'('* ]]; then
+    extglob_words "${spelled}"
+    for word in "${extglob_found[@]}"; do
+      glob_is_nameless "${word##*/}" && continue
+      for first in "${GATED_FIRST_WORDS[@]}"; do
+        # shellcheck disable=SC2053 # the word is matched as a pattern on purpose
+        [[ "${first##*/}" == ${word##*/} ]] && return 0
+      done
+    done
+  fi
   text=" ${1//[^A-Za-z0-9_.\/-]/ } ${spelled//[^A-Za-z0-9_.\/-]/ } "
   read -r -a globbed <<<"${spelled//[^A-Za-z0-9_.\/*?\[\]-]/ }"
   for first in "${GATED_FIRST_WORDS[@]}"; do
@@ -2406,6 +2474,50 @@ mentions_gated_command() {
     done
   done
   return 1
+}
+
+# The words of a string that hold an extglob pattern, into `extglob_found`,
+# each cut where bash would end it: at whitespace or an operator outside the
+# pattern's parentheses, not inside them.
+extglob_words() {
+  local text="$1" k ch depth=0 word=''
+  extglob_found=()
+  for ((k = 0; k < ${#text}; k++)); do
+    ch="${text:k:1}"
+    if ((depth)); then
+      word+="${ch}"
+      if [[ "${ch}" == '(' ]]; then
+        depth=$((depth + 1))
+      elif [[ "${ch}" == ')' ]]; then
+        depth=$((depth - 1))
+      fi
+      continue
+    fi
+    case "${ch}" in
+    [$' \t\n;&<>`=|'])
+      [[ "${word}" == *[@+!?*]'('* ]] && extglob_found+=("${word}")
+      word=''
+      ;;
+    '(')
+      [[ "${word}" == *[@+!?*] ]] && depth=1
+      word+="${ch}"
+      ;;
+    *) word+="${ch}" ;;
+    esac
+  done
+  [[ "${word}" == *[@+!?*]'('* ]] && extglob_found+=("${word}")
+  return 0
+}
+
+# Whether a glob spells no letter of a name: `*`, `!(foo)`. That is a list
+# of files, not a name someone typed. The letters inside a `!(...)` are the
+# names it excludes, so they do not count.
+glob_is_nameless() {
+  local text="$1"
+  while [[ "${text}" =~ ^(.*)'!('[^\(\)]*')'(.*)$ ]]; do
+    text="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+  done
+  [[ -z "${text//[*?[\]@+()|]/}" ]]
 }
 
 # Whether a word, as typed, is one the shell turns into a gated name only by
