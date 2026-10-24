@@ -2900,6 +2900,25 @@ corpus_row allow "4 name: an extglob that only lists files, behind a program" \
     "setarch x86_64 ls !(foo)"
 corpus_row allow "4 name: an extglob of directories that names no gated command" \
     "setarch x86_64 ls @(docs|tests)"
+# Single quotes keep a backslash-newline from the join this hook makes of the
+# whole command, and the shell the string is handed to drops the pair before
+# it reads a word. Read at the newline, the name was `gi` and `t`.
+corpus_row refuse "4 name: a name split by a backslash-newline in a shell string" \
+    $'bash -c \'gi\\\nt diff /dev/null ./.env\''
+corpus_row refuse "4 name: the same split in an sh -c string" \
+    $'sh -c \'gi\\\nt diff /dev/null ./cosign.key\''
+corpus_row refuse "4 name: the same split in a script -qc string" \
+    $'script -qc \'gi\\\nt diff /dev/null ./.env\' /dev/null'
+corpus_row refuse "4 name: the same split behind a program" \
+    $'setarch x86_64 bash -c \'gi\\\nt diff /dev/null ./.env\''
+corpus_row refuse "4 name: a gh name split by a backslash-newline, held to the --jq env rule" \
+    $'bash -c \'g\\\nh pr view 1 --json number --jq env\''
+corpus_row refuse "4 name: an extglob name split at its ( by a backslash-newline" \
+    $'bash -O extglob -c \'/usr/bin/g@\\\n(i)t diff /dev/null ./.env\''
+corpus_row allow "4 name: a split git name running an ordinary diff" \
+    $'bash -c \'gi\\\nt diff HEAD\''
+corpus_row allow "4 name: a backslash-newline in a string that names no gated command" \
+    $'bash -c \'echo a\\\nb\''
 # A literal path to the first word of a gated prefix reaches the same tool,
 # and is read as that tool, the way /usr/bin/git and /usr/bin/shellcheck are.
 corpus_row refuse "4 name: a path to gh, held to the --jq env rule" \
@@ -3352,6 +3371,10 @@ mutation "matching an extglob word in a string as a pattern" \
     '        [[ "${first##*/}" == ${word##*/} ]] && return 0' \
     '        [[ "${first##*/}" == "${word##*/}" ]] && return 0' \
     "sh -c '/usr/bin/@(gi)t diff /dev/null ./.env'"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "reading a shell string with its backslash-newline pairs joined" \
+    '    mentions_gated_command "${1//$'"'"'\\\n'"'"'/}" && return 0' ':' \
+    $'bash -c \'gi\\\nt diff /dev/null ./.env\''
 
 HOOK_SRC="$(cat "${REPO_ROOT}/.claude/hooks/gate-git-diff.sh")"
 MUTANT="${WORK}/gate-mutant.sh"

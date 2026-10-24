@@ -272,7 +272,11 @@ the command name alone would have looked fine:
   command name and read as the names it matches behind a program or in a
   command string; a `$(...)`, a backtick or a process substitution written
   inside the pattern is refused outright, since bash runs it before it
-  matches the pattern.
+  matches the pattern. A command string is also read with its
+  backslash-newline pairs removed, as the shell it is handed to removes them:
+  `bash -c 'gi\<newline>t diff /dev/null ./.env'` ran git and printed `.env`,
+  since single quotes kept the pair from this hook's own join and the name
+  read as `gi` and `t` (#433).
 - **`git diff`'s plain-file mode.** When one of two paths is outside the
   checkout, git switches to `--no-index` without the flag, so
   `git diff cosign.key /dev/null` prints the key whole past the `Read(...)`

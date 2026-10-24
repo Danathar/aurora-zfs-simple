@@ -2451,7 +2451,19 @@ names_gated_command() {
 # like any other git invocation. So is an extglob pattern that matches one
 # (`/usr/bin/g@(i)t`, `/usr/bin/@(x |gi)t`), read as one word up to the
 # whitespace around it outside its parentheses. A name built from a variable (`G=gi; ${G}t`) is not found here.
+#
+# A string holding a backslash-newline is also read with each such pair
+# removed. The shell the string is handed to drops a `\<newline>` outside
+# single quotes before it reads a word, so `bash -c 'gi\<newline>t diff ...'`
+# runs git while neither `gi` nor `t` is a gated name; the single quotes
+# around the string kept the pair from the join this hook makes of the
+# command it was given. The joined reading only decides whether the string is
+# read alone, and that reading joins the pair the way the shell does, so it
+# can only add a refusal.
 mentions_gated_command() {
+  if [[ "$1" == *$'\\\n'* ]]; then
+    mentions_gated_command "${1//$'\\\n'/}" && return 0
+  fi
   local spelled="${1//[\"\'\\\$\{\},]/}" text first word
   local -a globbed
   if [[ "${spelled}" == *[@+!?*]'('* ]]; then
