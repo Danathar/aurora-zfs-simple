@@ -42,6 +42,8 @@
   prose: narrative: tone and shape for written output; states no fact about the automation
 ## Pull request review
   joined: tests/test-quality-docs.sh
+## Findings about the Bash guard hook: what is in scope
+  prose: unchecked: states what .claude/hooks/gate-git-diff.sh refuses and which findings about it are in scope; no test reads this section
 ## What this image is
   prose: narrative: what the image is, for a reader arriving cold
 ## The three upstream inputs
