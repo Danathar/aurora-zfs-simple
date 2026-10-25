@@ -8,23 +8,22 @@
 #   prose: <reason>        no test reads it, and this says why that is fine,
 #                          or names what is left unchecked
 #
-# tests/test-docs-section-map.sh (which runs tests/test_docs_section_map.py)
-# fails when a tracked page has a heading with no row here, when a row names a
-# heading the page no longer has, or when a `joined:` test does not exist or
-# never names the page outside a comment. It does not prove any sentence true.
-# What it changes is that a section of claims about the automation that
-# nothing checks is a visible `prose: unchecked` line in the diff that adds it,
-# instead of the silent default (#437).
+# tests/test-docs-section-map.sh fails when a tracked page has a heading with
+# no row here, when a row names a heading the page no longer has, or when a
+# `joined:` test does not exist or never names the page outside a comment. It
+# does not prove any sentence true. What it changes is that a section of claims
+# about the automation that nothing checks is a visible `prose: unchecked:`
+# line in the diff that adds it, instead of the silent default.
 #
 # `prose: unchecked:` marks a section that states facts about the machine (a
-# workflow, the settings file, the command gate, the ruleset) that no test
-# reads. Each is a candidate for a join test; turning it into `joined:` is the
-# fix. `prose: narrative:` marks a section that states no such fact.
+# workflow, the settings file, the command gate, the ruleset, the build) that
+# no test reads. Each is a candidate for a join test; turning it into
+# `joined:` is the fix. `prose: narrative:` marks a section that states no such
+# fact, or whose facts are about something outside this checkout.
 #
 # Tracked pages: every tracked Markdown file at the repository root and in
-# docs/ (not its dated subdirectories), plus .github/copilot-instructions.md. A
-# new page in one of those places has to be added here in the change that adds
-# it. A page with no `##` or `###` headings still gets an empty block.
+# docs/ (not its subdirectories), plus .github/copilot-instructions.md. A new
+# page in one of those places has to be added here in the change that adds it.
 
 [.github/copilot-instructions.md]
 ## What this repo is
@@ -44,17 +43,17 @@
 ## Pull request review
   joined: tests/test-quality-docs.sh
 ## What this image is
-  prose: narrative: what the image is, in one paragraph; the inputs it names are joined under The three upstream inputs
+  prose: narrative: what the image is, for a reader arriving cold
 ## The three upstream inputs
   joined: tests/test-agents-doc.sh
 ## Build pipeline
   joined: tests/test-agents-doc.sh
 ## Dominant failure mode: kernel / ZFS akmod skew
-  joined: tests/test-auto-issues.sh
+  prose: narrative: heading over the subsections below, with no text of its own
 ### Symptom
   joined: tests/test-agents-doc.sh
 ### Why it happens
-  prose: narrative: how Fedora, OpenZFS and upstream akmods interact; states nothing about this repository's automation
+  prose: narrative: how upstream OpenZFS gates kernel support; facts about upstream, not this tree
 ### 60-second diagnosis
   joined: tests/test-agents-doc.sh
 ### Tracing to the upstream root cause
@@ -62,19 +61,19 @@
 ## Fix options
   joined: tests/test-agents-doc.sh
 ## Other failure modes
-  joined: tests/test-agents-doc.sh
+  prose: narrative: heading over the subsections below
 ### Chunkah rechunk: `Argument list too long` (exit 126)
   joined: tests/test-agents-doc.sh
 ### bootc container lint: a warning fails the build
-  joined: tests/test-agents-doc.sh
+  prose: unchecked: states the Containerfile's lint runs with --fatal-warnings and which warnings it allows; no test reads this section
 ## Incident log
-  joined: tests/test-reflections.sh
+  prose: narrative: heading over the dated entries below
 ### 2026-07-22: Fedora kernel 7.1 vs OpenZFS 2.4.3
-  prose: narrative: dated record of a past incident; history, not a claim about the current tree
+  prose: narrative: dated record of an incident, not a claim about the current tree
 ### 2026-08-09: kernel moves to 7.1.4; ublue patches 2.4.3 directly
-  prose: narrative: dated record of a past incident; history, not a claim about the current tree
+  prose: narrative: dated record of an incident, not a claim about the current tree
 ### Upstream issue map (where to look first)
-  prose: narrative: pointers to upstream repositories and issues outside this checkout
+  prose: narrative: links to upstream trackers outside this checkout
 
 [CLAUDE.md]
 
@@ -90,7 +89,7 @@
 ## Style
   joined: tests/test-contributing.sh
 ## Docs are load-bearing
-  prose: narrative: why a drifted page is a defect, and which pages to check; states no fact about the automation
+  prose: narrative: conduct rule, check the docs when changing what they describe
 ## Pull requests
   joined: tests/test-contributing.sh
 ## Changes that need a conversation first
@@ -102,15 +101,15 @@
 ## Switching To This Image
   joined: tests/test-signing-key.sh
 ## Switching Back To Upstream
-  joined: tests/test-signing-key.sh
+  prose: narrative: the command to return to upstream Aurora, an image this repository does not build
 ## What It Uses
   joined: tests/test-readme.sh
 ## Which Upstream Builds An Image Came From
-  prose: unchecked: the label table names labels build.yml's rechunk step sets; tests/test-build-rechunk.sh checks those labels but never opens this page
+  prose: unchecked: states which labels the build records on the image and what each names; no test reads this section
 ## Important Design Detail
   joined: tests/test-readme.sh
 ## If The Kernel Moves Ahead Of Aurora
-  prose: narrative: the design consequence in a user's words; the kernel source it explains is joined under Important Design Detail
+  prose: narrative: why the kernel can be newer than Aurora's; the build-time check it ends on is joined under Build-Time Validation
 ## Pinning The Kernel If Needed
   joined: tests/test-readme.sh
 ## Repository Layout
@@ -120,21 +119,21 @@
 ## Build-Time Validation
   joined: tests/test-readme.sh
 ## Rebase An Existing Aurora Install
-  prose: narrative: a fork owner's rebase with placeholder owner and repository; the concrete rebase is joined under Switching To This Image
+  prose: unchecked: the switch command and what --enforce-container-sigpolicy does; tests/test-signing-key.sh reads only the Switching To This Image section
 ## Signature Verification
   joined: tests/test-signing-key.sh
 ## Project Continuity & Trust
-  prose: unchecked: the build provenance attestation and its check command; tests/test-build-publish.sh holds the attest step but never opens this page
+  prose: narrative: why the project exists and who it is for
 ## About this project
-  prose: narrative: the disclaimer
+  prose: narrative: who maintains the project
 ## Maintained with Hive (ACMM L6)
   joined: tests/test-multi-agent-doc.sh
 ## References
-  prose: narrative: links to upstream projects
+  joined: tests/test-docs-paths.sh
 
 [docs/SECURITY-AI.md]
 ## The blast radius that makes this different
-  prose: narrative: why a defect here costs more than usual; states no fact about the automation
+  prose: narrative: why a defect here costs more than in most repositories
 ## Signing keys and secrets
   joined: tests/test-signing-key.sh
 ### Secret inventory
@@ -144,17 +143,17 @@
 ## Labels carry authority — automation must not apply them
   joined: tests/test-labeler.sh
 ## Failure issues hold `issues: write`
-  prose: unchecked: auto-issues.yml's token scopes, triggers and one-issue-per-workflow rule; tests/test-auto-issues.sh and tests/test-workflow-permissions.sh hold the workflow but never open this page
+  prose: unchecked: auto-issues.yml's grant and triggers; tests/test-auto-issues.sh and tests/test-workflow-permissions.sh hold the workflow, but neither reads this section
 ## Inputs to treat as untrusted
-  prose: narrative: which inputs are data rather than instructions; a rule for the reader
+  prose: unchecked: names ci/write-badges.sh as the reader of the upstream image labels; no test reads this section
 ## What an agent may do unattended
   joined: tests/test-gate-refusal-docs.sh
 ## Agent-authored pull requests
-  prose: unchecked: ai-fix.yml's triggers, empty allowed_bots, contents: write grant and preflight stop; tests/test-ai-fix.sh holds the workflow but never reads this section
+  prose: unchecked: what ai-fix.yml and agent pull requests may and may not do; tests/test-ai-fix.sh holds the workflow, not this section
 ### Reading the record back
-  prose: unchecked: what agent-audit.yml lists, what fails it and its token scopes; tests/test-agent-audit.sh runs the step but never opens this page
+  prose: unchecked: what agent-audit.yml reads back; tests/test-agent-audit.sh holds the workflow, not this section
 ## What this policy does not cover
-  prose: unchecked: which controls are mechanical (permissions blocks, publishing-step if: conditions, the ruleset, the permissions policy file); no test reads the list
+  prose: unchecked: names the only mechanical controls, and leaves out the .claude/settings.json deny rules and the PreToolUse gate the page describes above
 
 [docs/agent-boundaries.md]
 ## The gates
@@ -188,19 +187,19 @@
 ## An issue asks for work that is already done
   joined: tests/test-ai-ops-runbook.sh
 ## Everything else
-  prose: narrative: pointers to other pages
+  prose: narrative: where to go when no section above fits
 
 [docs/branch-protection.md]
 ## Status
   joined: tests/test-branch-protection.sh
 ## Why it matters here
-  prose: unchecked: ai-fix.yml's fix job holding contents: write and its prompt's never-push rule; tests/test-ai-fix.sh checks the grant but never reads this section
+  prose: unchecked: says the ai-fix.yml fix job holds contents: write and only the ruleset keeps it off main; tests/test-ai-fix.sh holds the grant, not this section
 ## The ruleset
   joined: tests/test-branch-protection.sh
 ## Applying it
   joined: tests/test-branch-protection.sh
 ## When there is a second reviewer
-  prose: narrative: what to change once a second reviewer exists; states no fact about the current ruleset
+  joined: tests/test-branch-protection.sh
 
 [docs/manual-input-check.md]
 ## What Must Match
@@ -236,7 +235,7 @@
 ## Who merges
   joined: tests/test-multi-agent-doc.sh
 ## What every agent shares
-  joined: tests/test-multi-agent-doc.sh
+  prose: narrative: the list of documents every agent is sent to; tests/test-docs-paths.sh resolves its links
 ## What this repository does not run
   joined: tests/test-multi-agent-doc.sh
 ## What is in flight right now
@@ -250,7 +249,7 @@
 ### What each one does not cover
   joined: tests/test-quality-docs.sh
 ## Reading a red build
-  prose: narrative: where to start reading a red build; a pointer to AGENTS.md
+  prose: narrative: where to start reading, pointing at AGENTS.md
 ## What is not measured
   joined: tests/test-quality-docs.sh
 
@@ -260,7 +259,7 @@
 ## 2. Are both akmods inputs pinned, or neither?
   joined: tests/test-quality-docs.sh
 ## 3. Does it claim something the code does not do?
-  prose: narrative: a review rule, find the code that makes a claim true; #70 is history
+  prose: narrative: review rule, check a behaviour claim against the code
 ## 4. Is a comment explaining an incident being removed?
   joined: tests/test-quality-docs.sh
 ## 5. Shell quality
@@ -276,13 +275,13 @@
 ## The tiers
   joined: tests/test-risk-tiers.sh
 ## Why Tier 1 is not the bottom
-  prose: narrative: why docs are not the safe tier here; states no fact about the automation
+  prose: narrative: why docs are not the safe tier here
 ## Why two files under `.claude/` are Tier 3
   joined: tests/test-risk-tiers.sh
 ## Why `.github/policies/**` is Tier 3
-  prose: unchecked: what tests/test-workflow-permissions.sh fails on; that test never opens this page
+  prose: unchecked: says tests/test-workflow-permissions.sh fails when a workflow asks for more than the policy file lists; no test reads this section
 ## Why `.claude/risk-config.json` is Tier 3
-  joined: tests/test-risk-config.sh
+  prose: narrative: why the file sits in the top tier; its row in the table is joined under The tiers
 ## Evidence, by tier
   joined: tests/test-risk-tiers.sh
 ## The classification is advisory
@@ -290,7 +289,7 @@
 
 [docs/strategy.md]
 ## The goal
-  prose: narrative: the goal, quoted from the README
+  prose: narrative: the goal, as the README states it
 ## Is the image being built?
   joined: tests/test-strategy-doc.sh
 ## Is the work going there?

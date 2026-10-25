@@ -1,21 +1,33 @@
 #!/usr/bin/env bash
 #
-# Runs tests/test_docs_section_map.py, which holds every `##` and `###` section
-# of the documentation pages to a row in docs/section-map.txt.
+# Holds every section of the documentation pages to a row in
+# docs/section-map.txt.
 #
-# Whether a section of a page is read by a test was recorded only in that
-# test's header comment, so a new section was unchecked by default and no diff
-# ever showed it. Quality passes found that three times on this repository
-# (#234, #258, #273), and nine more times on atomic-image-builder, whose owner
-# approved this check there for both repositories (#805 there, #437 here). The
-# map makes the classification part of the change that adds the section:
-# `joined:` and the test that reads it, or `prose:` and the reason none does.
+# The pages here state facts about the automation -- what a workflow does, what
+# .claude/settings.json denies, what the command gate refuses, what the ruleset
+# requires -- and those facts go stale when the machine changes. #234, #258 and
+# #273 were each a section no test read, each found by hand and fixed with its
+# own join test. The cause they share is that leaving a section unchecked was
+# the silent default: nothing in a diff said a new section had no test.
 #
-# The checks are Python because they read the test files as well as the pages:
-# a `joined:` test has to name the page outside a comment, and in a Python test
-# outside a docstring, which needs the `ast` module. The runner only executes
-# tests/test-*.sh, so this file is how it gets run. It needs no PyYAML; the
-# interpreter is the one the other Python checks here use.
+# The map gives every `##` and `###` heading of each tracked page either
+# `joined:` and the test that reads it, or `prose:` and a reason, with
+# `prose: unchecked:` marking a section of machine claims that no test reads.
+# tests/test_docs_section_map.py fails when
+#
+#   * a tracked page has no block in the map, or the map has one for a page
+#     that is not tracked;
+#   * a page has a heading with no row, or a row names a heading the page no
+#     longer has;
+#   * a `joined:` row names a file that is not under tests/, does not exist,
+#     never names the page outside a comment or docstring, or is this check.
+#
+# Each of those rules is first run against a small fixture repository, so a
+# rule that stopped firing fails here rather than passing on the real tree.
+#
+# It does not prove any sentence true, and it does not decide whether a joined
+# test reads the section it is joined to: that is the reviewer's call when the
+# row is written.
 
 set -uo pipefail
 
@@ -25,13 +37,11 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=tests/lib/assert.sh
 source "${TEST_DIR}/lib/assert.sh"
 
-WORKFLOW_PYTHON="${WORKFLOW_PYTHON:-python3}"
-
-if "${WORKFLOW_PYTHON}" -B "${TEST_DIR}/test_docs_section_map.py"; then
-    _pass "every section of every tracked documentation page is classified in docs/section-map.txt"
+if output="$(python3 -B "${TEST_DIR}/test_docs_section_map.py" 2>&1)"; then
+    _pass "every section of every tracked page has a row in docs/section-map.txt, and every join holds"
 else
-    _fail "every section of every tracked documentation page is classified in docs/section-map.txt" \
-        "see the unittest output above"
+    _fail "every section of every tracked page has a row in docs/section-map.txt, and every join holds" \
+        "${output}"
 fi
 
 finish

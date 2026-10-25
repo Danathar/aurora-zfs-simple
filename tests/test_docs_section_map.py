@@ -9,11 +9,10 @@ Doing: Lists the pages with `git ls-files`, reads headings outside fenced
        exists and names the page somewhere other than a comment or docstring.
 Why: Pages here keep stating facts about the automation -- what a workflow
      does, what the settings file denies, what the command gate refuses -- and
-     going stale when the machine changes. Quality passes found that twelve
-     times across this repository and atomic-image-builder (its #805 lists
-     them; #234, #258 and #273 were here), each one a section no test read,
-     each fixed by its own issue and join test. The common cause was that
-     leaving a section unchecked was the silent default.
+     going stale when the machine changes. #234, #258 and #273 were each a
+     section no test read, each fixed by its own join test, and
+     docs/SECURITY-AI.md's "What this policy does not cover" is another. The
+     common cause was that leaving a section unchecked was the silent default.
 Goal: A new or renamed section has to be classified in the pull request that
       adds it, so an unchecked section of machine claims is a visible
       `prose: unchecked:` line in a reviewed diff rather than nothing at all.
@@ -37,14 +36,13 @@ ROOT = Path(__file__).resolve().parent.parent
 MAP = ROOT / "docs/section-map.txt"
 MAP_RELATIVE = MAP.relative_to(ROOT).as_posix()
 THIS_TEST = Path(__file__).resolve().relative_to(ROOT).as_posix()
-# The runner only executes tests/test-*.sh, so this file has a wrapper. Neither
-# reads what a section says, so neither may be a `joined:` target.
-SELF = {THIS_TEST, "tests/test-docs-section-map.sh"}
+# The shell wrapper that runs this file reads headings too, not what a section says.
+GATE_TESTS = {THIS_TEST, "tests/test-docs-section-map.sh"}
 
-# Root-level pages, docs/ without its dated subdirectories, and the brief
-# GitHub loads for Copilot. docs/reflections/, docs/metrics/ and
-# docs/agent-tasks/ are dated records with join tests of their own;
-# tests/README.md, .github/prompts/ and .claude/ are read by theirs as a whole.
+# Root-level pages, docs/ without its subdirectories (dated metrics readings,
+# agent-task ledgers and reflections, each joined by its own test), and the
+# canonical agent brief. tests/README.md and tests/e2e/README.md describe the
+# suite, and tests/test-coverage-map.sh already holds the first to it.
 TRACKED_PAGE = re.compile(r"^(?:[^/]+|docs/[^/]+)\.md$")
 EXTRA_PAGES = {".github/copilot-instructions.md"}
 
@@ -137,8 +135,8 @@ def docstrings(tree: ast.AST) -> set[int]:
 def opens_page(test_text: str, suffix: str, page: str) -> bool:
     """Whether a test names the page in code, not just in a docstring or comment.
 
-    Tests spell a path whole (`"${REPO_ROOT}/docs/quality.md"`) or in parts
-    (`ROOT / "docs" / "quality.md"`), so the file name is what is looked for.
+    Tests spell a path either whole (`ROOT / "docs/using.md"`) or in parts
+    (`ROOT / "docs" / "using.md"`), so the file name is what is looked for.
     """
     name = Path(page).name
     if suffix == ".sh":
@@ -173,10 +171,10 @@ class HeadingReaderTests(unittest.TestCase):
 
 class MapReaderTests(unittest.TestCase):
     def test_reads_rows_and_skips_comments(self) -> None:
-        text = "# comment\n\n[a.md]\n## One\n  joined: tests/x.sh\n### Two\n  prose: narrative: why\n\n[b.md]\n"
+        text = "# comment\n\n[a.md]\n## One\n  joined: tests/x.py\n### Two\n  prose: narrative: why\n\n[b.md]\n"
         self.assertEqual(
             parse_map(text),
-            {"a.md": {"## One": ("joined", "tests/x.sh"), "### Two": ("prose", "narrative: why")}, "b.md": {}},
+            {"a.md": {"## One": ("joined", "tests/x.py"), "### Two": ("prose", "narrative: why")}, "b.md": {}},
         )
 
     def test_rejects_a_heading_with_no_classification(self) -> None:
@@ -194,24 +192,24 @@ class MapReaderTests(unittest.TestCase):
                 parse_map(text)
 
     def test_rejects_a_line_it_cannot_place(self) -> None:
-        for text in ("## One\n  prose: x\n", "[a.md]\n  prose: x\n", "[a.md]\n## One\njoined: tests/x.sh\n"):
+        for text in ("## One\n  prose: x\n", "[a.md]\n  prose: x\n", "[a.md]\n## One\njoined: tests/x.py\n"):
             with self.subTest(text=text), self.assertRaises(AssertionError):
                 parse_map(text)
 
 
 class OpensPageTests(unittest.TestCase):
     def test_a_path_in_code_opens_the_page(self) -> None:
-        for text in ('DOC = ROOT / "docs/quality.md"\n', 'DOC = ROOT / "docs" / "quality.md"\n'):
+        for text in ('DOC = ROOT / "docs/using.md"\n', 'DOC = ROOT / "docs" / "using.md"\n'):
             with self.subTest(text=text):
-                self.assertTrue(opens_page(text, ".py", "docs/quality.md"))
+                self.assertTrue(opens_page(text, ".py", "docs/using.md"))
 
     def test_a_docstring_or_comment_does_not(self) -> None:
-        text = '"""Reads docs/quality.md."""\n# docs/quality.md\ndef f():\n    """quality.md"""\n'
-        self.assertFalse(opens_page(text, ".py", "docs/quality.md"))
+        text = '"""Reads docs/using.md."""\n# docs/using.md\ndef f():\n    """using.md"""\n'
+        self.assertFalse(opens_page(text, ".py", "docs/using.md"))
 
     def test_a_shell_comment_does_not(self) -> None:
-        self.assertFalse(opens_page("# reads docs/quality.md\ntrue\n", ".sh", "docs/quality.md"))
-        self.assertTrue(opens_page('DOC="${REPO_ROOT}/docs/quality.md"\n', ".sh", "docs/quality.md"))
+        self.assertFalse(opens_page("# reads docs/using.md\ntrue\n", ".sh", "docs/using.md"))
+        self.assertTrue(opens_page('doc="docs/using.md"\n', ".sh", "docs/using.md"))
 
 
 def page_mismatch(rows: dict[str, dict[str, tuple[str, str]]], pages: set[str]) -> tuple[list[str], list[str]]:
@@ -241,8 +239,8 @@ def stale(rows: dict[str, dict[str, tuple[str, str]]], root: Path) -> dict[str, 
 
 def bad_join(page: str, heading: str, test: str, root: Path) -> str | None:
     """Why a `joined:` row does not hold, or None when it does."""
-    if test in SELF:
-        return "this check reads headings, not what a section says"
+    if test in GATE_TESTS:
+        return "this test reads headings, not what a section says"
     path = root / test
     if not (test.startswith("tests/") and path.is_file()):
         return f"{page} {heading!r} is joined to {test}, which is not a file under tests/"
@@ -259,8 +257,8 @@ class GateOnFixtureTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         (self.root / "tests").mkdir()
         (self.root / "page.md").write_text("# Page\n## Kept\n## New\n")
-        (self.root / "tests/test-reads.sh").write_text('DOC="page.md"\n')
-        (self.root / "elsewhere.sh").write_text('DOC="page.md"\n')
+        (self.root / "tests/test_reads.py").write_text('DOC = "page.md"\n')
+        (self.root / "elsewhere.py").write_text('DOC = "page.md"\n')
 
     def test_a_heading_with_no_row_is_reported(self) -> None:
         rows = {"page.md": {"## Kept": ("prose", "x")}}
@@ -271,17 +269,16 @@ class GateOnFixtureTests(unittest.TestCase):
         self.assertEqual(stale(rows, self.root), {"page.md": ["## Gone"]})
         self.assertEqual(unclassified(rows, self.root), {})
 
-    def test_a_join_outside_tests_or_to_this_check_is_refused(self) -> None:
-        self.assertIsNone(bad_join("page.md", "## Kept", "tests/test-reads.sh", self.root))
-        self.assertIn("not a file under tests/", bad_join("page.md", "## Kept", "elsewhere.sh", self.root))
-        self.assertIn("not a file under tests/", bad_join("page.md", "## Kept", "tests/absent.sh", self.root))
-        for test in sorted(SELF):
-            with self.subTest(test=test):
-                self.assertIn("reads headings", bad_join("page.md", "## Kept", test, self.root))
+    def test_a_join_outside_tests_or_to_this_test_is_refused(self) -> None:
+        self.assertIsNone(bad_join("page.md", "## Kept", "tests/test_reads.py", self.root))
+        self.assertIn("not a file under tests/", bad_join("page.md", "## Kept", "elsewhere.py", self.root))
+        self.assertIn("not a file under tests/", bad_join("page.md", "## Kept", "tests/absent.py", self.root))
+        self.assertIn("reads headings", bad_join("page.md", "## Kept", THIS_TEST, self.root))
+        self.assertIn("reads headings", bad_join("page.md", "## Kept", "tests/test-docs-section-map.sh", self.root))
 
     def test_a_join_to_a_test_that_never_opens_the_page_is_refused(self) -> None:
-        (self.root / "tests/test-other.sh").write_text('# Reads page.md.\nDOC="other.md"\n')
-        self.assertIn("never opens", bad_join("page.md", "## Kept", "tests/test-other.sh", self.root))
+        (self.root / "tests/test_other.py").write_text('"""Reads page.md."""\nDOC = "other.md"\n')
+        self.assertIn("never opens", bad_join("page.md", "## Kept", "tests/test_other.py", self.root))
 
     def test_the_page_lists_compare_both_ways(self) -> None:
         self.assertEqual(page_mismatch({"a.md": {}, "b.md": {}}, {"a.md", "c.md"}), (["c.md"], ["b.md"]))

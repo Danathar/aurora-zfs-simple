@@ -253,6 +253,7 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/policies/                         what each workflow's token may do, held to the workflows by a test
 renovate.json                             dependency updates, including the Chunkah release tag
 docs/manual-input-check.md                Fedora release input-check notes
+docs/section-map.txt                      every section of the pages above, and the test that reads it or why none does
 docs/quality.md                           where the signal comes from, and what it cannot tell you
 docs/metrics.md                           what is measured here and what is not
 docs/metrics/                             dated readings of those numbers, each with its commands
@@ -266,7 +267,6 @@ docs/SECURITY-AI.md                       what an agent may do here, and what it
 docs/agent-boundaries.md                  which limits on an agent a tool enforces, and which are only asked
 docs/ai-ops-runbook.md                    what to do when a workflow, badge, agent run or agent pull request goes red
 docs/reflections/                         durable lessons from things that went wrong
-docs/section-map.txt                      every section of those pages, and the test that checks it or why none does
 .claude/risk-config.json                  the risk tiers as JSON, held equal to that page by a test
 ```
 
