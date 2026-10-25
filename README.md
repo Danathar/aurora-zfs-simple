@@ -253,6 +253,7 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/policies/                         what each workflow's token may do, held to the workflows by a test
 renovate.json                             dependency updates, including the Chunkah release tag
 docs/manual-input-check.md                Fedora release input-check notes
+docs/section-map.txt                      every section of the pages above, and the test that reads it or why none does
 docs/quality.md                           where the signal comes from, and what it cannot tell you
 docs/metrics.md                           what is measured here and what is not
 docs/metrics/                             dated readings of those numbers, each with its commands
