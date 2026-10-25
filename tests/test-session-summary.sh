@@ -484,7 +484,7 @@ assert_contains "ci/write-badges.sh can still produce the 'blocked' value the su
 # because either one alone would let the badge start guessing.
 # shellcheck disable=SC2016 # the script's own line, compared as literal text
 assert_contains "an unreadable image still degrades to empty rather than failing" \
-    "${BADGES_TEXT}" 'skopeo inspect "$@" "docker://${ref}" 2>/dev/null || true'
+    "${BADGES_TEXT}" 'skopeo inspect --no-tags "$@" "docker://${ref}" 2>/dev/null || true'
 assert_contains "and an unread input still leaves the badge at its last value" \
     "${BADGES_TEXT}" "leaving the openzfs/kernel badge as-is"
 
