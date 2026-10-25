@@ -128,7 +128,7 @@ jobs:
           set -euo pipefail
           AUTH_FILE="${HOME}/.docker/config.json"
           [ -r "${AUTH_FILE}" ] || { echo "::error::${AUTH_FILE} is missing; the Log in to GitHub Container Registry step writes it" >&2; exit 1; }
-          if ! raw=$(skopeo inspect --authfile "${AUTH_FILE}" \
+          if ! raw=$(skopeo inspect --no-tags --authfile "${AUTH_FILE}" \
                        "docker://${IMAGE_REF}:latest" 2>err.txt); then
             cat err.txt
             if grep -qiE 'name unknown|repository name not known|name_unknown' err.txt; then
@@ -183,7 +183,7 @@ jobs:
           DIGEST: ${{ steps.latest.outputs.digest }}
         run: |
           set -euo pipefail
-          if ! skopeo inspect --no-creds --format '{{.Digest}}' \
+          if ! skopeo inspect --no-tags --no-creds --format '{{.Digest}}' \
                  "docker://${IMAGE_REF}@${DIGEST}" > /dev/null 2>err.txt; then
             cat err.txt
             echo "::error::${IMAGE_REF}@${DIGEST} is not readable without credentials. Hosts that installed from the README can no longer pull updates; check the package's visibility in its GitHub package settings."
@@ -207,7 +207,7 @@ jobs:
           [ -r "${AUTH_FILE}" ] || { echo "::error::${AUTH_FILE} is missing; the Log in to GitHub Container Registry step writes it" >&2; exit 1; }
           status=0
           for tag in "latest.${DATE_TAG}" "${DATE_TAG}"; do
-            if ! actual=$(skopeo inspect --format '{{.Digest}}' \
+            if ! actual=$(skopeo inspect --no-tags --format '{{.Digest}}' \
                             --authfile "${AUTH_FILE}" \
                             "docker://${IMAGE_REF}:${tag}" 2>/dev/null); then
               echo "::warning::${tag} is not published; skipping"

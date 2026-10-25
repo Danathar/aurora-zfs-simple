@@ -307,8 +307,9 @@ mkdir -p "${work}"
 work="$(cd -- "${work}" && pwd)"
 
 # Boot a digest, not the tag: `:latest` can move while this runs, and the
-# summary must name exactly the artifact that was booted.
-if ! inspected="$(skopeo inspect --retry-times "${PULL_RETRIES}" \
+# summary must name exactly the artifact that was booted. --no-tags skips the
+# tag-list request, which the format below never reads (issue #435).
+if ! inspected="$(skopeo inspect --no-tags --retry-times "${PULL_RETRIES}" \
     --format '{{.Digest}} {{index .Labels "org.opencontainers.image.revision"}}' \
     "docker://${image}")"; then
     printf 'error: could not resolve %s to a digest\n' "${image}" >&2

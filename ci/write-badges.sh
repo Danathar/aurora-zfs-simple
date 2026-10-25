@@ -46,10 +46,14 @@ write_badge() {
 # JSON rather than --format: skopeo's Go templates render .Created via Go's
 # default time formatting ("2026-07-19 06:04:15.123 +0000 UTC"), which is not
 # what `date -d` wants. The JSON field is plain ISO 8601.
+#
+# --no-tags: without it skopeo makes a second request for the repository's
+# whole tag list (RepoTags), which nothing here reads. That list is the largest
+# read and was the one a registry 503 failed on alone (issue #435).
 inspect_json() {
   local ref="$1"
   shift
-  skopeo inspect "$@" "docker://${ref}" 2>/dev/null || true
+  skopeo inspect --no-tags "$@" "docker://${ref}" 2>/dev/null || true
 }
 
 # 7.1.4-200.fc44.x86_64 -> 7.1.4-200. The Fedora release and arch are constant

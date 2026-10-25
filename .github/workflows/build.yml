@@ -459,7 +459,7 @@ jobs:
             exit 1
           fi
           for tag in ${TAGS}; do
-            actual=$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}")
+            actual=$(skopeo inspect --no-tags --format '{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}")
             if [ "${actual}" != "${expected}" ]; then
               echo "Tag ${tag} resolves to ${actual}, expected ${expected}" >&2
               exit 1
