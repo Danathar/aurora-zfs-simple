@@ -504,8 +504,9 @@ What it holds:
 - a boot that reported any check is not retried, and a boot that reported
   nothing is retried once;
 - the injected roothome unit and the `sshd.service` link are in
-  `default.target.wants`, and bcvk gets the directory by absolute path, even
-  from a relative `--work`;
+  `default.target.wants`, Aurora's first-boot `flatpak-preinstall.service` is
+  masked by an empty regular file, and bcvk gets the directory by absolute
+  path, even from a relative `--work`;
 - the marked lines are read past a terminal query ahead of them and past the
   CR of a CR LF line end, and a skopeo `<no value>` revision reads as unknown;
 - the boot runs under `timeout --kill-after`, and in the guest the settle wait

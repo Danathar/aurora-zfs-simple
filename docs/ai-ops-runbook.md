@@ -127,6 +127,9 @@ First tell the image from the runner. The run summary says which:
 | `never reached the point where the checks finish` | No SSH session, twice. Usually the runner (KVM, bcvk, a slow host); the console log in the artifact says if the kernel ran. |
 
 A failed check means the VM booted and logged in, so the image is the suspect.
+The VM masks Aurora's first-boot Flatpak download (`flatpak-preinstall.service`),
+which waits on Flathub and once held boot past the settle wait (#441), so a
+`boot:finished` failure is some other unit.
 Machines that follow `:latest` boot it after their next update and reboot; one
 that already did goes back with `sudo bootc rollback` and a reboot. Re-run the
 workflow only when the summary says the VM never reported:
