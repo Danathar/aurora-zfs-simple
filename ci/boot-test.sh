@@ -197,6 +197,14 @@ EOF
 # - sshd.service, wanted by default.target. bcvk connects to TCP port 22
 #   through QEMU's user network, so sshd has to run whether or not the image
 #   enables it.
+# - flatpak-preinstall.service, masked. Aurora's first boot downloads about a
+#   gigabyte of Flatpaks from Flathub, and boot does not finish until it does.
+#   In the VM that download can stall on Flathub and then run out of space,
+#   which held run 40186293766 at `starting` past the settle wait and failed
+#   boot:finished on an image whose ZFS checks all passed (#441). Its result
+#   says nothing about the kernel or ZFS. The mask is an empty file, which
+#   systemd reads as masked: bcvk copies top-level unit files as regular files,
+#   so a /dev/null symlink would not survive.
 #
 # zfs-aurora-complex, zfs-kinoite-complex and atomic-image-builder inject the
 # same two for the same reasons.
@@ -222,6 +230,7 @@ write_units() {
         "${dir}/system/default.target.wants/aurora-zfs-simple-roothome.service"
     ln -sfn /usr/lib/systemd/system/sshd.service \
         "${dir}/system/default.target.wants/sshd.service"
+    : >"${dir}/system/flatpak-preinstall.service"
 }
 
 # The marked lines of one boot's output, with whatever preceded the marker on

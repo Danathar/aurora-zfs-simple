@@ -287,6 +287,12 @@ assert_contains "the roothome unit runs before tmpfiles writes the key" \
     "$(cat "${units}/aurora-zfs-simple-roothome.service")" "Before=systemd-tmpfiles-setup.service"
 assert_contains "and creates the directory /root points at, not /root itself" \
     "$(cat "${units}/aurora-zfs-simple-roothome.service")" "ExecStart=/usr/bin/mkdir -p -m 0700 /var/roothome"
+# systemd reads an empty unit file as masked. bcvk copies top-level unit files
+# as regular files, so a /dev/null symlink here would fail the copy instead.
+flatpak_mask="${units}/flatpak-preinstall.service"
+assert_file_exists "Aurora's first-boot Flatpak download is masked" "${flatpak_mask}"
+assert_eq "by an empty regular file, not a symlink" "file 0" \
+    "$(stat -c '%F %s' "${flatpak_mask}" 2>/dev/null | sed 's/^regular empty file/file/')"
 assert_contains "bcvk is handed the units directory by absolute path" \
     "$(grep '^bcvk ' "${CALLS}")" "--systemd-units ${TMP_ROOT}/work/units "
 assert_file_exists "the check script the guest ran is kept for the artifact" \
