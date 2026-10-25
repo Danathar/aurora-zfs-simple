@@ -1,0 +1,299 @@
+# Docs section map: every section of every tracked documentation page, and
+# whether a test reads it.
+#
+# A page lists here as [path]. Under it, every `##` and `###` heading of that
+# page, written exactly as the page writes it, followed by one indented line:
+#
+#   joined: tests/<file>   that test reads what this section states
+#   prose: <reason>        no test reads it, and this says why that is fine,
+#                          or names what is left unchecked
+#
+# tests/test-docs-section-map.sh (which runs tests/test_docs_section_map.py)
+# fails when a tracked page has a heading with no row here, when a row names a
+# heading the page no longer has, or when a `joined:` test does not exist or
+# never names the page outside a comment. It does not prove any sentence true.
+# What it changes is that a section of claims about the automation that
+# nothing checks is a visible `prose: unchecked` line in the diff that adds it,
+# instead of the silent default (#437).
+#
+# `prose: unchecked:` marks a section that states facts about the machine (a
+# workflow, the settings file, the command gate, the ruleset) that no test
+# reads. Each is a candidate for a join test; turning it into `joined:` is the
+# fix. `prose: narrative:` marks a section that states no such fact.
+#
+# Tracked pages: every tracked Markdown file at the repository root and in
+# docs/ (not its dated subdirectories), plus .github/copilot-instructions.md. A
+# new page in one of those places has to be added here in the change that adds
+# it. A page with no `##` or `###` headings still gets an empty block.
+
+[.github/copilot-instructions.md]
+## What this repo is
+  joined: tests/test-copilot-instructions.sh
+## The one thing to internalise
+  joined: tests/test-copilot-instructions.sh
+## When writing code here
+  joined: tests/test-copilot-instructions.sh
+## When writing comments
+  joined: tests/test-copilot-instructions.sh
+## What cannot be tested from the host
+  joined: tests/test-copilot-instructions.sh
+
+[AGENTS.md]
+## Writing issues, PRs and comments
+  prose: narrative: tone and shape for written output; states no fact about the automation
+## Pull request review
+  joined: tests/test-quality-docs.sh
+## What this image is
+  prose: narrative: what the image is, in one paragraph; the inputs it names are joined under The three upstream inputs
+## The three upstream inputs
+  joined: tests/test-agents-doc.sh
+## Build pipeline
+  joined: tests/test-agents-doc.sh
+## Dominant failure mode: kernel / ZFS akmod skew
+  joined: tests/test-auto-issues.sh
+### Symptom
+  joined: tests/test-agents-doc.sh
+### Why it happens
+  prose: narrative: how Fedora, OpenZFS and upstream akmods interact; states nothing about this repository's automation
+### 60-second diagnosis
+  joined: tests/test-agents-doc.sh
+### Tracing to the upstream root cause
+  joined: tests/test-agents-doc.sh
+## Fix options
+  joined: tests/test-agents-doc.sh
+## Other failure modes
+  joined: tests/test-agents-doc.sh
+### Chunkah rechunk: `Argument list too long` (exit 126)
+  joined: tests/test-agents-doc.sh
+### bootc container lint: a warning fails the build
+  joined: tests/test-agents-doc.sh
+## Incident log
+  joined: tests/test-reflections.sh
+### 2026-07-22: Fedora kernel 7.1 vs OpenZFS 2.4.3
+  prose: narrative: dated record of a past incident; history, not a claim about the current tree
+### 2026-08-09: kernel moves to 7.1.4; ublue patches 2.4.3 directly
+  prose: narrative: dated record of a past incident; history, not a claim about the current tree
+### Upstream issue map (where to look first)
+  prose: narrative: pointers to upstream repositories and issues outside this checkout
+
+[CLAUDE.md]
+
+[CONTRIBUTING.md]
+## Before you start: is it actually broken?
+  joined: tests/test-contributing.sh
+## Running the tests
+  joined: tests/test-contributing.sh
+## What the tests cannot reach
+  joined: tests/test-contributing.sh
+## One gotcha about CI
+  joined: tests/test-contributing.sh
+## Style
+  joined: tests/test-contributing.sh
+## Docs are load-bearing
+  prose: narrative: why a drifted page is a defect, and which pages to check; states no fact about the automation
+## Pull requests
+  joined: tests/test-contributing.sh
+## Changes that need a conversation first
+  joined: tests/test-contributing.sh
+
+[README.md]
+## Trusting The Signing Key
+  joined: tests/test-signing-key.sh
+## Switching To This Image
+  joined: tests/test-signing-key.sh
+## Switching Back To Upstream
+  joined: tests/test-signing-key.sh
+## What It Uses
+  joined: tests/test-readme.sh
+## Which Upstream Builds An Image Came From
+  prose: unchecked: the label table names labels build.yml's rechunk step sets; tests/test-build-rechunk.sh checks those labels but never opens this page
+## Important Design Detail
+  joined: tests/test-readme.sh
+## If The Kernel Moves Ahead Of Aurora
+  prose: narrative: the design consequence in a user's words; the kernel source it explains is joined under Important Design Detail
+## Pinning The Kernel If Needed
+  joined: tests/test-readme.sh
+## Repository Layout
+  joined: tests/test-readme.sh
+## Build And Publish
+  joined: tests/test-readme.sh
+## Build-Time Validation
+  joined: tests/test-readme.sh
+## Rebase An Existing Aurora Install
+  prose: narrative: a fork owner's rebase with placeholder owner and repository; the concrete rebase is joined under Switching To This Image
+## Signature Verification
+  joined: tests/test-signing-key.sh
+## Project Continuity & Trust
+  prose: unchecked: the build provenance attestation and its check command; tests/test-build-publish.sh holds the attest step but never opens this page
+## About this project
+  prose: narrative: the disclaimer
+## Maintained with Hive (ACMM L6)
+  joined: tests/test-multi-agent-doc.sh
+## References
+  prose: narrative: links to upstream projects
+
+[docs/SECURITY-AI.md]
+## The blast radius that makes this different
+  prose: narrative: why a defect here costs more than usual; states no fact about the automation
+## Signing keys and secrets
+  joined: tests/test-signing-key.sh
+### Secret inventory
+  joined: tests/test-signing-key.sh
+## Kernel-module signing trust chain (Secure Boot / MOK)
+  joined: tests/test-mok-trust-chain.sh
+## Labels carry authority — automation must not apply them
+  joined: tests/test-labeler.sh
+## Failure issues hold `issues: write`
+  prose: unchecked: auto-issues.yml's token scopes, triggers and one-issue-per-workflow rule; tests/test-auto-issues.sh and tests/test-workflow-permissions.sh hold the workflow but never open this page
+## Inputs to treat as untrusted
+  prose: narrative: which inputs are data rather than instructions; a rule for the reader
+## What an agent may do unattended
+  joined: tests/test-gate-refusal-docs.sh
+## Agent-authored pull requests
+  prose: unchecked: ai-fix.yml's triggers, empty allowed_bots, contents: write grant and preflight stop; tests/test-ai-fix.sh holds the workflow but never reads this section
+### Reading the record back
+  prose: unchecked: what agent-audit.yml lists, what fails it and its token scopes; tests/test-agent-audit.sh runs the step but never opens this page
+## What this policy does not cover
+  prose: unchecked: which controls are mechanical (permissions blocks, publishing-step if: conditions, the ruleset, the permissions policy file); no test reads the list
+
+[docs/agent-boundaries.md]
+## The gates
+  joined: tests/test-agent-boundaries-doc.sh
+## What is asked, not enforced
+  joined: tests/test-agent-boundaries-doc.sh
+## Why there is no CODEOWNERS file
+  joined: tests/test-agent-boundaries-doc.sh
+
+[docs/ai-ops-runbook.md]
+## Start here
+  joined: tests/test-ai-ops-runbook.sh
+## `main` is red
+  joined: tests/test-ai-ops-runbook.sh
+## Each workflow
+  joined: tests/test-ai-ops-runbook.sh
+## Nightly compliance failed
+  joined: tests/test-ai-ops-runbook.sh
+## Boot test failed
+  joined: tests/test-ai-ops-runbook.sh
+## A scheduled run is missing
+  joined: tests/test-ai-ops-runbook.sh
+## A badge looks wrong
+  joined: tests/test-ai-ops-runbook.sh
+## An `ai-fix.yml` run did nothing, or failed
+  joined: tests/test-ai-ops-runbook.sh
+## A gate hook refused a command
+  joined: tests/test-ai-ops-runbook.sh
+## An agent pull request looks wrong
+  joined: tests/test-ai-ops-runbook.sh
+## An issue asks for work that is already done
+  joined: tests/test-ai-ops-runbook.sh
+## Everything else
+  prose: narrative: pointers to other pages
+
+[docs/branch-protection.md]
+## Status
+  joined: tests/test-branch-protection.sh
+## Why it matters here
+  prose: unchecked: ai-fix.yml's fix job holding contents: write and its prompt's never-push rule; tests/test-ai-fix.sh checks the grant but never reads this section
+## The ruleset
+  joined: tests/test-branch-protection.sh
+## Applying it
+  joined: tests/test-branch-protection.sh
+## When there is a second reviewer
+  prose: narrative: what to change once a second reviewer exists; states no fact about the current ruleset
+
+[docs/manual-input-check.md]
+## What Must Match
+  joined: tests/test-manual-input-check.sh
+## How To Check The Inputs
+  joined: tests/test-manual-input-check.sh
+## When Fedora `N+1` Is Released
+  joined: tests/test-manual-input-check.sh
+## Base Image Guard
+  joined: tests/test-manual-input-check.sh
+
+[docs/metrics.md]
+## PR acceptance
+  joined: tests/test-quality-docs.sh
+## Which changes get pushed back on
+  joined: tests/test-quality-docs.sh
+## Build health
+  joined: tests/test-quality-docs.sh
+## Image freshness
+  joined: tests/test-quality-docs.sh
+## Deliberately not tracked
+  joined: tests/test-quality-docs.sh
+
+[docs/multi-agent.md]
+## Who works here
+  joined: tests/test-multi-agent-doc.sh
+### Reading it back
+  joined: tests/test-multi-agent-doc.sh
+## How work reaches an agent
+  joined: tests/test-multi-agent-doc.sh
+## Staying out of each other's way
+  joined: tests/test-multi-agent-doc.sh
+## Who merges
+  joined: tests/test-multi-agent-doc.sh
+## What every agent shares
+  joined: tests/test-multi-agent-doc.sh
+## What this repository does not run
+  joined: tests/test-multi-agent-doc.sh
+## What is in flight right now
+  joined: tests/test-multi-agent-doc.sh
+
+[docs/quality.md]
+## The badges
+  joined: tests/test-quality-docs.sh
+## The gates
+  joined: tests/test-quality-docs.sh
+### What each one does not cover
+  joined: tests/test-quality-docs.sh
+## Reading a red build
+  prose: narrative: where to start reading a red build; a pointer to AGENTS.md
+## What is not measured
+  joined: tests/test-quality-docs.sh
+
+[docs/review-rubric.md]
+## 1. Does it move a failure from the build to the boot?
+  joined: tests/test-quality-docs.sh
+## 2. Are both akmods inputs pinned, or neither?
+  joined: tests/test-quality-docs.sh
+## 3. Does it claim something the code does not do?
+  prose: narrative: a review rule, find the code that makes a claim true; #70 is history
+## 4. Is a comment explaining an incident being removed?
+  joined: tests/test-quality-docs.sh
+## 5. Shell quality
+  joined: tests/test-quality-docs.sh
+## 6. Was it verified, and could it have been?
+  joined: tests/test-quality-docs.sh
+## 7. Secrets and signing
+  joined: tests/test-quality-docs.sh
+## Severity
+  joined: tests/test-quality-docs.sh
+
+[docs/risk-tiers.md]
+## The tiers
+  joined: tests/test-risk-tiers.sh
+## Why Tier 1 is not the bottom
+  prose: narrative: why docs are not the safe tier here; states no fact about the automation
+## Why two files under `.claude/` are Tier 3
+  joined: tests/test-risk-tiers.sh
+## Why `.github/policies/**` is Tier 3
+  prose: unchecked: what tests/test-workflow-permissions.sh fails on; that test never opens this page
+## Why `.claude/risk-config.json` is Tier 3
+  joined: tests/test-risk-config.sh
+## Evidence, by tier
+  joined: tests/test-risk-tiers.sh
+## The classification is advisory
+  joined: tests/test-risk-tiers.sh
+
+[docs/strategy.md]
+## The goal
+  prose: narrative: the goal, quoted from the README
+## Is the image being built?
+  joined: tests/test-strategy-doc.sh
+## Is the work going there?
+  joined: tests/test-strategy-doc.sh
+## Why there is no report job
+  joined: tests/test-strategy-doc.sh

@@ -133,6 +133,12 @@ that.
 When you change a workflow, a script's behaviour, or a pinned input, check
 whether `README.md`, `AGENTS.md` or `docs/manual-input-check.md` describes it.
 
+A change that adds or renames a `##` or `###` heading in one of those pages, or
+in any other root or `docs/` page, also classifies it in
+[`docs/section-map.txt`](docs/section-map.txt): `joined:` with the test that
+reads the section, or `prose:` with the reason no test does.
+`tests/test-docs-section-map.sh` fails until it is.
+
 ## Pull requests
 
 Branch from `main`, one concern per PR. The template asks the questions worth
