@@ -132,8 +132,9 @@ These are still in scope. File them as usual:
 - **An ordinary spelling gets through.** The command is written the way an
   agent would type it doing normal work: the plain name, its full path
   (`/usr/bin/git`), a documented short option or alias (`shellcheck -a` for
-  `--check-sourced`), or a common wrapper used for a real reason (`env`,
-  `timeout`, `xargs`).
+  `--check-sourced`), or the plain command behind a wrapper program
+  (`timeout`, `xargs`, `flock`, `watch`). Wrapped commands stay in scope
+  under the ruling on Danathar/atomic-image-builder#772.
 - **A regression.** A case the hook's tests already cover stops being
   refused.
 - **The hook blocks normal work it should allow.**
