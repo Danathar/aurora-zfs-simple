@@ -431,10 +431,15 @@ reads it back, monthly and on demand:
 
 Stated plainly, so nobody assumes otherwise:
 
-- **It is not enforced by CI.** Every rule above is a convention that a reviewer
-  or an agent honours. The only mechanical controls are the `permissions:`
-  blocks, the `if:` conditions on the publishing steps, and branch protection.
-  Branch protection is defined in
+- **It is not enforced by CI.** Most rules above are conventions that a
+  reviewer or an agent honours. The mechanical controls are the `permissions:`
+  blocks, the `if:` conditions on the publishing steps, branch protection, and,
+  inside a Claude Code session in this checkout, the `deny` list in
+  [`.claude/settings.json`](../.claude/settings.json) and the `PreToolUse` gate
+  [`.claude/hooks/gate-git-diff.sh`](../.claude/hooks/gate-git-diff.sh)
+  described under "What an agent may do unattended". Those two bind only such a
+  session: a person at a shell, or an agent run by another tool, is not held by
+  them. Branch protection is defined in
   [`.github/rulesets/main.json`](../.github/rulesets/main.json) and has been
   applied since 2026-09-24; [`branch-protection.md`](branch-protection.md)
   says how to check that it still is. The `permissions:` blocks are also
@@ -443,7 +448,8 @@ Stated plainly, so nobody assumes otherwise:
   and `tests/test-workflow-permissions.sh` fails when a workflow asks for
   anything that file does not list. A workflow therefore cannot gain a scope
   unless the same pull request also edits the policy file, which
-  [`risk-tiers.md`](risk-tiers.md) puts in Tier 3.
+  [`risk-tiers.md`](risk-tiers.md) puts in Tier 3, with the settings file, the
+  gate and the ruleset.
 - **It says nothing about the contents of the published image.** Upstream Aurora
   and akmods content is trusted by construction; this repo does not audit it.
 - **It does not cover the machines that consume the image.** Rebase policy,
