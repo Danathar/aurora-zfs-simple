@@ -155,7 +155,7 @@
 ### Reading the record back
   prose: unchecked: what agent-audit.yml reads back; tests/test-agent-audit.sh holds the workflow, not this section
 ## What this policy does not cover
-  prose: unchecked: names the only mechanical controls, and leaves out the .claude/settings.json deny rules and the PreToolUse gate the page describes above
+  joined: tests/test-security-ai-scope.sh
 
 [docs/agent-boundaries.md]
 ## The gates
