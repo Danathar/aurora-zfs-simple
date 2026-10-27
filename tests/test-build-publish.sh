@@ -841,9 +841,13 @@ fi
 # these, because they execute the extracted run: bodies, not the steps around
 # them. So the job and every one of its steps are closed key sets: a new key has
 # to be added here on purpose, with a reason.
+#
+# `environment` is here so the job can read SIGNING_SECRET from the main-only
+# `production-signing` environment; tests/test-signing-key.sh pins its value.
+# It cannot soften a failure: a run the environment refuses fails.
 
 assert_eq "the build_push job has only the keys it needs, so nothing can soften its failure" \
-    "name,needs,permissions,runs-on,steps,timeout-minutes" \
+    "environment,name,needs,permissions,runs-on,steps,timeout-minutes" \
     "$(wf '.jobs.build_push | keys | join(",")')"
 
 # One row per step, in run order: the step name, then its sorted keys. The
