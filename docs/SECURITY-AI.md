@@ -28,8 +28,10 @@ access to the machine.
 ## Signing keys and secrets
 
 **Never read a private key into a transcript.** `COSIGN_PRIVATE_KEY` is supplied
-from the `SIGNING_SECRET` repository secret and exists only in the signing step
-of `build.yml`. An agent has no reason to read it, print it, copy it, or check
+from the `SIGNING_SECRET` secret of the `production-signing` environment, which
+only `main` can use, and exists only in the signing step of `build.yml`. It is
+not a repository secret, which a workflow on any branch could read before anyone
+reviews the branch. An agent has no reason to read it, print it, copy it, or check
 its format, and an encryption header on a key file is not permission — the
 passphrase is routinely empty.
 
@@ -44,8 +46,8 @@ To move a secret into GitHub, redirect it so the bytes never enter the
 transcript:
 
 ```bash
-gh secret set SIGNING_SECRET -R Danathar/aurora-zfs-simple < cosign.key   # good
-gh secret set SIGNING_SECRET -R ... --body "$(cat cosign.key)"           # never
+gh secret set SIGNING_SECRET -R Danathar/aurora-zfs-simple --env production-signing < cosign.key   # good
+gh secret set SIGNING_SECRET -R ... --env production-signing --body "$(cat cosign.key)"           # never
 ```
 
 `ls -l`, `wc -c` and `test -f` describe such a file without revealing it and are

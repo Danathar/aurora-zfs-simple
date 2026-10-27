@@ -66,6 +66,13 @@ jobs:
     needs: tests
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    # The signing key lives in the `production-signing` environment, whose
+    # deployment branch rule admits only `main`. GitHub hands over its secrets
+    # by the ref the job runs on, not by what this file says, so a branch
+    # workflow cannot read the key even by editing this line. Pull request
+    # runs name no environment: they never sign, and a main-only environment
+    # would refuse them.
+    environment: ${{ (github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'production-signing' || '' }}
 
     permissions:
       contents: read

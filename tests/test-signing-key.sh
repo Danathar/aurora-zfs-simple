@@ -419,7 +419,7 @@ assert_contains "by the digest it resolved, not by the tag it read" \
 
 require_claim "SECURITY-AI.md still says where the private half comes from and how far it reaches" \
     "${SECURITY_PROSE}" \
-    'COSIGN_PRIVATE_KEY is supplied from the SIGNING_SECRET repository secret and exists only in the signing step of build.yml'
+    'COSIGN_PRIVATE_KEY is supplied from the SIGNING_SECRET secret of the production-signing environment, which only main can use, and exists only in the signing step of build.yml'
 require_claim "and that rotating the key invalidates every published signature" \
     "${SECURITY_PROSE}" \
     'cosign.pub is committed and consumers pin it, so rotating the key invalidates every published signature'
@@ -447,6 +447,19 @@ else
 fi
 assert_contains "and that is the step holding the secret" \
     "${sign_step}" 'COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}'
+
+# "which only main can use", as far as the tree can show it: the one environment
+# any workflow names is production-signing, named by build_push only off a pull
+# request on the default branch. The environment's deployment branch rule lives
+# on GitHub, not here.
+environments="$(cd "${REPO_ROOT}" && find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+    -exec grep -hE '^[[:space:]]+environment:' {} +)"
+assert_eq "the one environment any workflow names is production-signing, off a pull request on the default branch" \
+    "    environment: \${{ (github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'production-signing' || '' }}" \
+    "${environments}"
+build_push_job="$(awk '/^  build_push:$/ { inside = 1; print; next } inside && /^  [a-z_]+:$/ { exit } inside' "${BUILD_YML}")"
+assert_contains "and it is build_push, the job with the signing step, that names it" \
+    "${build_push_job}" "    environment: "
 
 # The secret inventory table's "Used by" cell, parsed rather than restated.
 used_by="$(grep -E '^\|[[:space:]]*`SIGNING_SECRET`' "${SECURITY_MD}" | head -1 |
