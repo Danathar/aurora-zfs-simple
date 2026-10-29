@@ -107,7 +107,7 @@
 ## What It Uses
   joined: tests/test-readme.sh
 ## Which Upstream Builds An Image Came From
-  prose: unchecked: states which labels the build records on the image and what each names; no test reads this section
+  joined: tests/test-readme.sh
 ## Important Design Detail
   joined: tests/test-readme.sh
 ## If The Kernel Moves Ahead Of Aurora
