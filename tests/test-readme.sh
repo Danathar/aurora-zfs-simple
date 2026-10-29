@@ -40,7 +40,11 @@
 #   * the "Repository Layout" block against the tree, in the direction
 #     test-docs-paths.sh does not check: for the directories the block
 #     enumerates file by file — `.github/workflows/`, `build_files/`, `ci/`
-#     and `docs/` — every tracked entry there has a line.
+#     and `docs/` — every tracked entry there has a line;
+#   * the label table under "Which Upstream Builds An Image Came From" against
+#     the labels build.yml's Chunkah call sets, in both directions, its `jq`
+#     filter run against those labels, and the labels it says the build drops
+#     against the ones the call drops.
 #
 # The `nvidia-legacy` branch and tag, the upstream discussion link and the
 # disclaimer are claims about things outside this checkout, and are left alone.
@@ -477,6 +481,75 @@ for dir in .github/workflows build_files ci docs; do
     else
         _fail "Repository Layout lists every tracked entry of ${dir}/" \
             "tracked but not listed: ${missing:-<${dir}/ has no tracked entries>}"
+    fi
+done
+
+# --- 8. the image labels against the Chunkah call that sets them --------------
+
+# "Which Upstream Builds An Image Came From" is the only place a user learns
+# which label names the akmods build to pin back to, and its `jq` filter is the
+# command they copy to read them. The labels are set and dropped by `--label`
+# arguments to the Chunkah run in build.yml, which test-build-rechunk.sh pins;
+# nothing tied the page to them, so a renamed label would leave a table row
+# naming a label no image carries and a filter that silently skips it.
+LABELS_SECTION="$(section_body '## Which Upstream Builds An Image Came From' "${README_MD}")"
+label_args="$(sed -nE 's/^[[:space:]]+--label "?([^" ]+)"?[[:space:]]*\\?$/\1/p' "${BUILD_YML}")"
+set_labels="$(sed -nE 's/^([^=]+)=.*$/\1/p' <<<"${label_args}" | sort -u)"
+dropped_labels="$(sed -nE 's/^([^=]+)-$/\1/p' <<<"${label_args}" | sort -u)"
+table_labels="$(sed -nE 's/^\| `([^`]+)`[[:space:]]+\|.*$/\1/p' <<<"${LABELS_SECTION}" | sort -u)"
+
+if [[ -n "${set_labels}" && -n "${dropped_labels}" ]]; then
+    _pass "build.yml's Chunkah call was read ($(wc -l <<<"${set_labels}") set, $(wc -l <<<"${dropped_labels}") dropped)"
+else
+    _fail "build.yml's Chunkah call was read" "set: '${set_labels}' dropped: '${dropped_labels}'"
+fi
+assert_eq "the label table names exactly the labels the Chunkah call sets" \
+    "$(paste -sd' ' <<<"${set_labels}")" "$(paste -sd' ' <<<"${table_labels}")"
+
+# The filter is run, not matched: against every label the call sets plus every
+# one it drops, it has to keep exactly the table's labels.
+jq_filter="$(first_fence <<<"${LABELS_SECTION}" | sed -nE "s/^.*jq '(.*)'[[:space:]]*$/\1/p")"
+sample_labels="$(printf '%s\n' "${set_labels}" "${dropped_labels}" |
+    jq -Rn '{ Labels: ([inputs | select(length > 0) | { (.): "x" }] | add) }')"
+if [[ -n "${jq_filter}" ]] &&
+    kept="$(jq -r "${jq_filter} | keys[]" <<<"${sample_labels}" 2>&1)"; then
+    assert_eq "the section's jq filter keeps exactly the table's labels" \
+        "$(paste -sd' ' <<<"${table_labels}")" "$(sort -u <<<"${kept}" | paste -sd' ')"
+else
+    _fail "the section's jq filter keeps exactly the table's labels" \
+        "filter '${jq_filter}' did not run: ${kept:-no jq command in the fenced block}"
+fi
+
+# Each label the call drops for describing Aurora, and the words the closing
+# paragraph uses for it. ostree.commit and ostree.final-diffid are dropped too,
+# but as ostree bookkeeping the re-layered image no longer matches rather than
+# as Aurora's own description, so the page does not list them;
+# test-build-rechunk.sh pins those two.
+declare -A DROPPED_AS=(
+    [io.artifacthub.package.maintainers]="maintainer"
+    [io.artifacthub.package.readme-url]="README link"
+    [io.artifacthub.package.logo-url]="logo"
+    [io.artifacthub.package.keywords]="keywords"
+    [io.artifacthub.package.deprecated]="deprecated flag"
+    [quay.expires-after]="quay.io expiry"
+)
+drops_text="$(sed -E 's/[[:space:]]+/ /g' <<<"${LABELS_SECTION}" | tr '\n' ' ')"
+while IFS= read -r label; do
+    [[ -z "${label}" || "${label}" == ostree.commit || "${label}" == ostree.final-diffid ]] && continue
+    if [[ -n "${DROPPED_AS[${label}]:-}" ]]; then
+        assert_contains "the section says the build drops ${label}" \
+            "${drops_text}" "${DROPPED_AS[${label}]}"
+    else
+        _fail "the section says the build drops ${label}" \
+            "build.yml drops it and this test has no phrase for it; name it on the page and here"
+    fi
+done <<<"${dropped_labels}"
+for label in "${!DROPPED_AS[@]}"; do
+    if grep -qxF -- "${label}" <<<"${dropped_labels}"; then
+        _pass "the section's dropped ${DROPPED_AS[${label}]} is one build.yml drops"
+    else
+        _fail "the section's dropped ${DROPPED_AS[${label}]} is one build.yml drops" \
+            "build.yml has no --label ${label}-"
     fi
 done
 
