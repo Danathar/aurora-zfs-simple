@@ -474,7 +474,11 @@ The warning names what was left behind and where. Work out who wrote it:
   `podman run --rm ghcr.io/ublue-os/aurora-dx:stable bootc container lint`. If
   it warns there too, the cause is upstream. Clean it up here, or drop
   `--fatal-warnings` for as long as upstream takes, and record which warning and
-  why in the incident log below, so the flag is put back.
+  why in the incident log below, so the flag is put back. The flag is pinned in
+  three places besides the `Containerfile`: drop it from the lint in
+  `tests/e2e/run-e2e.sh` too (the two must pass the same arguments), and change
+  the assertions on it in `tests/test-containerfile.sh` and
+  `tests/test-e2e-verify.sh`.
 
 ## Incident log
 
