@@ -46,6 +46,9 @@
 #     every kernel-pinned tag and release above the incident log against
 #     `FEDORA_VERSION`;
 #   * the Chunkah section against the `Rechunk Image with Chunkah` step body;
+#   * the lint-warning section against the `Containerfile` lint and cleanup,
+#     `docs/quality.md`'s warning list, `post-check.sh`'s last line, and every
+#     file under `tests/` that pins `--fatal-warnings`;
 #   * its links, its one in-page anchor, that every `bash` block parses and
 #     every `--jq` filter compiles.
 #
@@ -863,6 +866,87 @@ if require_nonempty "jq filters in its gh commands" "${filters}"; then
             _fail "jq compiles the filter ${filter:0:48}" "jq reported a compile error"
         fi
     done <<<"${filters}"
+fi
+
+# --- 9. the lint-warning section ---------------------------------------------
+#
+# "bootc container lint: a warning fails the build" is the section the
+# Containerfile's own comment sends a reader to when the lint goes red. Every
+# fact it states about this tree is held to the file it describes: the RUN line
+# it quotes, the warnings and leftovers it names, the base image it tells the
+# reader to lint on its own, and the files that pin --fatal-warnings, which a
+# reader dropping the flag the way it suggests has to change too.
+LINT_HEADING="bootc container lint: a warning fails the build"
+lint_section="$(awk -v heading="### ${LINT_HEADING}" '
+    $0 == heading { inside = 1; next }
+    inside && /^#{2,3} / { exit }
+    inside' "${AGENTS_DOC}")"
+lint_flat="$(tr -s '[:space:]' ' ' <<<"${lint_section}")"
+if require_nonempty "the '${LINT_HEADING}' section" "${lint_section}"; then
+    # The Containerfile's comment names the section by its heading, in quotes.
+    pointer="$(tr -s '[:space:]' ' ' <"${CONTAINERFILE}" |
+        grep -oE 'See AGENTS\.md, "[^"]+"' | sed -E 's/^See AGENTS\.md, "//; s/"$//')"
+    assert_eq "the Containerfile's pointer names this section's heading" \
+        "${LINT_HEADING}" "${pointer}"
+
+    # The failed step it shows is the Containerfile's lint line, verbatim.
+    quoted_run="$(grep -oE '`RUN bootc container lint[^`]*`' <<<"${lint_flat}" | tr -d '`')"
+    if require_nonempty "the quoted lint RUN line" "${quoted_run}" &&
+        grep -Fxq -- "${quoted_run}" "${CONTAINERFILE}"; then
+        _pass "the quoted '${quoted_run}' is a line of the Containerfile"
+    else
+        _fail "the quoted lint RUN line is a line of the Containerfile" \
+            "got: ${quoted_run:-nothing}"
+    fi
+
+    # The symptom follows post-check.sh's last line, as post-check.sh prints it.
+    after_line="$(grep -oE 'after `post-check: [^`]+`' <<<"${lint_flat}" |
+        sed -E 's/^after `post-check: //; s/`$//')"
+    if require_nonempty "the post-check line the symptom follows" "${after_line}"; then
+        assert_contains "post-check.sh logs '${after_line}' through its post-check: prefix" \
+            "$(cat "${REPO_ROOT}/build_files/post-check.sh")" "log \"${after_line}\""
+        assert_contains "and log() prints that prefix" \
+            "$(cat "${REPO_ROOT}/build_files/post-check.sh")" "printf 'post-check: %s\\n'"
+    fi
+
+    # The four warnings that shipped, as docs/quality.md names them too.
+    warning_names() {
+        tr -s '[:space:]' ' ' <"$1" | grep -oE "$2"' \([^)]*\)' |
+            grep -oE '`[a-z-]+`' | tr -d '`' | LC_ALL=C sort
+    }
+    doc_warnings="$(warning_names "${AGENTS_DOC}" 'four of them')"
+    quality_warnings="$(warning_names "${REPO_ROOT}/docs/quality.md" 'reported four on every build')"
+    assert_eq "the section names four warnings" "4" "$(grep -c . <<<"${doc_warnings}")"
+    assert_eq "and they are the four docs/quality.md names" \
+        "${quality_warnings}" "${doc_warnings}"
+
+    # The leftovers the installing RUNs remove, both ways against the
+    # Containerfile: a path added to the cleanup and not here sends the reader
+    # to copy a cleanup that is already short.
+    doc_paths="$(grep -oE 'remove `/run/dnf`[^.]*' <<<"${lint_flat}" |
+        grep -oE '`/[^`]+`' | tr -d '`' | grep -vx '/boot' | LC_ALL=C sort -u)"
+    built_paths="$(grep -oE 'rm -rf [^&]*' "${CONTAINERFILE}" |
+        sed 's/^rm -rf //' | tr ' ' '\n' | grep . | LC_ALL=C sort -u)"
+    if require_nonempty "the leftover paths the section lists" "${doc_paths}"; then
+        assert_eq "the leftovers it lists are the ones the Containerfile removes" \
+            "${built_paths}" "${doc_paths}"
+    fi
+    assert_contains "it says /boot's contents are removed" "${lint_flat}" '`/boot`'"'s contents"
+    assert_contains "which the Containerfile does" "${containerfile_text}" "find /boot -mindepth 1 -delete"
+
+    # The base image it tells the reader to lint on its own is the one built on.
+    assert_contains "the standalone lint runs against the Containerfile's base image" \
+        "${lint_flat}" "podman run --rm ${aurora_image}:${aurora_tag} bootc container lint"
+
+    # Every script under tests/ that pins --fatal-warnings is one the section
+    # tells a reader dropping the flag to change, and nothing more.
+    pinning="$(cd "${REPO_ROOT}" && grep -rlF --include='*.sh' -- '--fatal-warnings' tests |
+        grep -vx "tests/$(basename "${BASH_SOURCE[0]}")" | LC_ALL=C sort)"
+    named="$(grep -oE '`tests/[^`]+`' <<<"${lint_flat}" | tr -d '`' | LC_ALL=C sort -u)"
+    if require_nonempty "files under tests/ that pin --fatal-warnings" "${pinning}"; then
+        assert_eq "the section names every file under tests/ that pins the flag" \
+            "${pinning}" "${named}"
+    fi
 fi
 
 finish

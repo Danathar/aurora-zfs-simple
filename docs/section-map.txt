@@ -67,7 +67,7 @@
 ### Chunkah rechunk: `Argument list too long` (exit 126)
   joined: tests/test-agents-doc.sh
 ### bootc container lint: a warning fails the build
-  prose: unchecked: states the Containerfile's lint runs with --fatal-warnings and which warnings it allows; no test reads this section
+  joined: tests/test-agents-doc.sh
 ## Incident log
   prose: narrative: heading over the dated entries below
 ### 2026-07-22: Fedora kernel 7.1 vs OpenZFS 2.4.3
