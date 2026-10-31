@@ -2046,6 +2046,36 @@ for ok in "podman images 'fedora*'" \
     assert_eq "a quoted pattern, a literal template brace, or a glob outside podman is left alone: ${ok}" \
         "0" "${PRE_STATUS}"
 done
+# skopeo's --registries-conf is a read by an option: `skopeo inspect` takes it
+# after the subcommand the allow row matches, and skopeo parses the file as
+# TOML before it contacts a registry, quoting the line it could not read, so
+# `skopeo inspect --registries-conf ./.env docker://x` printed a .env line
+# back (Danathar/atomic-image-builder#830). Both spellings, after other
+# arguments, behind a wrapper, and as a word bash rewrites into the option.
+for conf in "skopeo inspect --registries-conf ./.env docker://x" \
+    "skopeo inspect --registries-conf=./.env docker://x" \
+    "skopeo inspect docker://x --registries-conf ./.env" \
+    "skopeo inspect --no-tags docker://x --registries-conf=./.env" \
+    "timeout 5 skopeo inspect --registries-conf ./.env docker://x" \
+    "/usr/bin/skopeo inspect --registries-conf ./.env docker://x" \
+    "git status; skopeo inspect --registries-conf=.env docker://x" \
+    "skopeo inspect --registries-con{f..f} ./.env docker://x" \
+    "skopeo inspect --registries-con? ./.env docker://x" \
+    "skopeo inspect @(--registries-conf=.env) docker://x"; do
+    run_pre "$(pre_payload_for "${conf}")"
+    assert_eq "skopeo inspect handed a registries file is refused: ${conf}" \
+        "2" "${PRE_STATUS}"
+    assert_contains "and the refusal names the option: ${conf}" \
+        "${PRE_ERR}" "--registries-conf"
+done
+for ok in "skopeo inspect --no-tags docker://ghcr.io/x:latest" \
+    "skopeo inspect --format '{{.Digest}}' docker://ghcr.io/x:latest" \
+    "echo skopeo inspect --registries-conf ./.env" \
+    "git log --grep=registries-conf -1"; do
+    run_pre "$(pre_payload_for "${ok}")"
+    assert_eq "skopeo inspect without the option, or the option outside skopeo, is left alone: ${ok}" \
+        "0" "${PRE_STATUS}"
+done
 # shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
 for substituted in "podman images >(cat >cosign.pub)" \
     ">(cat >cosign.pub) podman images" \
