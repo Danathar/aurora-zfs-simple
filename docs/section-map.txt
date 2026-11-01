@@ -147,7 +147,7 @@
 ## Failure issues hold `issues: write`
   prose: unchecked: auto-issues.yml's grant and triggers; tests/test-auto-issues.sh and tests/test-workflow-permissions.sh hold the workflow, but neither reads this section
 ## Inputs to treat as untrusted
-  prose: unchecked: names ci/write-badges.sh as the reader of the upstream image labels; no test reads this section
+  joined: tests/test-security-ai-inputs.sh
 ## What an agent may do unattended
   joined: tests/test-gate-refusal-docs.sh
 ## Agent-authored pull requests
