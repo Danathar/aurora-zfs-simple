@@ -145,7 +145,7 @@
 ## Labels carry authority — automation must not apply them
   joined: tests/test-labeler.sh
 ## Failure issues hold `issues: write`
-  prose: unchecked: auto-issues.yml's grant and triggers; tests/test-auto-issues.sh and tests/test-workflow-permissions.sh hold the workflow, but neither reads this section
+  joined: tests/test-issues-write-docs.sh
 ## Inputs to treat as untrusted
   joined: tests/test-security-ai-inputs.sh
 ## What an agent may do unattended
@@ -281,7 +281,7 @@
 ## Why two files under `.claude/` are Tier 3
   joined: tests/test-risk-tiers.sh
 ## Why `.github/policies/**` is Tier 3
-  prose: unchecked: says tests/test-workflow-permissions.sh fails when a workflow asks for more than the policy file lists; no test reads this section
+  joined: tests/test-issues-write-docs.sh
 ## Why `.claude/risk-config.json` is Tier 3
   prose: narrative: why the file sits in the top tier; its row in the table is joined under The tiers
 ## Evidence, by tier
