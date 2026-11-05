@@ -151,7 +151,7 @@
 ## What an agent may do unattended
   joined: tests/test-gate-refusal-docs.sh
 ## Agent-authored pull requests
-  prose: unchecked: what ai-fix.yml and agent pull requests may and may not do; tests/test-ai-fix.sh holds the workflow, not this section
+  joined: tests/test-ai-fix-docs.sh
 ### Reading the record back
   prose: unchecked: what agent-audit.yml reads back; tests/test-agent-audit.sh holds the workflow, not this section
 ## What this policy does not cover
@@ -195,7 +195,7 @@
 ## Status
   joined: tests/test-branch-protection.sh
 ## Why it matters here
-  prose: unchecked: says the ai-fix.yml fix job holds contents: write and only the ruleset keeps it off main; tests/test-ai-fix.sh holds the grant, not this section
+  joined: tests/test-ai-fix-docs.sh
 ## The ruleset
   joined: tests/test-branch-protection.sh
 ## Applying it
