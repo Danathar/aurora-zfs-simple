@@ -393,6 +393,11 @@ meets each condition, and the points worth knowing:
   token could push to `main` directly, and the next scheduled build would sign
   what it pushed. The prompt's "never push to `main`" is an instruction, not a
   control.
+- **The rest of its token.** The `fix` job also holds `pull-requests: write` to
+  open the pull request, `issues: write` to reply on the issue that asked,
+  `id-token: write` for the action's own OIDC exchange, and `actions: read` to
+  read a failing run's logs when asked to diagnose one. `actions: read` goes
+  past what opening a pull request requires; it reads logs and changes nothing.
 - No agent credential is set on this repository as of this writing, so every
   trigger currently stops at the workflow's `preflight` job, records why in the
   run summary, and succeeds.
