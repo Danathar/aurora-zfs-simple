@@ -44,7 +44,13 @@
 #   * the label table under "Which Upstream Builds An Image Came From" against
 #     the labels build.yml's Chunkah call sets, in both directions, its `jq`
 #     filter run against those labels, and the labels it says the build drops
-#     against the ones the call drops.
+#     against the ones the call drops;
+#   * "Rebase An Existing Aurora Install" against "Switching To This Image":
+#     the same fork commands both ways, the checked one filled in with this
+#     checkout's slug equal to the concrete one test-signing-key.sh holds to
+#     build.yml, and the unchecked one differing by the flag alone; its lsmod
+#     check against the modules build_files/zfs.sh requires and loads, and run
+#     before any zpool command, for the reason ci/boot-test.sh gives.
 #
 # The `nvidia-legacy` branch and tag, the upstream discussion link and the
 # disclaimer are claims about things outside this checkout, and are left alone.
@@ -552,5 +558,95 @@ for label in "${!DROPPED_AS[@]}"; do
             "build.yml has no --label ${label}-"
     fi
 done
+
+# --- 9. Rebase An Existing Aurora Install against the switch section and zfs.sh
+
+# This section is the second place the page gives the rebase command, and the
+# one a reader who skipped the top of the page copies. test-signing-key.sh holds
+# "Switching To This Image" to build.yml; nothing held this copy to that one, so
+# the flag that makes the host check the signature could drop out of it, or its
+# reference drift to one the build does not publish, with every test green. Its
+# post-rebase checks name the modules build_files/zfs.sh installs, and their
+# order is the one ci/boot-test.sh explains: a zpool command loads zfs.ko
+# itself, so run before lsmod it would hide a boot that failed to.
+REBASE="$(section_body '## Rebase An Existing Aurora Install' "${README_MD}")"
+SWITCH="$(section_body '## Switching To This Image' "${README_MD}")"
+ZFS_SH="${REPO_ROOT}/build_files/zfs.sh"
+BOOT_TEST_SH="${REPO_ROOT}/ci/boot-test.sh"
+SIGPOLICY_FLAG='--enforce-container-sigpolicy'
+
+# Every fenced line of a section, fences dropped, in order.
+fenced_lines() {
+    awk '/^```/ { inside = !inside; next } inside'
+}
+
+rebase_switches="$(fenced_lines <<<"${REBASE}" | grep -E '^sudo bootc switch ')"
+switch_templates="$(fenced_lines <<<"${SWITCH}" | grep -E '^sudo bootc switch ' | grep -F '<owner>/<repo>')"
+if [[ -n "${rebase_switches}" ]]; then
+    _pass "Rebase An Existing Aurora Install shows its switch commands ($(wc -l <<<"${rebase_switches}"))"
+else
+    _fail "Rebase An Existing Aurora Install shows its switch commands" "no sudo bootc switch line in a fence"
+fi
+assert_eq "its switch commands are the fork templates Switching To This Image gives, both directions" \
+    "$(sort -u <<<"${switch_templates}")" "$(sort -u <<<"${rebase_switches}")"
+
+checked_switch="$(grep -F -- "${SIGPOLICY_FLAG}" <<<"${rebase_switches}" | head -1)"
+unchecked_switch="$(grep -vF -- "${SIGPOLICY_FLAG}" <<<"${rebase_switches}" | head -1)"
+assert_eq "the first command it shows is the one that checks the signature" \
+    "${checked_switch}" "$(head -1 <<<"${rebase_switches}")"
+assert_eq "and the unchecked one differs from it by the flag alone" \
+    "${checked_switch/ ${SIGPOLICY_FLAG}/}" "${unchecked_switch}"
+
+# The template, filled in with this checkout's slug, is the concrete command
+# test-signing-key.sh holds to build.yml's registry, name and default tag.
+own_slug="$(grep -oE 'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/workflows/build\.yml' \
+    "${README_MD}" | head -1 | sed -E 's#https://github\.com/([^/]+/[^/]+)/actions.*#\1#')"
+concrete_switch="$(fenced_lines <<<"${SWITCH}" | grep -E '^sudo bootc switch ' |
+    grep -F -- "${SIGPOLICY_FLAG}" | grep -vF '<owner>/<repo>' | head -1)"
+if [[ -n "${own_slug}" && -n "${concrete_switch}" ]]; then
+    assert_eq "filled in with this repository's slug, it is the concrete switch Switching To This Image gives" \
+        "${concrete_switch}" "${checked_switch/<owner>\/<repo>/${own_slug,,}}"
+else
+    _fail "filled in with this repository's slug, it is the concrete switch Switching To This Image gives" \
+        "slug '${own_slug}' or concrete command '${concrete_switch}' not read"
+fi
+
+rebase_prose="$(tr '\n' ' ' <<<"${REBASE}" | tr -d '`' | sed -E 's/[[:space:]]+/ /g')"
+assert_contains "it sends the reader to configure the policy before the switch" \
+    "${rebase_prose}" 'Configure the signature policy first — see [Trusting The Signing Key](#trusting-the-signing-key) — then switch'
+assert_contains "and says what dropping the flag costs, as Switching To This Image does" \
+    "${rebase_prose}" "Without ${SIGPOLICY_FLAG} the image's signature is not checked, on this rebase or on any later bootc upgrade"
+assert_contains "Switching To This Image says the same of every later upgrade" \
+    "$(tr '\n' ' ' <<<"${SWITCH}" | tr -d '`' | sed -E 's/[[:space:]]+/ /g')" \
+    'on that rebase and on every upgrade after it'
+
+# The post-rebase checks.
+post_checks="$(fenced_lines <<<"${REBASE}" | grep -vE '^sudo bootc switch ')"
+lsmod_line="$(grep -nE '^lsmod \| grep -E ' <<<"${post_checks}" | head -1)"
+listed_modules="$(sed -nE "s/^[0-9]+:lsmod \| grep -E '([^']+)'.*$/\1/p" <<<"${lsmod_line}" | tr '|' '\n' | sort -u)"
+installed_modules="$(sed -nE 's/^for module in (.+); do$/\1/p' "${ZFS_SH}" | tr ' ' '\n' | sort -u)"
+if [[ -n "${installed_modules}" ]]; then
+    _pass "build_files/zfs.sh still names the modules it requires ($(paste -sd' ' <<<"${installed_modules}"))"
+else
+    _fail "build_files/zfs.sh still names the modules it requires" "no 'for module in ...; do' loop"
+fi
+assert_eq "the lsmod check looks for exactly the modules zfs.sh requires the image to carry" \
+    "$(paste -sd' ' <<<"${installed_modules}")" "$(paste -sd' ' <<<"${listed_modules}")"
+assert_contains "and zfs.sh loads zfs at boot, which is why lsmod should list it untouched" \
+    "$(grep -vE '^[[:space:]]*#' "${ZFS_SH}")" 'echo "zfs" >/usr/lib/modules-load.d/zfs.conf'
+
+first_userspace="$(grep -nE '^(sudo )?(zpool|zfs) ' <<<"${post_checks}" | head -1 | cut -d: -f1)"
+if [[ -n "${lsmod_line}" && -n "${first_userspace}" && "${lsmod_line%%:*}" -lt "${first_userspace}" ]]; then
+    _pass "lsmod runs before any zpool or zfs command"
+else
+    _fail "lsmod runs before any zpool or zfs command" \
+        "lsmod at line '${lsmod_line%%:*}', first zpool/zfs at '${first_userspace}' of the checks block"
+fi
+assert_contains "for the reason ci/boot-test.sh gives for its own order" \
+    "$(cat "${BOOT_TEST_SH}")" 'any zfs or zpool command before module:zfs would load the module'
+assert_contains "the zpool the checks run comes from the zfs userspace package zfs.sh installs" \
+    "$(grep -vE '^[[:space:]]*#' "${ZFS_SH}")" '/tmp/rpms/kmods/zfs/zfs-*.rpm'
+assert_contains "and it reboots before checking, since the module loads at boot" \
+    "${rebase_prose}" 'Reboot after the switch, then validate ZFS'
 
 finish
