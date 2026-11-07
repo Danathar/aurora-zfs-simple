@@ -188,7 +188,7 @@ assert_contains ".gitignore still ignores the private half" \
 # A renamed backup of the private key is as secret as the key itself, so git
 # must ignore it too, while the public half stays committable. `|| true`: check-ignore
 # exits 1 when nothing matches, which is the expected answer for cosign.pub.
-ignored_paths="$(cd "${REPO_ROOT}" && git check-ignore --no-index -- cosign.key.old-backup cosign.pub || true)"
+ignored_paths="$(git -C "${REPO_ROOT}" check-ignore --no-index -- cosign.key.old-backup cosign.pub || true)"
 assert_eq "a renamed copy of the private key is ignored and cosign.pub is not" \
     "cosign.key.old-backup" "${ignored_paths}"
 
