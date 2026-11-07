@@ -7,7 +7,7 @@
 [![OpenZFS/kernel status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FDanathar%2Faurora-zfs-simple%2Fstatus%2Fakmods-badge.json)](AGENTS.md#dominant-failure-mode-kernel--zfs-akmod-skew)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-1f6feb)](https://deepwiki.com/Danathar/aurora-zfs-simple)
 [![Maintenance assisted by Hivecommons Hive](https://img.shields.io/badge/maintenance%20assisted%20by-Hivecommons%20Hive-1f6feb)](https://github.com/hivecommons/hive)
-[![ACMM L6 Fully Autonomous](https://img.shields.io/badge/ACMM-L6%20Fully%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
+[![ACMM L6 Autonomous](https://img.shields.io/badge/ACMM-L6%20Autonomous-2da44e)](#maintained-with-hive-acmm-l6)
 [![AI assisted](https://img.shields.io/badge/AI-assisted-d29922)](#about-this-project)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
@@ -486,7 +486,7 @@ signal to switch back to upstream Aurora or to a fork you control.
 Maintenance on this repository is assisted by
 [Hivecommons Hive](https://github.com/hivecommons/hive), a system that runs a
 fleet of AI agents to continuously review this codebase. This repository's Hive
-runs at **ACMM level 6, Fully Autonomous (L6)**. Here that means:
+runs at **ACMM level 6, Autonomous (L6)**. Here that means:
 
 - The agents may file issues and open pull requests. Every pull request an agent
   opens auto-merges once its checks pass; non-outreach pull requests carry no
