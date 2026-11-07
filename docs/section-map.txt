@@ -121,7 +121,7 @@
 ## Build-Time Validation
   joined: tests/test-readme.sh
 ## Rebase An Existing Aurora Install
-  prose: unchecked: the switch command and what --enforce-container-sigpolicy does; tests/test-signing-key.sh reads only the Switching To This Image section
+  joined: tests/test-readme.sh
 ## Signature Verification
   joined: tests/test-signing-key.sh
 ## Project Continuity & Trust
