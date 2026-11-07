@@ -185,6 +185,13 @@ assert_eq "no tracked file carries a private key PEM marker" "" "${private_hits}
 assert_contains ".gitignore still ignores the private half" \
     "$(cat "${GITIGNORE}")" "cosign.key"
 
+# A renamed backup of the private key is as secret as the key itself, so git
+# must ignore it too, while the public half stays committable. `|| true`: check-ignore
+# exits 1 when nothing matches, which is the expected answer for cosign.pub.
+ignored_paths="$(cd "${REPO_ROOT}" && git check-ignore --no-index -- cosign.key.old-backup cosign.pub || true)"
+assert_eq "a renamed copy of the private key is ignored and cosign.pub is not" \
+    "cosign.key.old-backup" "${ignored_paths}"
+
 # The paths .claude/settings.json refuses to Read are the repository's own list
 # of secret-shaped names. Read it from there rather than restating it, so a name
 # added to the deny rules is swept here too.
