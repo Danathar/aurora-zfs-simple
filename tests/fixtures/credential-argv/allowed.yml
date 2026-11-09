@@ -1,0 +1,29 @@
+# Shapes tests/test-no-credential-in-argv.sh must pass: the token reaches the
+# program on stdin, in a file, through the environment or as an action input,
+# never in its argv. The two printf lines that write a credentialed URL are
+# reported as allowed rather than missed. Not a workflow; nothing runs it.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GitHub Container Registry
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Use the token without putting it on a command line
+        env:
+          REGISTRY_ACTOR: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Never: git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          printf '%s' "${REGISTRY_TOKEN}" | podman login ghcr.io -u "${REGISTRY_ACTOR}" --password-stdin
+          printf '%s\n\n' "url=https://x-access-token:${GH_TOKEN}@github.com" | git credential approve
+          printf '%s\n' "https://x-access-token:${GH_TOKEN}@github.com" > "${RUNNER_TEMP}/git-credentials"
+          git remote add origin "https://github.com/${REPO}.git"
+          git config --local --add credential.helper \
+            '!f() { printf "username=x-access-token\npassword=%s\n" "${GH_TOKEN}"; }; f'
+          skopeo inspect --authfile "${HOME}/.docker/config.json" --no-tags "docker://${IMAGE_REF}:latest"
+          cosign sign -y --key env://COSIGN_PRIVATE_KEY "${IMAGE_REF}@${DIGEST}"
