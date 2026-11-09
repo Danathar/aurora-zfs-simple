@@ -328,21 +328,20 @@ jobs:
           echo "no tag other than ${DEFAULT_TAG} to push first" >&2
           exit 1
 
+      # No username or password input: with one, the action runs
+      # `podman push --creds=<user>:<token>` and the token sits in the process's
+      # command line for the whole push. Without one, podman uses the login the
+      # step above wrote.
       - name: Push To GHCR
         uses: redhat-actions/push-to-registry@94ade333c38ecc0e60e94785125d9a52ca423b37 # v2
         if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         id: push
-        env:
-          REGISTRY_USER: ${{ github.actor }}
-          REGISTRY_PASSWORD: ${{ github.token }}
         with:
           registry: ${{ env.IMAGE_REGISTRY }}
           image: ${{ env.IMAGE_NAME }}
           # Push exactly one tag. The remaining tags are copied from the
           # pushed digest after signing so every tag is byte-identical.
           tags: ${{ steps.first_tag.outputs.tag }}
-          username: ${{ env.REGISTRY_USER }}
-          password: ${{ env.REGISTRY_PASSWORD }}
 
       # This section is optional and only needs to be enabled if you plan on distributing
       # your project for others to consume. You will need to create a public and private key

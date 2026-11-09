@@ -1,0 +1,31 @@
+# The old "Push To GHCR" step of build.yml (#463): push-to-registry given the
+# token as its password input runs `podman push --creds=<user>:<token>`, which
+# puts the token in the process's command line. Only the push step is flagged,
+# not the docker/login-action step above it, whose password stays out of argv.
+# Not a workflow; nothing runs it.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push To GHCR
+        uses: redhat-actions/push-to-registry@94ade333c38ecc0e60e94785125d9a52ca423b37 # v2
+        id: push
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ github.token }}
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          image: ${{ env.IMAGE_NAME }}
+          tags: ${{ steps.first_tag.outputs.tag }}
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+
+      - name: Sign
+        run: echo done

@@ -866,7 +866,7 @@ Build Image|id,name,uses,with
 Rechunk Image with Chunkah|env,name,run
 Login to GitHub Container Registry|if,name,uses,with
 Pick the tag to push first|env,id,if,name,run
-Push To GHCR|env,id,if,name,uses,with
+Push To GHCR|id,if,name,uses,with
 Install Cosign|if,name,uses,with
 Sign container image|env,if,name,run
 Verify the signature as hosts read it|env,if,name,run
