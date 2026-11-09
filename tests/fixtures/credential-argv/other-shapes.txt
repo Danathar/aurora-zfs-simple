@@ -1,0 +1,16 @@
+# Other spellings of the same mistake, beyond the two this repository shipped.
+# tests/test-no-credential-in-argv.sh must flag every command below.
+
+# podman login -p, the shape of akmods' `just login` recipe.
+podman login ghcr.io -u "$REGISTRY_ACTOR" -p "$REGISTRY_TOKEN"
+# A long flag joined with =, its value built from Actions expressions.
+buildah push --creds=${{ github.actor }}:${{ secrets.GHCR_TOKEN }} "${IMAGE}"
+# --registry-password, given a quoted expression with spaces inside it.
+cosign sign --registry-username "${GITHUB_ACTOR}" --registry-password "${{ github.token }}" "${IMAGE_REF}"
+# A lower-case variable, read through a command substitution.
+docker login -u "${actor}" --password "$(cat "${token_file}")" ghcr.io
+# A token in a URL with any user name, unquoted.
+git push https://oauth2:$CI_JOB_TOKEN@gitlab.example.com/group/repo.git HEAD
+# printf counts only when it writes to a pipe or a file. Here its output
+# becomes git's argument, so the token is on git's command line.
+git clone "$(printf '%s' "https://x-access-token:${GH_TOKEN}@github.com/o/r.git")" repo

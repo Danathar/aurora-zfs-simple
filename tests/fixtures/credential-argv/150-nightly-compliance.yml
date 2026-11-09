@@ -1,0 +1,32 @@
+# Issue #150: the two skopeo inspects in nightly-compliance.yml as they were
+# before PR #152, each handed the registry token as --creds. Not a workflow;
+# tests/test-no-credential-in-argv.sh reads it and must flag both inspects.
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the published :latest
+        id: latest
+        env:
+          REGISTRY_ACTOR: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! raw=$(skopeo inspect --creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}" \
+                       "docker://${IMAGE_REF}:latest" 2>err.txt); then
+            cat err.txt
+            exit 1
+          fi
+      - name: Verify the date tags still share that digest
+        env:
+          REGISTRY_ACTOR: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for tag in "latest.${DATE_TAG}" "${DATE_TAG}"; do
+            if ! actual=$(skopeo inspect --format '{{.Digest}}' \
+                            --creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}" \
+                            "docker://${IMAGE_REF}:${tag}" 2>/dev/null); then
+              continue
+            fi
+          done

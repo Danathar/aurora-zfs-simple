@@ -1,0 +1,11 @@
+# Issue #150: ci/write-badges.sh as it was before PR #151, building skopeo's
+# credential argument as --creds "actor:token". Named .txt rather than .sh
+# because every tracked *.sh has to be an executable, shellcheck-clean script;
+# tests/test-no-credential-in-argv.sh reads it as text and must flag the array.
+
+creds_args=()
+if [ -n "${REGISTRY_ACTOR:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+  creds_args=(--creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}")
+fi
+
+created="$(printf '%s' "$(inspect_json "$IMAGE_REF" "${creds_args[@]}")" | jq -r '.Created // empty' 2>/dev/null || true)"

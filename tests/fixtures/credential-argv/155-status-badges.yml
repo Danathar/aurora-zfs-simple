@@ -1,0 +1,22 @@
+# Issue #155: the status-branch publisher in status-badges.yml as it was before
+# PR #156, with the job's token spliced into the git remote URL. Not a workflow;
+# tests/test-no-credential-in-argv.sh reads it and must flag the remote URL.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish badges to status branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          cd "$work_dir"
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          if git fetch --depth 1 origin status 2>/dev/null; then
+            git checkout -q FETCH_HEAD -b status
+          else
+            git checkout -q --orphan status
+          fi
