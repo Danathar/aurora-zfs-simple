@@ -206,6 +206,7 @@ assert_not_contains "and no deny rule claims to gate that flag by prefix" \
 # --- 3. the deny rules that name files, held against the tree ---------------
 
 assert_contains "reading the signing key is denied" "${DENY}" "Read(./cosign.key)"
+assert_contains "renamed copies of the signing key are denied too" "${DENY}" "Read(./cosign.key.*)"
 assert_contains "and signing with it is denied" "${DENY}" "Bash(cosign sign:*)"
 
 tracked="$(cd "${REPO_ROOT}" && git ls-files)"
@@ -1355,6 +1356,7 @@ sc_repo_name="${REPO_ROOT##*/}"
 for leak in "shellcheck ./.env" \
     "shellcheck .env" \
     "shellcheck ./cosign.key" \
+    "shellcheck ./cosign.key.old-backup" \
     "shellcheck ./.env.local" \
     "shellcheck /etc/passwd" \
     "shellcheck ${WORK}/outside.sh" \
@@ -1497,6 +1499,7 @@ for lint in "shellcheck --version" \
     "shellcheck -P SCRIPTDIR -x tests/run-tests.sh" \
     "shellcheck -" \
     "shellcheck -C always" \
+    "shellcheck tests/cosign.keyring.sh" \
     "echo x; shellcheck tests/run-tests.sh" \
     "shellcheck tests/run-tests.sh && git diff HEAD"; do
     run_pre "$(pre_payload_for "${lint}")"
