@@ -333,7 +333,7 @@ EXTGLOB_SUBST_MSG='blocked: a command substitution (`$(...)`, a backtick) or a p
 # shellcheck disable=SC2016 # the literal $G and $(...) are what the reader has to see
 CMD_MSG='blocked: the name of a command in this string is not spelled literally -- it is built by an expansion (`$G diff ...`, `$(printf git) diff ...`, a backtick in command position), by a brace (`{,git} diff ...`), or by a glob (`g?t`, `/usr/bin/g[i]t`) -- so neither this gate nor the allow rule that matched the string'"'"'s literal prefix can tell which command bash will run, and `G=git; $G diff /dev/null ./cosign.key` runs the plain-file read this gate exists to refuse. Spell every command name literally, and drop a variable assignment that only exists to build one. After a wrapper such as command, env, exec, timeout or xargs the same holds for every word of that command, since the wrapper'"'"'s own options are not modelled here. A literal name after an assignment is not what this rule refuses -- the assignment has a refusal of its own -- and a literal path to git (`/usr/bin/git diff`) is read as git. env -S (--split-string) splits a quoted string into a command this gate never sees and is refused outright.'
 
-SHELLCHECK_MSG='blocked: shellcheck prints the source line above every diagnostic it reports, so pointing it at this path prints that file back -- every unexported NAME=value line of a .env, the BEGIN/END lines of a key -- past the Read(...) deny rules in .claude/settings.json, which gate the Read tool and say nothing about what an allow-listed Bash command opens. Operands must be inside the working tree and must not be one of the secret-shaped names those rules list (cosign.key, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519). Linting this repository'"'"'s own scripts is unaffected. Describe such a file with ls -l or wc -c instead.'
+SHELLCHECK_MSG='blocked: shellcheck prints the source line above every diagnostic it reports, so pointing it at this path prints that file back -- every unexported NAME=value line of a .env, the BEGIN/END lines of a key -- past the Read(...) deny rules in .claude/settings.json, which gate the Read tool and say nothing about what an allow-listed Bash command opens. Operands must be inside the working tree and must not be one of the secret-shaped names those rules list (cosign.key, cosign.key.*, .env, .env.*, *.pem, *.p12, id_rsa, id_ed25519). Linting this repository'"'"'s own scripts is unaffected. Describe such a file with ls -l or wc -c instead.'
 
 SHELLCHECK_OPTS_MSG='blocked: SHELLCHECK_OPTS is not a list of options -- shellcheck splits it and prepends it to its own argv, operands included, so SHELLCHECK_OPTS=./.env shellcheck tests/run-tests.sh lints the .env as well and prints its lines back, with no path in the argv this gate scans. The += append spelling sets it just the same, since appending to an unset variable creates it. Nothing in this repository sets the variable, so it is refused outright. Pass options after the command name instead.'
 
@@ -1337,13 +1337,14 @@ path_inside_worktree() {
 
 # The shapes `.claude/settings.json` denies the Read tool. Inside the working
 # tree is not enough on its own: `cosign.key` and a `.env` live there, and they
-# are the two files those rules exist for. The key and certificate suffixes are
+# are the two files those rules exist for, and a renamed copy of the key
+# (`cosign.key.old-backup`) is the same file under another name. The key and certificate suffixes are
 # not in the deny list today; they are here because a rule that only listed
 # what is checked in would go quiet the moment someone dropped a `.pem` beside
 # it.
 denied_read_shape() {
   case "${1##*/}" in
-  cosign.key | .env | .env.* | *.pem | *.p12 | id_rsa | id_ed25519) return 0 ;;
+  cosign.key | cosign.key.* | .env | .env.* | *.pem | *.p12 | id_rsa | id_ed25519) return 0 ;;
   *) return 1 ;;
   esac
 }
