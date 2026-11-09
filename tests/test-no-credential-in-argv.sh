@@ -27,6 +27,12 @@
 #   * the value of -p, --password, --creds or --registry-password, or
 #   * the password in a `user:<secret>@` URL.
 #
+# One more shape is not shell at all: a `uses: redhat-actions/push-to-registry@...`
+# step with a `password:` input. That action turns the input into
+# `podman push --creds=<user>:<password>`, so the password reaches argv even
+# though no run: block names it. The step should log in earlier with
+# docker/login-action and give push-to-registry no credential (#463).
+#
 # The one exception is printf writing to a pipe or a file (`printf ... |` or
 # `printf ... > file`). printf is a shell builtin, so no new process is started
 # with the token in its argv. Anything else that consumes printf's output, such
@@ -153,6 +159,26 @@ credential_sites() {
     done
 }
 
+# push_action_passwords <file>... -- print "<file>:<line>:input:password" for
+# each `password:` input of a `uses: redhat-actions/push-to-registry@...` step.
+# A step runs from its `- ` line to the next `- ` at the same or a shallower
+# indent; comment lines are skipped.
+push_action_passwords() {
+    awk '
+        function flush() { if (is_push && pw != "") print FILENAME ":" pw ":input:password"; is_push = 0; pw = "" }
+        FNR == 1 { flush(); indent = -1 }
+        /^[[:space:]]*#/ { next }
+        {
+            match($0, /^[[:space:]]*/); lead = RLENGTH
+            if ($0 ~ /^[[:space:]]*-[[:space:]]/ && (indent < 0 || lead <= indent)) { flush(); indent = lead }
+            else if ($0 !~ /^[[:space:]]/ && $0 != "") { flush(); indent = -1 }
+            if ($0 ~ /uses:.*redhat-actions\/push-to-registry@/) is_push = 1
+            if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?password:/ && pw == "") pw = FNR
+        }
+        END { flush() }
+    ' "$@"
+}
+
 # --- the detector against known answers ------------------------------------
 
 # Each fixture's verdicts as "<line>:<kind>", one per site, in order.
@@ -178,6 +204,13 @@ assert_eq "the other spellings are each flagged" \
 assert_eq "stdin, files, the environment and printf into a pipe or a file pass" \
     "$(printf '%s\n' 23:printf 24:printf)" "$(verdicts "${FIXTURES}/allowed.yml")"
 
+assert_eq "#463: the old Push To GHCR step's password input is flagged, the login step's is not" \
+    "$(printf '%s\n' 28:input:password)" \
+    "$(push_action_passwords "${FIXTURES}/463-push-to-registry.yml" | cut -d: -f2-)"
+
+assert_eq "#463: a file with no push-to-registry step passes" \
+    "" "$(push_action_passwords "${FIXTURES}/allowed.yml")"
+
 # --- the tree ----------------------------------------------------------------
 
 mapfile -t SCANNED < <(
@@ -197,7 +230,12 @@ for expected in .github/workflows/nightly-compliance.yml .github/workflows/statu
 done
 assert_not_contains "the scan skips the fixtures" "${SCANNED_LIST}" "${FIXTURES}/"
 
-FINDINGS=$(credential_sites "${SCANNED[@]}" | grep -v '^[^:]*:[0-9]*:printf:' | sed "s|^${REPO_ROOT}/||")
+FINDINGS=$(
+    {
+        credential_sites "${SCANNED[@]}" | grep -v '^[^:]*:[0-9]*:printf:'
+        push_action_passwords "${SCANNED[@]}"
+    } | sed "s|^${REPO_ROOT}/||"
+)
 if [[ -z "${FINDINGS}" ]]; then
     _pass "no command CI runs takes a token or password on its command line"
 else
