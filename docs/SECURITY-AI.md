@@ -429,6 +429,13 @@ reads it back, monthly and on demand:
   Earlier misses are listed under their own heading and do not fail the run.
 - **What it does not judge.** Who merged a pull request is reported, not
   checked: there is no second reviewer here to compare it against.
+- **Before the merge.** [`.github/workflows/agent-signature.yml`](../.github/workflows/agent-signature.yml)
+  checks the signature line on an open pull request the Hive app opened or
+  that comes from an `ai-fix/` branch, while the description can still be
+  edited. It runs the audit's own `def signature:` lines, and
+  `tests/test-agent-signature.sh` fails when the two copies differ. Its job
+  holds no token scope, checks nothing out and runs no action. It is advisory:
+  not in the ruleset's required checks.
 - **Its reach.** Its job holds `contents: read` and `pull-requests: read`,
   checks nothing out, runs no action, and writes only the run summary. Run it
   by hand with `gh workflow run agent-audit.yml --repo Danathar/aurora-zfs-simple -f since=YYYY-MM-DD`.
