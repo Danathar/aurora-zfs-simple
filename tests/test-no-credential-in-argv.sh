@@ -24,7 +24,11 @@
 # PASSWORD or SECRET in any case, `${{ github.token }}` or `${{ secrets.* }}` --
 # that is either
 #
-#   * the value of -p, --password, --creds or --registry-password, or
+#   * the value of -p, --password, --creds, --src-creds, --dest-creds or
+#     --registry-password (skopeo, podman, buildah, docker, cosign), of -u or
+#     --user (curl's user:password), or of -H or --header (an Authorization
+#     header), whether the value follows a space, an = or the short flag itself
+#     (`-p"$TOKEN"`), or
 #   * the password in a `user:<secret>@` URL.
 #
 # One more shape is not shell at all: a `uses: redhat-actions/push-to-registry@...`
@@ -70,7 +74,7 @@ SECRET_REF="[\$][{]?${SECRET_NAME}"
 # An Actions expression naming one value, such as ${{ github.token }}.
 EXPR_RE='[$][{][{][[:space:]]*([A-Za-z0-9_]+)[.]([A-Za-z0-9_]+)[[:space:]]*[}][}]'
 # A credential flag and the shell word after it.
-FLAG_RE="(^|[[:space:]\"'(])(-p|--password|--creds|--registry-password)([[:space:]]+|=)((\"[^\"]*\"|'[^']*'|[^[:space:]\"']+)+)"
+FLAG_RE="(^|[[:space:]\"'(])(-p|-u|-H|--password|--creds|--src-creds|--dest-creds|--registry-password|--user|--header)([[:space:]]+|=|)((\"[^\"]*\"|'[^']*'|[^[:space:]\"']+)+)"
 # A secret as the password part of a URL.
 URL_RE="[^[:space:]/@:\"']+:${SECRET_REF}[}]?@"
 # The text of the command a match sits in, before and after it.
@@ -196,7 +200,7 @@ assert_eq "#155: the token in status-badges.yml's git remote URL is flagged" \
     "17:url" "$(verdicts "${FIXTURES}/155-status-badges.yml")"
 
 assert_eq "the other spellings are each flagged" \
-    "$(printf '%s\n' 5:flag 7:flag 9:flag 11:flag 13:url 16:url)" \
+    "$(printf '%s\n' 5:flag 7:flag 9:flag 11:flag 13:url 16:url 18:flag 19:flag 21:flag 23:flag 24:flag 25:flag)" \
     "$(verdicts "${FIXTURES}/other-shapes.txt")"
 
 # The allowed file passes because of the printf exception, not because the
