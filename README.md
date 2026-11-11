@@ -246,6 +246,7 @@ tests/e2e/                                manual end-to-end image build and rech
 .github/workflows/labeler.yml             apply the descriptive `area/*` labels
 .github/workflows/ai-fix.yml              hand a labelled issue or a review to an agent
 .github/workflows/agent-audit.yml         monthly read-back of merged agent pull requests' signature and sign-off record
+.github/workflows/agent-signature.yml     check an open agent pull request's description for its signature line (advisory)
 .github/workflows/auto-issues.yml         open one issue when the build, nightly check or boot test fails unattended
 .github/rulesets/main.json                the ruleset that protects `main`, as applied to it
 .github/labeler.yml                       path-to-label map for the above

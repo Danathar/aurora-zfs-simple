@@ -1,0 +1,62 @@
+---
+name: Agent PR signature
+
+# Checks, while an agent pull request is still open, the line agent-audit.yml
+# reads back only after the merge: the `— hive:` signature that ends the
+# description. A merged pull request's description is out of reach, so a miss
+# the monthly audit finds can only be listed, never fixed. This finds it while
+# the description can still be edited, and runs again on every edit.
+#
+# Which pull requests: the ones the Hive app opened (`danathar-atomic-hive[bot]`
+# is how the event spells the login `gh` shows as `app/danathar-atomic-hive`)
+# and the ones from an `ai-fix/` branch. Every other pull request gets a
+# skipped job, which passes.
+#
+# The test is agent-audit.yml's own: the `def signature:` lines below are
+# copied from that workflow's step, and tests/test-agent-signature.sh fails
+# when the two copies differ. The audit's sign-off rule is not repeated here;
+# a commit's trailer can still be fixed after review, and the audit reads it.
+#
+# Advisory. `Shell tests` is the only check the ruleset requires, and this job
+# is not added to it; whether `signature` becomes required is the owner's
+# call, after it has run clean for a month.
+#
+# Its reach: `pull_request`, never `pull_request_target`; the job's token holds
+# no scope at all, nothing is checked out, no action runs, and nothing is
+# written. The description reaches the shell only through `env:` and is read
+# by `jq`, never through an Actions expression in the script.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: agent-signature-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  signature:
+    if: github.event.pull_request.user.login == 'danathar-atomic-hive[bot]' || startsWith(github.event.pull_request.head.ref, 'ai-fix/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    permissions: {}
+
+    steps:
+      - name: Check the description for the signature line
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # The two def lines are agent-audit.yml's, character for character.
+          signature="$(jq -nr '
+            def signature:
+              (.body // "") | split("\n") | map(select(startswith("— hive:"))) | first;
+            {body: env.PR_BODY} | signature // empty')"
+
+          if [ -z "${signature}" ]; then
+            echo "::error::The description has no line starting with '— hive:'. agent-audit.yml fails an agent pull request merged without one, and by then the description cannot be fixed. Add the line to the description; this check runs again on the edit."
+            exit 1
+          fi
+          echo "The description has its signature line."

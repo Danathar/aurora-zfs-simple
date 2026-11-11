@@ -41,6 +41,11 @@ name: Agent audit trail
 # this repository has no second reviewer, so a rule about self-merge would be
 # red on every run for a fact the maintainer already chose.
 #
+# The signature half is also checked before the merge, while a description can
+# still be edited: agent-signature.yml runs the same `def signature:` lines on
+# an open agent pull request, and tests/test-agent-signature.sh fails when the
+# two copies differ.
+#
 # It is a check, not a metric. docs/metrics.md keeps numbers off a schedule on
 # purpose; this runs monthly because its answer is red or green and a missing
 # record is a gap to close, not a trend to watch. It writes nothing but its own

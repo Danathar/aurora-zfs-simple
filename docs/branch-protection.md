@@ -54,6 +54,9 @@ does:
   the docs-only changes `build.yml` ignores. `Build and push image` is not
   required, because a docs-only pull request never gets it and would wait
   forever. `Apply area labels` classifies a change rather than checking it.
+  `signature` checks an agent pull request's description for its signature
+  line; it is advisory while it proves itself, and could be required later
+  because every other pull request gets it as a skipped job, which passes.
   `integration_id` 15368 is GitHub Actions.
 
 Nothing in this repository pushes to `main` outside a pull request today. Every
