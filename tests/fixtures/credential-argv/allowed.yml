@@ -27,3 +27,8 @@ jobs:
             '!f() { printf "username=x-access-token\npassword=%s\n" "${GH_TOKEN}"; }; f'
           skopeo inspect --authfile "${HOME}/.docker/config.json" --no-tags "docker://${IMAGE_REF}:latest"
           cosign sign -y --key env://COSIGN_PRIVATE_KEY "${IMAGE_REF}@${DIGEST}"
+          # -u, -H and the per-side skopeo flags without a secret in their value.
+          curl -fsSL -H "Accept: application/vnd.github+json" -u "${GITHUB_ACTOR}" --netrc-file "${RUNNER_TEMP}/netrc" https://api.github.com/user
+          env -u GH_TOKEN -u REGISTRY_TOKEN gh api user
+          skopeo copy --dest-authfile "${RUNNER_TEMP}/auth.json" oci:build "docker://${IMAGE_REF}"
+          podman login ghcr.io -u "${REGISTRY_ACTOR}" --password-stdin < "${RUNNER_TEMP}/token"
