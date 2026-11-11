@@ -14,3 +14,12 @@ git push https://oauth2:$CI_JOB_TOKEN@gitlab.example.com/group/repo.git HEAD
 # printf counts only when it writes to a pipe or a file. Here its output
 # becomes git's argument, so the token is on git's command line.
 git clone "$(printf '%s' "https://x-access-token:${GH_TOKEN}@github.com/o/r.git")" repo
+# skopeo copy and sync name the credential per side, not --creds.
+skopeo copy --dest-creds "${REGISTRY_ACTOR}:${REGISTRY_TOKEN}" oci:build docker://ghcr.io/o/i
+skopeo copy --src-creds=u:${{ secrets.GHCR_TOKEN }} docker://ghcr.io/o/a docker://ghcr.io/o/b
+# A short flag with its value attached, no space between them.
+podman login ghcr.io -u "${REGISTRY_ACTOR}" -p"${REGISTRY_TOKEN}"
+# curl's user:password and an Authorization header are argv too.
+curl -fsSL -u "x-access-token:${GH_TOKEN}" https://api.github.com/user
+curl -fsSL -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/user
+curl -fsSL --header "Authorization: token ${GH_TOKEN}" https://api.github.com/user
