@@ -284,7 +284,6 @@ REAL_CASES=(
     'build_files/post-check.sh|area/build'
     '.github/workflows/build.yml|area/ci'
     '.github/labeler.yml|area/ci'
-    '.github/dependabot.yml|area/ci'
     '.github/auto-qa-tuning.json|area/ci'
     'ci/write-badges.sh|area/ci'
     'renovate.json|area/ci'

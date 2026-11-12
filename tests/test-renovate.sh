@@ -2,10 +2,9 @@
 #
 # Exercises the Chunkah custom manager against every checked-in pin (workflow,
 # e2e script, README; the set is re-derived from the tracked files) and the
-# ignorePaths that could hide one, then the division
-# of labour between the two dependency bots: which of renovate.json and
-# .github/dependabot.yml owns each ecosystem, then the cosign CLI release
-# manager, and last when Renovate rebases its own branches.
+# ignorePaths that could hide one, then that Renovate is the only dependency
+# bot and owns the GitHub Actions pins, then the cosign CLI release manager, and
+# last when Renovate rebases its own branches.
 #
 # Renovate uses RE2's JavaScript-style named captures; Python's equivalent is
 # substituted below so the repository's existing Python dependency can run the
@@ -292,36 +291,24 @@ assert_eq "README replacement keeps the backticked pin" "true" "${readme_replace
 assert_eq "workflow and README Chunkah pins agree" "${workflow_value}" "${readme_value}"
 
 # =============================================================================
-# Who updates what: renovate.json against .github/dependabot.yml
+# Who updates what: Renovate alone, GitHub Actions included
 # =============================================================================
 #
-# The split between the two bots lives in a comment inside renovate.json --
-# "Dependabot owns GitHub Actions version updates; disable Renovate's
-# github-actions manager to avoid duplicate PRs". Only one half of that sentence
-# is in renovate.json; the other half is an ecosystem entry in
-# .github/dependabot.yml, and the two files never mention each other.
+# Until 2026-11 Dependabot owned GitHub Actions updates and renovate.json
+# disabled its github-actions manager. The hive cannot drive Dependabot (it
+# ignores `@dependabot` commands from the hive's GitHub App), so a Dependabot
+# PR that fell behind waited for the owner. Renovate now owns the Actions pins
+# too, and .github/dependabot.yml is gone.
 #
-# The consequence of them drifting apart is silent either way. Both bots on
-# github-actions means duplicate pull requests. Neither means the full-SHA
-# `uses:` pins that tests/lib/workflow_pins.py requires stop being moved by
-# anything and go stale with the suite green -- the pins stay valid, so nothing
-# fails. The cases below assert the ownership of each ecosystem, not just the
-# presence of each file.
+# Drift is silent either way. A Dependabot config coming back means duplicate
+# pull requests. Renovate's github-actions manager switched off with no
+# Dependabot config means the full-SHA `uses:` pins that
+# tests/lib/workflow_pins.py requires stop being moved by anything and go stale
+# with the suite green -- the pins stay valid, so nothing fails. The cases below
+# assert the ownership, not just the presence of a file. A Dependabot config, if
+# one reappears, is still read so the collision it would cause is named.
 
-DEPENDABOT_CONFIG="${REPO_ROOT}/.github/dependabot.yml"
 WORKFLOW_PYTHON="${WORKFLOW_PYTHON:-python3}"
-
-if [[ ! -f "${DEPENDABOT_CONFIG}" ]]; then
-    # Not a skip: renovate.json disables its github-actions manager on the
-    # assumption that this file exists.
-    _fail ".github/dependabot.yml exists" \
-        "no such file: ${DEPENDABOT_CONFIG}" \
-        "renovate.json disables its github-actions manager and leaves the" \
-        "GitHub Actions SHA pins to Dependabot; with this file gone, nothing" \
-        "updates them"
-    finish
-    exit 1
-fi
 
 if ! "${WORKFLOW_PYTHON}" -c 'import yaml' >/dev/null 2>&1; then
     _fail "the dependency-ownership cases require Python 3 with PyYAML" \
@@ -345,7 +332,9 @@ renovate = json.loads((repo_root / "renovate.json").read_text())
 
 sys.path.insert(0, str(repo_root / "tests" / "lib"))
 from renovate_rules import decide  # noqa: E402
-dependabot = yaml.safe_load((repo_root / ".github" / "dependabot.yml").read_text())
+dependabot_path = repo_root / ".github" / "dependabot.yml"
+dependabot = yaml.safe_load(dependabot_path.read_text()) if dependabot_path.is_file() else {}
+dependabot = dependabot or {}
 
 # Dependabot names an ecosystem, Renovate names a manager, and the two
 # vocabularies differ. An ecosystem missing from this table is reported rather
@@ -458,7 +447,6 @@ stale_pin_claim = [
 ]
 
 facts = {
-    "dependabot_version": str(dependabot.get("version")),
     # One line per github-actions entry, so a second copy of it -- two entries
     # opening the same update twice -- reads differently from one.
     "github_actions_updates": ",".join(
@@ -505,7 +493,7 @@ for key in sorted(facts):
 PY
 ); then
     _fail "the two bot configurations can be read together" \
-        "failed to load renovate.json, .github/dependabot.yml, or the documents they are held against"
+        "failed to load renovate.json or the documents it is held against"
     finish
     exit 1
 fi
@@ -517,17 +505,11 @@ while IFS=$'\t' read -r fact_key fact_value; do
     FACT["${fact_key}"]="${fact_value}"
 done <<<"${bot_facts}"
 
-assert_eq "dependabot.yml declares the v2 configuration format" \
-    "2" "${FACT[dependabot_version]}"
+assert_eq "no Dependabot entry updates GitHub Actions" \
+    "" "${FACT[github_actions_updates]}"
 
-# directory and interval are asserted together with the entry, not separately:
-# an entry scoped to a subdirectory would not reach .github/workflows, and one
-# with no schedule is not a running updater.
-assert_eq "Dependabot updates GitHub Actions weekly from the repository root" \
-    "/|weekly" "${FACT[github_actions_updates]}"
-
-assert_eq "GitHub Actions updates have exactly one owner, and it is Dependabot" \
-    "dependabot" "${FACT[github_actions_owner]}"
+assert_eq "GitHub Actions updates have exactly one owner, and it is Renovate" \
+    "renovate" "${FACT[github_actions_owner]}"
 
 assert_eq "every Dependabot ecosystem maps to a known Renovate manager" \
     "" "${FACT[unknown_ecosystems]}"
@@ -556,9 +538,9 @@ assert_eq "every Chunkah pin file is replayed against the packageRules" \
 assert_eq "no packageRule, applied in order, turns a Chunkah update off in any pin file" \
     "" "${FACT[chunkah_disabled]}"
 
-assert_eq "the repository configures exactly these two dependency bots" \
-    "renovate.json,.github/dependabot.yml" "${FACT[bot_configs]}"
-assert_eq "and docs/risk-tiers.md rates both of them Tier 2" \
+assert_eq "the repository configures exactly one dependency bot, Renovate" \
+    "renovate.json" "${FACT[bot_configs]}"
+assert_eq "and docs/risk-tiers.md rates it Tier 2" \
     "" "${FACT[bot_configs_missing_from_tier_2]}"
 
 # README.md tells a reader the Chunkah pin carries a digest. That claim is true
@@ -576,7 +558,8 @@ assert_eq "and no longer says the pin is a tag only" \
 # =============================================================================
 #
 # sigstore/cosign-installer's `cosign-release` input is a plain string inside a
-# `with:` block. Dependabot moves the action's SHA and never reads the input,
+# `with:` block. Renovate's github-actions manager moves the action's SHA and
+# never reads the input,
 # so without a custom manager the release that signs every published image
 # stays wherever it was last typed. That happened once already: the pin sat at
 # the template's v2.6.1 while v2.6.2 to v2.6.5 shipped.

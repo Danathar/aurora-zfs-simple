@@ -28,8 +28,7 @@
       "paths": [
         ".github/workflows/**",
         "ci/**",
-        "renovate.json",
-        ".github/dependabot.yml"
+        "renovate.json"
       ],
       "merge_on_green_ci_alone": false
     },

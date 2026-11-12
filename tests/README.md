@@ -163,17 +163,16 @@ over: they are absolute URLs, and they are in YAML. One of them carries an
 `lib/markdown.sh`, which both tests now share rather than keeping two copies of
 GitHub's slug rules that could drift apart.
 
-`test-renovate.sh` covers a division of labour that is written down in only one
-of the two places it binds. `renovate.json` disables its `github-actions`
-manager with a comment saying Dependabot owns those updates; the other half of
-that sentence is an ecosystem entry in `.github/dependabot.yml`, and neither
-file mentions the other. Both halves failing is silent in opposite directions —
-two bots on `github-actions` opens every update twice, and neither leaves the
-full-SHA `uses:` pins that `lib/workflow_pins.py` requires with nothing to move
-them, which does not fail anything because a stale pin is still a valid one. So
-the cases assert ownership rather than presence: each Dependabot ecosystem is
-mapped to the Renovate manager it would collide with, an unmapped ecosystem is
-a failure rather than an assumed-harmless addition, and the `Containerfile`'s
+`test-renovate.sh` holds that Renovate is the only dependency bot. Renovate
+owns the GitHub Actions pins since 2026-11 (the hive cannot drive Dependabot,
+which ignores `@dependabot` commands from the hive's GitHub App), so the cases
+assert that `renovate.json` keeps its `github-actions` manager on and that no
+`.github/dependabot.yml` comes back. Both failures are silent in opposite
+directions: two bots on `github-actions` opens every update twice, and neither
+leaves the full-SHA `uses:` pins that `lib/workflow_pins.py` requires with
+nothing to move them, which does not fail anything because a stale pin is still
+a valid one. A Dependabot ecosystem, if one reappears, is mapped to the Renovate
+manager it would collide with, and the `Containerfile`'s
 hand-managed ARGs are checked against both bots at once. The Chunkah pin
 carries a digest because Chunkah rewrites the image right before it is signed,
 so every match string has to capture one (without a `currentDigest` group
