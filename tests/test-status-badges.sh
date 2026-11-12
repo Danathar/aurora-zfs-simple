@@ -37,9 +37,11 @@
 # `GIT_CONFIG_GLOBAL`. Nothing is stubbed: it is git that runs, so the orphan
 # branch, the shallow fetch, the staged diff and the ref the push lands on are
 # all observed on the far side rather than asserted from the script's text.
-# Overriding GIT_CONFIG_GLOBAL also drops the ambient user identity, which makes
-# the step's own `git config user.name/user.email` lines load-bearing -- the
-# committer the branch ends up with is checked, not assumed.
+# Overriding GIT_CONFIG_GLOBAL also drops the ambient user identity from config,
+# and publish() unsets the GIT_AUTHOR_*/GIT_COMMITTER_* variables, which git
+# would otherwise prefer over any config. Together they make the step's own
+# `git config user.name/user.email` lines load-bearing -- the committer the
+# branch ends up with is checked, not assumed.
 #
 # The `if:` gate is checked against ci/write-badges.sh as well. The step only
 # runs when `steps.badges.outputs.akmods_updated` or `last_good_updated` is
@@ -281,6 +283,10 @@ publish() {
 
     (
         cd "${CASE_WORKSPACE}" || exit 1
+        # An identity exported by the caller's shell outranks `git config`, so
+        # without this the committer assertion reads the caller, not the step.
+        unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL \
+            GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
         GIT_CONFIG_GLOBAL="${CASE_DIR}/gitconfig" \
             GIT_CONFIG_NOSYSTEM=1 \
             GITHUB_WORKSPACE="${CASE_WORKSPACE}" \
@@ -324,8 +330,9 @@ assert_eq "only the two named badge files reach the status branch" \
 assert_eq "the status branch starts from a root commit, not the build branch" \
     "1" "$(git --git-dir="${CASE_REMOTE}" rev-list --count status)"
 
-# GIT_CONFIG_GLOBAL is overridden for the run, so this identity can only have
-# come from the step's own `git config` lines.
+# GIT_CONFIG_GLOBAL is overridden and the identity variables are unset for the
+# run, so this identity can only have come from the step's own `git config`
+# lines.
 assert_eq "the commit is authored by the actions bot" \
     "github-actions[bot] <github-actions[bot]@users.noreply.github.com>" \
     "$(git --git-dir="${CASE_REMOTE}" log -1 --format='%cn <%ce>' status)"
