@@ -58,6 +58,20 @@ does:
   line; it is advisory while it proves itself, and could be required later
   because every other pull request gets it as a skipped job, which passes.
   `integration_id` 15368 is GitHub Actions.
+- **A pull request need not be up to date with main.**
+  `strict_required_status_checks_policy` is `false`: `Shell tests` must pass on
+  the pull request's own head, but GitHub does not block it for being behind
+  `main`. It used to be `true`. Every merge then left each open pull request
+  needing an update from `main` and a fresh CI run, and Renovate and
+  Dependabot bump pull requests waited on a rebase nobody but the owner could
+  get them (Dependabot ignores the hive app's `@dependabot rebase`, and
+  Renovate stops rebasing once anyone else pushes to its branch). Patch and
+  minor updates with green CI are pre-approved under
+  [AGENTS.md "Owner's standing decisions"](../AGENTS.md#owners-standing-decisions),
+  and the owner turned the setting off so they land without a rebase. The cost
+  is that two pull requests that each pass can merge one after the other and
+  leave `main` red; [multi-agent.md](multi-agent.md#staying-out-of-each-others-way)
+  covers that.
 
 Nothing in this repository pushes to `main` outside a pull request today. Every
 first-parent commit on `main` since 2026-08-01 is a pull request merge. Renovate
