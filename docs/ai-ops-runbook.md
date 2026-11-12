@@ -36,10 +36,11 @@ those lists and is not is a signal too. See
 
 ## `main` is red
 
-A pull request has to be up to date with `main` before it merges, so two
-that each passed alone cannot land untested together; a scheduled build,
-though, runs on `main` with no pull request at all. Find which job is red,
-then:
+A pull request does not have to be up to date with `main` before it merges
+(the required check is not strict; [multi-agent.md](multi-agent.md#staying-out-of-each-others-way)
+says why), so two that each passed alone can land one after the other and
+leave `main` red. A scheduled build also runs on `main` with no pull request
+at all. Find which job is red, then:
 
 | Red job                                           | Means                                                                                                                                      | First thing                                                                                                                                                                                                                                   |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
