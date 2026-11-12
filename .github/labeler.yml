@@ -34,7 +34,6 @@
       - any-glob-to-any-file:
           - '.github/workflows/**'
           - '.github/policies/**'
-          - '.github/dependabot.yml'
           - '.github/labeler.yml'
           - '.github/auto-qa-tuning.json'
           - 'ci/**'

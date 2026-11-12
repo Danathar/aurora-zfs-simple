@@ -35,9 +35,9 @@ in the next section.
 | reviewer    | none, opens none   | none                     | none                                                                          | Comments on open pull requests with file:line evidence. Never merges or approves. |
 
 Three more kinds of author appear that are not part of the Hive fleet:
-`dependabot/` and `renovate/` branches (dependency bumps, configured in
-[`.github/dependabot.yml`](../.github/dependabot.yml) and
-[`renovate.json`](../renovate.json)) and `copilot/` or `codex/` branches from
+`renovate/` branches (dependency bumps, configured in
+[`renovate.json`](../renovate.json); older `dependabot/` branches predate the
+switch to Renovate in 2026-11) and `copilot/` or `codex/` branches from
 the code-review and coding assistants GitHub offers. The Hive pull requests are
 opened by the `danathar-atomic-hive` GitHub App, so the PR author is the app
 even when the commits inside carry a role's identity or `Danathar`.
