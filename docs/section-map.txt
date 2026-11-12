@@ -76,6 +76,8 @@
   prose: narrative: dated record of an incident, not a claim about the current tree
 ### Upstream issue map (where to look first)
   prose: narrative: links to upstream trackers outside this checkout
+## Owner's standing decisions
+  prose: narrative: a standing ruling on which owner questions agents decide themselves
 
 [CLAUDE.md]
 
