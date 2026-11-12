@@ -121,17 +121,25 @@ gh pr list --repo Danathar/aurora-zfs-simple --state open --json number,headRefN
 touches in the pull request body lets the next agent see an overlap without
 reading the diff. Nothing enforces it.
 
-**Expect a pull request to fall behind `main`.** The `main` ruleset requires
-`Shell tests`, and `strict_required_status_checks_policy` is `true` in
+**Two green pull requests can be red together.** The `main` ruleset requires
+`Shell tests`, and `strict_required_status_checks_policy` is `false` in
 [`.github/rulesets/main.json`](../.github/rulesets/main.json): a pull request
-has to contain the latest `main`, and pass `Shell tests` with it, before it
-can merge. Every merge makes the other open pull requests stale, so GitHub
-blocks each one as behind `main` until it is updated from `main` and
-`Shell tests` runs again. That is the cost, and it is paid so that two pull
-requests that each pass, for instance one that adds a workflow and one that
-adds a test counting the workflows, cannot land one after the other and leave
-`main` red. A pull request blocked as behind needs an update from `main`, not
-a fix, unless `Shell tests` then fails on the pair.
+must pass `Shell tests` on its own head, but it does not have to contain the
+latest `main` before it can merge. It used to be `true`, and then every merge
+left the other open pull requests blocked as behind `main`. Renovate and
+Dependabot bump pull requests suffered most: the hive cannot get either bot to
+update its branch (Dependabot ignores the hive app's `@dependabot rebase`, and
+Renovate stops rebasing a branch once anyone else has pushed to it), so they
+piled up for the owner. Patch and minor updates with green CI are already
+approved under [AGENTS.md "Owner's standing decisions"](../AGENTS.md#owners-standing-decisions),
+so the owner turned the up-to-date requirement off and those pull requests now
+merge without a rebase. The cost is the case the old setting prevented: two
+pull requests that each pass, for instance one that adds a workflow and one
+that adds a test counting the workflows, can land one after the other and
+leave `main` red. If your change and another open one touch files that one
+test joins, say so in the pull request body. When `main` goes red after a
+merge, fix it in a pull request of its own
+([ai-ops-runbook.md](ai-ops-runbook.md#main-is-red)).
 
 ## Who merges
 
