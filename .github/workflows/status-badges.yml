@@ -29,7 +29,7 @@ permissions:
 jobs:
   badges:
     name: Publish status badges
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Two skopeo inspects against a registry and a git push: minutes, not
     # hours. Without this the job inherits GitHub's 360-minute default, and a
     # skopeo hung against an unresponsive registry would hold a runner with
