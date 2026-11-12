@@ -37,7 +37,7 @@
     },
     {
       "customType": "regex",
-      "description": "Track the cosign CLI release that build.yml signs the image with and nightly-compliance.yml verifies it with. Dependabot moves the sigstore/cosign-installer SHA, but the action's cosign-release input is a plain string that neither bot reads without this manager. Both pins are in workflows, so one PR moves them together, which tests/test-nightly-compliance.sh requires.",
+      "description": "Track the cosign CLI release that build.yml signs the image with and nightly-compliance.yml verifies it with. Renovate's github-actions manager moves the sigstore/cosign-installer SHA, but the action's cosign-release input is a plain string it does not read without this manager. Both pins are in workflows, so one PR moves them together, which tests/test-nightly-compliance.sh requires.",
       "managerFilePatterns": [
         "/^\\.github/workflows/.*\\.ya?ml$/"
       ],
@@ -60,11 +60,6 @@
       "matchUpdateTypes": ["digest", "pinDigest", "pin"],
       "matchDepTypes": ["container"],
       "matchFileNames": [".github/workflows/**.yaml", ".github/workflows/**.yml"]
-    },
-    {
-      "description": "Dependabot owns GitHub Actions version updates; disable Renovate's github-actions manager to avoid duplicate PRs. Renovate still owns the Chunkah custom manager above.",
-      "enabled": false,
-      "matchManagers": ["github-actions"]
     },
     {
       "description": "Containerfile images are hand-managed via ARGs; the weekly scheduled build tracks :stable by design. Do not update or pin them.",
