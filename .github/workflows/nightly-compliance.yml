@@ -42,7 +42,7 @@ concurrency:
 jobs:
   suite:
     name: Shell suite
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
 
     permissions:
@@ -65,7 +65,7 @@ jobs:
 
   published_image:
     name: Published image
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
 
     permissions:

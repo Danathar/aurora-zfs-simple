@@ -37,7 +37,7 @@ concurrency:
 jobs:
   signature:
     if: github.event.pull_request.user.login == 'danathar-atomic-hive[bot]' || startsWith(github.event.pull_request.head.ref, 'ai-fix/')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
 
     permissions: {}

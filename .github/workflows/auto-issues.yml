@@ -84,7 +84,7 @@ concurrency:
 jobs:
   report:
     name: Open or update the failure issue
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The step re-checks all of this; the filter only spares a runner on the
     # (far more common) green run.
     if: >-
