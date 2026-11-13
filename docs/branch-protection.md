@@ -68,7 +68,11 @@ does:
   Renovate stops rebasing once anyone else pushes to its branch). Patch and
   minor updates with green CI are pre-approved under
   [AGENTS.md "Owner's standing decisions"](../AGENTS.md#owners-standing-decisions),
-  and the owner turned the setting off so they land without a rebase. The cost
+  and the owner turned the setting off so they land without a rebase. A new
+  GitHub Actions release waits three days (`minimumReleaseAge` in
+  `renovate.json`) before Renovate takes it, so a compromised action release
+  has time to be found and pulled before it can merge into the workflow that
+  signs the image. The cost
   is that two pull requests that each pass can merge one after the other and
   leave `main` red; [multi-agent.md](multi-agent.md#staying-out-of-each-others-way)
   covers that.
