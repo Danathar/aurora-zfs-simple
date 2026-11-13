@@ -275,8 +275,8 @@ done <<<"${IF_EXPR//||/$'\n'}"
 assert_eq "the job's if: is only conclusion == '...' terms joined by ||" "" "${if_bad}"
 step_conclusions="$(awk '/case "\$\{CONCLUSION\}" in/ { getline; print; exit }' "${STEP}" |
     sed -E 's/^[[:space:]]+//; s/\).*//' | tr '|' '\n')"
-assert_eq "the step's own conclusion check accepts failure and timed_out" \
-    "failure timed_out" "$(LC_ALL=C sort <<<"${step_conclusions}" | xargs)"
+assert_eq "the step's own conclusion check accepts failure, timed_out and startup_failure" \
+    "failure startup_failure timed_out" "$(LC_ALL=C sort <<<"${step_conclusions}" | xargs)"
 assert_eq "the job's if: admits exactly the conclusions the step reports" \
     "$(LC_ALL=C sort <<<"${step_conclusions}" | xargs)" \
     "$(LC_ALL=C sort <<<"${if_conclusions}" | xargs)"
@@ -468,6 +468,16 @@ run_step "${dir}" CONCLUSION=timed_out
 assert_eq "a timed-out run opens an issue" "1" "$(calls "${dir}" 'issue create')"
 assert_contains "that says it timed out" \
     "$(cat "${dir}/create-body")" "**Build container image** timed_out on"
+
+# --- startup_failure is a failure too ---------------------------------------
+# A run that never started (an invalid workflow file, a refused action) is red
+# with no log at all, which is when an issue matters most.
+
+dir="$(new_case startup-failure)"
+run_step "${dir}" CONCLUSION=startup_failure
+assert_eq "a run that never started opens an issue" "1" "$(calls "${dir}" 'issue create')"
+assert_contains "that says it never started" \
+    "$(cat "${dir}/create-body")" "**Build container image** startup_failure on"
 
 # --- a push to the default branch counts ------------------------------------
 

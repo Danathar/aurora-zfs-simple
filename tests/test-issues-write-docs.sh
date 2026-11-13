@@ -199,9 +199,9 @@ case_arms() {
     ' <<<"${SCRIPT}" | tr '|' '\n' | grep -vxF '*' | LC_ALL=C sort
 }
 
-assert_eq "the step reports a failed or timed-out run" $'failure\ntimed_out' "$(case_arms CONCLUSION)"
-assert_eq "and the job-level filter lets the same two through" \
-    "github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out'" \
+assert_eq "the step reports a failed, timed-out or never-started run" $'failure\nstartup_failure\ntimed_out' "$(case_arms CONCLUSION)"
+assert_eq "and the job-level filter lets the same three through" \
+    "github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'timed_out' || github.event.workflow_run.conclusion == 'startup_failure'" \
     "$(auto '."auto-issues.yml".jobs.report.if' | jq -r .)"
 
 # Each accepted event, and how the page names it.
@@ -215,8 +215,8 @@ assert_eq "the events the step accepts are the ones the page lists" \
 
 scope_bullet="$(grep -oE '\- it acts only on [^;]*;' <<<"${SECURITY}")"
 assert_contains "SECURITY-AI.md has the bullet on which runs it acts on" "${scope_bullet:+present}" "present"
-assert_contains "the bullet says failed or timed-out, on the default branch" "${scope_bullet}" \
-    "it acts only on a failed or timed-out run on the default branch"
+assert_contains "the bullet says failed, timed-out or never-started, on the default branch" "${scope_bullet}" \
+    "it acts only on a failed, timed-out or never-started run on the default branch"
 for event in "${!EVENT_PHRASE[@]}"; do
     assert_contains "the bullet names the ${event} event" "${scope_bullet}" "${EVENT_PHRASE[${event}]}"
 done
