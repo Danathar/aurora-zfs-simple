@@ -3503,4 +3503,84 @@ assert_contains "and the residual it cannot close" \
 assert_contains "and the test that holds the corpus to it" \
     "${CORPUS_NOTE}" "tests/test-claude-settings.sh"
 
+# 11. a bare repository committed into a branch cannot make a pre-approved
+# `git show` / `git log -p` run a program.
+#
+# `.claude/settings.json` allows `Bash(git show:*)` and `Bash(git log:*)`. A
+# branch can commit a bare repository as ordinary files (`evil/HEAD`,
+# `evil/config`, `evil/info/attributes`, `evil/objects/...`). Run from inside
+# `evil/`, git discovers it, reads `* diff=x` from its info/attributes and runs
+# the `diff.x.textconv` program from its config to render the diff, with no
+# permission prompt. The guard hook never sees that config. The `env` block sets
+# `safe.bareRepository=explicit` so git refuses to use such a directory.
+EXPECTED_ENV='{"GIT_CONFIG_COUNT":"1","GIT_CONFIG_KEY_0":"safe.bareRepository","GIT_CONFIG_VALUE_0":"explicit"}'
+assert_eq "settings.json sets safe.bareRepository=explicit through GIT_CONFIG_* for agent commands" \
+    "${EXPECTED_ENV}" "$(jq -c '.env // {}' "${SETTINGS}")"
+
+BARE_DIR="${WORK}/bare"
+MARKER="${BARE_DIR}/ran"
+mkdir -p "${BARE_DIR}/home"
+clean_git() {
+    env -i PATH="${PATH}" HOME="${BARE_DIR}/home" GIT_CONFIG_NOSYSTEM=1 \
+        GIT_CONFIG_GLOBAL=/dev/null "$@"
+}
+AGENT_ENV=()
+while IFS= read -r pair; do AGENT_ENV+=("${pair}"); done \
+    < <(jq -r '.env // {} | to_entries[] | "\(.key)=\(.value)"' "${SETTINGS}")
+agent_git() {
+    env -i PATH="${PATH}" HOME="${BARE_DIR}/home" GIT_CONFIG_NOSYSTEM=1 \
+        GIT_CONFIG_GLOBAL=/dev/null "${AGENT_ENV[@]}" git "$@"
+}
+
+(
+    set -e
+    cd "${BARE_DIR}"
+    clean_git git init -q src
+    clean_git git init -q work
+    printf 'one\n' >work/f
+    clean_git git -C work add f
+    clean_git git -C work -c user.name=t -c user.email=t@t commit -qm planted
+    clean_git git init -q --bare src/evil
+    clean_git git -C work push -q ../src/evil HEAD:refs/heads/main
+    clean_git git --git-dir=src/evil symbolic-ref HEAD refs/heads/main
+    mkdir -p src/evil/info
+    printf '* diff=x\n' >src/evil/info/attributes
+    clean_git git --git-dir=src/evil config diff.x.textconv "touch '${MARKER}'; cat"
+    clean_git git -C src add evil
+    clean_git git -C src -c user.name=t -c user.email=t@t commit -qm x
+    clean_git git clone -q src victim
+) >"${BARE_DIR}/setup.log" 2>&1
+assert_eq "the planted bare repository is built and cloned" "0" "$?"
+
+if [[ -d "${BARE_DIR}/victim/evil" ]]; then
+    # Precondition: without the setting the planted program runs, so the
+    # refusals below prove something.
+    rm -f "${MARKER}"
+    (cd "${BARE_DIR}/victim/evil" && clean_git git show >/dev/null 2>&1)
+    assert_file_exists "without the setting, git show inside the planted directory runs its program" "${MARKER}"
+
+    for cmd in "show" "log -p -1"; do
+        rm -f "${MARKER}"
+        # shellcheck disable=SC2086 # ${cmd} is a fixed word list
+        out="$(cd "${BARE_DIR}/victim/evil" && agent_git ${cmd} 2>&1)"
+        status=$?
+        assert_eq "with the setting, git ${cmd} inside the planted directory fails" "128" "${status}"
+        assert_contains "and names safe.bareRepository as the reason" "${out}" "safe.bareRepository"
+        assert_file_missing "and the planted program did not run (git ${cmd})" "${MARKER}"
+
+        rm -f "${MARKER}"
+        # shellcheck disable=SC2086 # ${cmd} is a fixed word list
+        out="$(cd "${BARE_DIR}/victim" && agent_git -C evil ${cmd} 2>&1)"
+        status=$?
+        assert_eq "with the setting, git -C evil ${cmd} fails" "128" "${status}"
+        assert_file_missing "and the planted program did not run (git -C evil ${cmd})" "${MARKER}"
+    done
+
+    # The checkout's own repository (.git/, not bare) is unaffected.
+    assert_eq "the checkout's own git log still works with the setting" \
+        "x" "$(cd "${BARE_DIR}/victim" && agent_git log -1 --format=%s 2>/dev/null)"
+else
+    _fail "the planted directory exists in the clone" "no ${BARE_DIR}/victim/evil" "$(cat "${BARE_DIR}/setup.log")"
+fi
+
 finish
