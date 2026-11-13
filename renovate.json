@@ -56,6 +56,11 @@
       "matchUpdateTypes": ["pin", "pinDigest"]
     },
     {
+      "description": "Wait three days before taking a new GitHub Actions release. Patch and minor action updates with green CI merge without the owner (AGENTS.md \"Owner's standing decisions\"), and a compromised action usually ships as a fresh release that is found and pulled within days; this is the window in which it can be caught before it reaches the workflow that signs and pushes the image.",
+      "matchManagers": ["github-actions"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
       "enabled": false,
       "matchUpdateTypes": ["digest", "pinDigest", "pin"],
       "matchDepTypes": ["container"],
