@@ -511,6 +511,25 @@ assert_eq "no Dependabot entry updates GitHub Actions" \
 assert_eq "GitHub Actions updates have exactly one owner, and it is Renovate" \
     "renovate" "${FACT[github_actions_owner]}"
 
+# Patch and minor action updates with green CI merge without the owner, and
+# sigstore/cosign-installer's bump never runs on its own pull request (its step
+# is main-only). A compromised action release is usually found and pulled
+# within days; the wait is the window to catch it before it reaches the
+# signing job. Scoped to the github-actions manager: the Chunkah digest
+# updates may carry no release date, and a wait could stall them.
+release_age_rules=$(jq -c '[.packageRules[] | select(has("minimumReleaseAge"))]' "${CONFIG}")
+assert_eq "exactly one packageRule sets a release-age wait" \
+    "1" "$(jq 'length' <<<"${release_age_rules}")"
+assert_eq "and it applies to the github-actions manager only" \
+    '["github-actions"]' "$(jq -c '.[0].matchManagers' <<<"${release_age_rules}")"
+assert_eq "and holds a new GitHub Actions release back three days" \
+    '"3 days"' "$(jq -c '.[0].minimumReleaseAge' <<<"${release_age_rules}")"
+assert_eq "and narrows nothing else" \
+    '["description","matchManagers","minimumReleaseAge"]' \
+    "$(jq -c '.[0] | keys' <<<"${release_age_rules}")"
+assert_eq "and no top-level release-age wait reaches the Chunkah updates" \
+    "false" "$(jq 'has("minimumReleaseAge")' "${CONFIG}")"
+
 assert_eq "every Dependabot ecosystem maps to a known Renovate manager" \
     "" "${FACT[unknown_ecosystems]}"
 
