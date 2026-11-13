@@ -257,6 +257,30 @@ if key is not None:
               wf_named == job_files.get(context, set()),
               f"page: {sorted(wf_named)}", f"workflows: {sorted(job_files.get(context, set()))}")
 
+# Whether a pull request has to contain the latest `main` before it merges.
+# The page spells the JSON value and names its effect in a bullet's lead, and
+# both have to follow the file. Before this check only the two other pages that
+# quote the value were joined to it, so flipping the value, the page's copy of
+# it, or the lead, or deleting the bullet, left this test green.
+actual_strict = rules.get("required_status_checks", {}).get("strict_required_status_checks_policy")
+stated_strict = re.findall(r"`strict_required_status_checks_policy` is `(true|false)`", squash(prose))
+check("the page states strict_required_status_checks_policy once",
+      len(stated_strict) == 1, f"found: {stated_strict}")
+check("the strictness the page states is the ruleset's",
+      stated_strict == [json.dumps(actual_strict)],
+      f"page: {stated_strict}", f"ruleset: {actual_strict}")
+key, _ = lead(r"up to date with `?main`?")
+check("the page has one bullet about being up to date with main", key is not None,
+      f"leads: {sorted(leads)}")
+if key is not None:
+    says = re.match(r"A pull request (must|need not) be up to date", key)
+    check("the up-to-date bullet's lead says must or need not",
+          says is not None, f"lead: {key}")
+    if says:
+        check("the up-to-date bullet's lead says what the ruleset does",
+              (says.group(1) == "must") == (actual_strict is True),
+              f"lead: {key}", f"strict: {actual_strict}")
+
 key, body = lead(r"`deletion`")
 if key is not None:
     status_wf = open(os.path.join(workflows, "status-badges.yml"), encoding="utf-8").read()
