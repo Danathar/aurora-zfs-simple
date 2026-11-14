@@ -1,6 +1,13 @@
 # keep this in sync with aurora or else you will not get any updates
 ARG FEDORA_VERSION=44
-ARG AURORA_TAG=stable
+# TEMPORARY PIN (issue #499). aurora-dx:stable moved to Fedora 45 on
+# 2026-11-13, but akmods and akmods-zfs have no coreos-stable-45 tags yet, so
+# FEDORA_VERSION cannot move (docs/manual-input-check.md). This is the last
+# Fedora 44 Aurora stable build. Its kernel, 7.2.11-200.fc44, is the one the
+# coreos-stable-44 akmods images carry. Aurora userspace is frozen while this
+# pin stands. Once both coreos-stable-45 tags exist and agree, set this back to
+# `stable` and FEDORA_VERSION to 45 in the same change.
+ARG AURORA_TAG=stable-44.20261110.1
 ARG AURORA_IMAGE=ghcr.io/ublue-os/aurora-dx
 
 FROM scratch AS ctx

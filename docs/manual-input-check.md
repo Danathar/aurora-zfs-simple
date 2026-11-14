@@ -6,13 +6,18 @@ the Universal Blue package tags yourself.
 
 ## What Must Match
 
-For a Fedora release `N`, these inputs need to exist and line up:
+For a Fedora release `N`, these inputs need to exist and line up. The block
+names the base image the `Containerfile` uses now:
 
 ```text
-ghcr.io/ublue-os/aurora-dx:stable
+ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1
 ghcr.io/ublue-os/akmods:coreos-stable-N-x86_64
 ghcr.io/ublue-os/akmods-zfs:coreos-stable-N-x86_64
 ```
+
+The base is normally `aurora-dx:stable`. It is pinned to the last Fedora 44
+build for now (see "Base Image Guard"). When checking release `N`, check
+`aurora-dx:stable`, because that is the tag the bump returns to.
 
 The kernel provided by `akmods:coreos-stable-N-x86_64` must have matching ZFS
 kmods in the corresponding `akmods-zfs` image.
@@ -132,18 +137,28 @@ If they line up, update the `Containerfile`:
 ARG FEDORA_VERSION=45
 ```
 
+If `AURORA_TAG` is pinned to a dated Fedora 44 build (see "Base Image Guard"
+below), set it back to `stable` in the same change.
+
 If they do not line up, leave `FEDORA_VERSION` alone and stay on the last
 working image.
 
 ## Base Image Guard
 
-The base image tracks Aurora DX stable:
+The base image normally tracks Aurora DX stable, with `ARG AURORA_TAG=stable`.
+For now it is pinned to the last Fedora 44 stable build:
 
 ```Dockerfile
 ARG AURORA_IMAGE=ghcr.io/ublue-os/aurora-dx
-ARG AURORA_TAG=stable
+ARG AURORA_TAG=stable-44.20261110.1
 ```
 
 The `Containerfile` fails the build if `aurora-dx:stable` has moved to a
 different Fedora release than `FEDORA_VERSION`. That prevents accidentally
 building a mixed-release image while still allowing stable-channel updates.
+
+When Aurora stable moves to Fedora `N+1` before the akmods tags for `N+1`
+exist, that guard fails every build. The response is to pin `AURORA_TAG` to the
+last dated Fedora `N` stable build, as above, and remove
+the pin when `FEDORA_VERSION` moves. Aurora userspace is frozen while the pin
+stands. This was done for Fedora 45 in #499.

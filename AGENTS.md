@@ -152,7 +152,7 @@ entirely on those three agreeing about one thing: **the kernel version**.
 
 | Input                                                  | Referenced at                                                | Provides                                                                                 |
 | ------------------------------------------------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `ghcr.io/ublue-os/aurora-dx:stable`                    | [`Containerfile`](Containerfile) `AURORA_IMAGE`/`AURORA_TAG` | The base OS. Its own kernel is discarded.                                                |
+| `ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1`      | [`Containerfile`](Containerfile) `AURORA_IMAGE`/`AURORA_TAG` | The base OS. Its own kernel is discarded. Normally `:stable`; pinned for now (#499).     |
 | `ghcr.io/ublue-os/akmods:coreos-stable-<N>-x86_64`     | [`Containerfile`](Containerfile) `FROM ... AS akmods`        | `/kernel-rpms` (**the kernel actually shipped**) plus common kmods (xone, v4l2loopback). |
 | `ghcr.io/ublue-os/akmods-zfs:coreos-stable-<N>-x86_64` | [`Containerfile`](Containerfile) `FROM ... AS akmods-zfs`    | `/rpms/kmods/zfs` — `kmod-zfs` plus ZFS userspace.                                       |
 
@@ -221,7 +221,7 @@ for img in akmods akmods-zfs; do
 done
 # context only — not part of the skew test
 printf '%-12s %s\n' "aurora-dx" \
-  "$(skopeo inspect --format '{{ index .Labels "ostree.linux" }}' docker://ghcr.io/ublue-os/aurora-dx:stable)"
+  "$(skopeo inspect --format '{{ index .Labels "ostree.linux" }}' docker://ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1)"
 ```
 
 The `ostree.linux` label is the authoritative kernel version for these images.
@@ -470,8 +470,8 @@ The warning names what was left behind and where. Work out who wrote it:
   `/var/lib/dnf/repos`, `/var/lib/rpm-state` and `/boot`'s contents, and extend
   `tests/test-containerfile.sh` to match.
 - **The Aurora base image.** Run the same lint against
-  `ghcr.io/ublue-os/aurora-dx:stable` on its own:
-  `podman run --rm ghcr.io/ublue-os/aurora-dx:stable bootc container lint`. If
+  the base image the `Containerfile` names on its own:
+  `podman run --rm ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1 bootc container lint`. If
   it warns there too, the cause is upstream. Clean it up here, or drop
   `--fatal-warnings` for as long as upstream takes, and record which warning and
   why in the incident log below, so the flag is put back. The flag is pinned in
@@ -558,6 +558,22 @@ Same skew, one kernel bump further along, but the resolution path changed.
 **Generalizable lesson:** a stalled OpenZFS release branch is no longer
 sufficient evidence that the wait is open-ended. Check for a ublue-side patch PR
 before reaching for a pin.
+
+### 2026-11-13: Aurora stable moves to Fedora 45 before akmods does
+
+- `aurora-dx:stable` moved to Fedora 45 (`45.20261113.1`, kernel
+  `7.2.11-300.fc45`). The next build failed at the `Containerfile`'s Fedora
+  guard, not in `zfs.sh` (#499). This was not skew.
+- `akmods` and `akmods-zfs` had no `coreos-stable-45` tags yet. Only
+  `coreos-testing-45` existed, on kernel `7.2.11-300.fc45`. So
+  `FEDORA_VERSION` could not move.
+- `coreos-stable-44` was still coherent: both labels read
+  `7.2.11-200.fc44.x86_64`.
+- Response: pin `AURORA_TAG` to `stable-44.20261110.1`, the last Fedora 44
+  Aurora stable build, which carries the same `7.2.11-200.fc44` kernel. The
+  akmods inputs stay floating. Aurora userspace is frozen while the pin stands.
+- To undo: once both `coreos-stable-45` tags exist and their labels agree, set
+  `AURORA_TAG` back to `stable` and `FEDORA_VERSION` to 45 in one change.
 
 ### Upstream issue map (where to look first)
 
