@@ -99,6 +99,7 @@ failed:
 | Step                                           | Failing on an unchanged commit means                                                                                                         |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Run shell test suite                           | The runner changed under the suite, most often its shellcheck version.                                                                       |
+| Report when the pinned base can go back to stable | Not a regression: `AURORA_TAG` is pinned and both `coreos-stable-<next>` akmods tags now exist. Follow [manual-input-check.md](manual-input-check.md) to lift the pin. |
 | Resolve the published :latest                  | `:latest` cannot be read (`could not be inspected` in the log): it was deleted or repointed, or the registry or credentials are not working. |
 | Verify the published signature                 | The image no longer verifies against `cosign.pub`.                                                                                           |
 | Verify :latest is readable without credentials | The package stopped being public, so hosts that installed from the README can no longer pull updates. Check the package's visibility.        |

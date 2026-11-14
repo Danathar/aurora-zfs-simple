@@ -12,11 +12,12 @@ name: Nightly compliance
 # public key, an image deleted out from under consumers -- none of that is
 # visible to a workflow that only runs at build time.
 #
-# So this asks three questions daily:
+# So this asks four questions daily:
 #
 #   1. Does the shell suite still pass?          (rot from the runner, not the tree)
 #   2. Is the published :latest still signed by the key in cosign.pub?
 #   3. Do the tags that should share :latest's digest still share it?
+#   4. If AURORA_TAG is pinned, can the pin be lifted yet?
 #
 # Question 1 is not redundant with `build.yml`. That suite's shellcheck pass
 # depends on the shellcheck version the hosted runner ships, which changes
@@ -62,6 +63,61 @@ jobs:
         env:
           WORKFLOW_PYTHON: /usr/bin/python3
         run: ./tests/run-tests.sh
+
+  # The Containerfile can hold AURORA_TAG on a dated build of the previous
+  # Fedora release while the akmods images catch up (AGENTS.md incident log,
+  # 2026-11-13). Aurora userspace gets no updates while that pin stands, and
+  # nothing else notices the day it can be lifted. This fails once both
+  # coreos-stable-<FEDORA_VERSION+1> tags exist, so auto-issues.yml opens an
+  # issue. It passes whenever AURORA_TAG is `stable`.
+  base_pin:
+    name: Base image pin
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Ensure skopeo is present
+        run: |
+          set -eux
+          command -v skopeo || { sudo apt-get update && sudo apt-get install -y skopeo; }
+          skopeo --version
+
+      - name: Report when the pinned base can go back to stable
+        run: |
+          set -euo pipefail
+          arg() { sed -nE "s/^ARG[[:space:]]+$1=(.+)$/\1/p" Containerfile | head -1; }
+          tag="$(arg AURORA_TAG)"
+          fedora="$(arg FEDORA_VERSION)"
+          if [ "${tag}" = stable ]; then
+            echo "AURORA_TAG is stable; no pin to lift."
+            exit 0
+          fi
+          next=$((fedora + 1))
+          missing=0
+          for image in akmods akmods-zfs; do
+            ref="ghcr.io/ublue-os/${image}:coreos-stable-${next}-x86_64"
+            if skopeo inspect --no-tags --no-creds --format '{{.Digest}}' \
+                 "docker://${ref}" > /dev/null 2>err.txt; then
+              echo "${ref} exists"
+            else
+              echo "${ref} not readable yet: $(head -1 err.txt)"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "AURORA_TAG stays pinned to ${tag} for now."
+            exit 0
+          fi
+          echo "::error::AURORA_TAG is pinned to ${tag}, and both coreos-stable-${next} akmods tags now exist. If their kernel labels agree (docs/manual-input-check.md), set AURORA_TAG back to stable and FEDORA_VERSION to ${next} in one change."
+          exit 1
 
   published_image:
     name: Published image
