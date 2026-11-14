@@ -367,13 +367,13 @@ GATED_ENV_MSG='blocked: an assignment before an allow-listed command (`NAME=valu
 EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=value`, `declare -x`, `typeset -x`, `readonly`) reaches a later command of the same string exactly as a leading `NAME=value` does, and this string arms one and then runs an allow-listed command or git: `export GIT_EXTERNAL_DIFF=prog; git diff HEAD~1` runs prog once per changed path while no word of the git invocation carries an assignment at all, and `export LD_PRELOAD=x.so; shellcheck f` loads code before a line is linted. The builtin is refused rather than its options read, because the flag that exports has several spellings (-x, -gx, an earlier `declare -x NAME` with a plain `NAME=value` after it) and a half-modelled option list is a gate that disagrees with bash in some other direction. A bare name is refused for that reason too: `export GIT_EXTERNAL_DIFF; GIT_EXTERNAL_DIFF=prog; git diff HEAD~1` exports the variable first and assigns to it afterwards, in a command bash reads as an assignment of its own, and the value lands in git'"'"'s environment just the same. `set -a` (and `set -o allexport`) is the same arming with no name in it at all -- from there bash exports every assignment it performs -- so a word of `set` that carries an `a` arms it as well. Only a string that also runs one of those commands is refused; an export on its own is not this gate'"'"'s business. Residual, stated rather than implied: bash keeps an exported variable across Bash calls, so an export approved in an earlier call is outside what a PreToolUse hook reading one command string can see, and so is a variable exported by a file the string sources.'
 
 # shellcheck disable=SC2016 # the config keys are spellings the reader has to see
-GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
+GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. `--git-dir DIR`, and `--bare`, which is `--git-dir=.`, hand git a whole repository config to load: a bare repository committed into a branch names a diff.x.textconv program that `git --git-dir=evil log -p` runs, and the safe.bareRepository=explicit setting in .claude/settings.json lets exactly that spelling through, because naming the directory is what makes it explicit. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
 
 # shellcheck disable=SC2016 # the glob spellings are what the reader has to see
 GIT_GLOB_MSG='blocked: an unquoted glob character (*, ? or a bracket) in a word of a git invocation is expanded by bash before git sees it, so the operands this gate counted are not the operands git receives: `git diff /etc/passwd*` is one word here and two plain files at git, which prints the diff between them, and `git diff .env*` is that same read of two untracked files inside the checkout -- the plain-file mode reached with one operand written and no flag anywhere. Expanding it correctly means reimplementing bash inside a hook, so it is refused instead, as it already is in a shellcheck and a bash -n invocation. Quote the pathspec (`git diff -- '"'"'tests/*.sh'"'"'`), which is the spelling git expands itself, or write the paths out.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
-MOVED_MSG='blocked: this string changes the directory the paths in it are resolved against -- a `cd` or `pushd` before the command, `env -C DIR`, or git'"'"'s own -C, --git-dir, --work-tree, --namespace, --super-prefix or --attr-source -- and the containment test here runs against this checkout while the command opens paths under the new directory. So every operand looked local and none was: `git -C /home/dev diff -- .bashrc .profile` printed two files out of the home directory as a plain-file diff, and `cd /home/dev && shellcheck .bashrc` printed one back through the source line it echoes. Operands are undecidable once the directory moves, so the two-operand diff, a shellcheck or bash -n operand and a file on the stdin of either are refused there. Run the command from the checkout with its paths spelled relative to it.'
+MOVED_MSG='blocked: this string changes the directory the paths in it are resolved against -- a `cd` or `pushd` before the command, `env -C DIR`, or git'"'"'s own -C, --work-tree, --namespace, --super-prefix or --attr-source -- and the containment test here runs against this checkout while the command opens paths under the new directory. So every operand looked local and none was: `git -C /home/dev diff -- .bashrc .profile` printed two files out of the home directory as a plain-file diff, and `cd /home/dev && shellcheck .bashrc` printed one back through the source line it echoes. Operands are undecidable once the directory moves, so the two-operand diff, a shellcheck or bash -n operand and a file on the stdin of either are refused there. Run the command from the checkout with its paths spelled relative to it.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 WRAPPER_SHELL_MSG='blocked: `flock -c COMMAND` (and `--command=COMMAND`) hands the string to a shell rather than passing it as an ordinary command word -- `flock --help` documents `-c, --command <command>` as running a single command string through the shell -- so `git status; flock /tmp/l -c '"'"'cat ./cosign.key'"'"'` runs the read past the Read(./cosign.key) deny rule with `git status` alone matching the allow row this string is judged against. This scan reads words, not a nested shell program inside one, so that string is never re-parsed for a gated name hiding in it; the option is refused outright, the way env -S is. Run the command flock would run as a command of its own.'
@@ -2350,8 +2350,16 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # outright; no allow-listed subcommand reaches the last two today, and
     # they are refused with the family rather than left for the rule that adds
     # one.
+    # `--git-dir` and `--bare` (`--git-dir=.`) name the repository whose
+    # config git loads, for every subcommand and not only `diff`: the
+    # settings env's safe.bareRepository=explicit refuses a bare repository
+    # git discovers, and naming one is what makes it explicit, so
+    # `git --git-dir=evil log -p` still ran a textconv program committed into
+    # a branch. `--bare` after a subcommand (`git init --bare`) is that
+    # subcommand's own flag and never reaches this scan.
     -c | --config-env | --config-env=* | --exec-path | --exec-path=* | \
-      --upload-pack | --upload-pack=* | --receive-pack | --receive-pack=*)
+      --upload-pack | --upload-pack=* | --receive-pack | --receive-pack=* | \
+      --git-dir | --git-dir=* | --bare)
       refuse "${GIT_CONFIG_MSG}"
       ;;
     # The options that move the paths this invocation opens. They do not move
@@ -2368,12 +2376,12 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
     # operands turn out unresolved; `path_inside_worktree` and the
     # two-operand test below still run for a plain relocation-free
     # `git diff` that later turns out unresolved some other way.
-    -C | --git-dir | --work-tree | --namespace | --super-prefix | --attr-source)
+    -C | --work-tree | --namespace | --super-prefix | --attr-source)
       diff_relocated=1
       skip_git_option_value=1
       continue
       ;;
-    --git-dir=* | --work-tree=* | --namespace=* | --super-prefix=* | --attr-source=*)
+    --work-tree=* | --namespace=* | --super-prefix=* | --attr-source=*)
       diff_relocated=1
       continue
       ;;
