@@ -61,6 +61,7 @@
       "workflow": null,
       "jobs": {
         "suite": {"contents": "read"},
+        "base_pin": {"contents": "read"},
         "published_image": {"contents": "read", "packages": "read"}
       }
     },

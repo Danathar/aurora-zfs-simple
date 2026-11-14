@@ -65,6 +65,11 @@
       "timeout_minutes": 15
     },
     {
+      "workflow": "nightly-compliance.yml",
+      "job": "Base image pin",
+      "timeout_minutes": 5
+    },
+    {
       "workflow": "labeler.yml",
       "job": "Apply area labels",
       "timeout_minutes": 5
