@@ -234,7 +234,10 @@ the command name alone would have looked fine:
   `--config-env=...`, `--exec-path`, `--upload-pack`/`--receive-pack`, and
   config keys such as `core.sshCommand`, `core.hooksPath`,
   `uploadpack.packObjectsHook`, and `credential.helper` all turn an
-  allow-listed `git diff`/`log`/`show` into arbitrary code execution.
+  allow-listed `git diff`/`log`/`show` into arbitrary code execution. So do
+  `--git-dir DIR` and `--bare`, which make git load another repository's
+  config: `safe.bareRepository=explicit` refuses a bare repository committed
+  into a branch only when git finds it on its own, not when it is named.
 - **a wrapper command that hands its argument to a shell.** `flock -c
   COMMAND` (and `--command=COMMAND`) passes that string to a shell rather
   than as an ordinary command word, which would let a gated command hide
@@ -314,7 +317,7 @@ the command name alone would have looked fine:
   instead of stdout, overwriting any file this uid can reach — `cosign.pub`,
   `.claude/settings.json`, this hook itself — with no deny rule in its way.
 - **moving the directory operands resolve against.** A `cd`/`pushd` before
-  the command, `env -C DIR`, or git's own `-C`, `--git-dir`, `--work-tree`,
+  the command, `env -C DIR`, or git's own `-C`, `--work-tree`,
   `--namespace`, `--super-prefix`, or `--attr-source` changes what a relative
   operand actually opens while the containment check still runs against the
   checkout, so every operand can look local and not be.

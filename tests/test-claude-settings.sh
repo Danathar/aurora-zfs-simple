@@ -2979,6 +2979,20 @@ corpus_row refuse "5 option: git --upload-pack" \
     "git --upload-pack=/tmp/prog ls-files"
 corpus_row refuse "5 option: git -C" "git -C /etc diff -- passwd shadow"
 corpus_row refuse "5 option: git --git-dir" "git --git-dir=/tmp/x diff -- a b"
+# `--git-dir` and `--bare` load another repository's config for any
+# subcommand, not only diff: safe.bareRepository=explicit in the settings env
+# lets the named spelling reach a bare repository committed into a branch
+# (section 11 below runs it for real).
+corpus_row refuse "5 option: git --git-dir before log" "git --git-dir=evil log -p -1"
+corpus_row refuse "5 option: git --git-dir in its space form before show" \
+    "git --git-dir evil show"
+corpus_row refuse "5 option: git --bare, which is --git-dir=." "git --bare log -p -1"
+corpus_row refuse "5 option: git --bare behind another global option" \
+    "git --no-pager --bare show"
+corpus_row refuse "5 option: git --bare after an allowed command" \
+    "git status; git --bare log -p -1"
+corpus_row allow "5 option: --bare after the subcommand is that subcommand's flag" \
+    "git init --bare evil"
 corpus_row refuse "5 option: git --work-tree" \
     "git --work-tree=/etc diff -- passwd shadow"
 corpus_row refuse "5 option: env -C" "env -C /etc git diff -- passwd shadow"
@@ -3575,6 +3589,25 @@ if [[ -d "${BARE_DIR}/victim/evil" ]]; then
         assert_eq "with the setting, git -C evil ${cmd} fails" "128" "${status}"
         assert_file_missing "and the planted program did not run (git -C evil ${cmd})" "${MARKER}"
     done
+
+    # The setting allows a bare repository that is named rather than found:
+    # `--git-dir=evil` and `--bare` (`--git-dir=.`) still reach the planted
+    # program with the settings env applied. The guard hook refuses these
+    # spellings instead; both halves are asserted so neither is vacuous.
+    for named in "victim|--git-dir=evil log -p -1" "victim|--git-dir evil show" \
+        "victim/evil|--bare log -p -1"; do
+        named_dir="${named%%|*}"
+        named_args="${named#*|}"
+        rm -f "${MARKER}"
+        # shellcheck disable=SC2086 # ${named_args} is a fixed word list
+        (cd "${BARE_DIR}/${named_dir}" && agent_git ${named_args} >/dev/null 2>&1)
+        assert_file_exists "with the setting, git ${named_args} still runs the planted program" "${MARKER}"
+        run_pre "$(pre_payload_for "git ${named_args}")"
+        assert_eq "so the guard hook refuses git ${named_args}" "2" "${PRE_STATUS}"
+        assert_contains "under the config-option refusal (git ${named_args})" \
+            "${PRE_ERR}" "hand git a whole repository config to load"
+    done
+    rm -f "${MARKER}"
 
     # The checkout's own repository (.git/, not bare) is unaffected.
     assert_eq "the checkout's own git log still works with the setting" \

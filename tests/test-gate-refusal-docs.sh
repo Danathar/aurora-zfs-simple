@@ -72,6 +72,8 @@ a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|
 a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`core.hooksPath`|git -c core.hooksPath=/tmp show
 a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`uploadpack.packObjectsHook`|git -c uploadpack.packObjectsHook=prog log
 a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`credential.helper`|git -c credential.helper=prog log
+a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`--git-dir DIR`|git --git-dir=evil log -p
+a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`--bare`|git --bare log -p -1
 a wrapper command that hands its argument to a shell.|WRAPPER_SHELL_MSG|`flock -c COMMAND`|flock -c COMMAND
 a wrapper command that hands its argument to a shell.|WRAPPER_SHELL_MSG|`--command=COMMAND`|flock /tmp/l --command=COMMAND
 a wrapper command that hands its argument to a shell.|WRAPPER_SHELL_MSG|`flock /tmp/l -c 'cat ./cosign.key'`|flock /tmp/l -c 'cat ./cosign.key'
@@ -95,7 +97,6 @@ moving the directory operands resolve against.|MOVED_MSG|A `cd`/`pushd` before|c
 moving the directory operands resolve against.|MOVED_MSG|A `cd`/`pushd` before|pushd /home && shellcheck .bashrc
 moving the directory operands resolve against.|MOVED_MSG|`env -C DIR`|env -C /tmp git diff HEAD
 moving the directory operands resolve against.|MOVED_MSG|git's own `-C`|git -C /tmp diff -- .bashrc .profile
-moving the directory operands resolve against.|MOVED_MSG|`--git-dir`|git --git-dir=/tmp/x diff -- a b
 moving the directory operands resolve against.|MOVED_MSG|`--work-tree`|git --work-tree=/tmp diff -- a b
 moving the directory operands resolve against.|MOVED_MSG|`--namespace`|git --namespace=x diff -- a b
 moving the directory operands resolve against.|MOVED_MSG|`--super-prefix`|git --super-prefix=x diff -- a b
