@@ -3,6 +3,8 @@
 # Covers .github/workflows/nightly-compliance.yml — the four `run:` bodies that
 # decide, once a day and with nobody watching, whether the published image is
 # still the image this repository tells consumers to trust.
+# Section H covers the `base_pin` job, which says when the temporary
+# AURORA_TAG pin can be lifted.
 #
 # Nothing in this repository executed them. They are shell inside YAML strings,
 # so they are not *.sh files: run-tests.sh does not find them, test-shell-syntax.sh
@@ -863,5 +865,178 @@ fi
 assert_eq "nightly runs queue rather than cancel each other" \
     '{"cancel-in-progress":false,"group":"nightly-compliance"}' \
     "$(wf '.concurrency' | jq -cS .)"
+
+
+# =============================================================================
+# H. the base_pin job — "can the temporary AURORA_TAG pin be lifted yet?"
+# =============================================================================
+#
+# This job fails once both coreos-stable-<FEDORA_VERSION+1> akmods tags exist,
+# so auto-issues.yml opens an issue saying the Fedora pin can go. Its quiet
+# outcome is "not yet", so a mistake in it reads as a normal green night while
+# Aurora userspace stays frozen.
+#
+# It finds both numbers by reading two `ARG NAME=value` lines out of the
+# Containerfile with sed. If FEDORA_VERSION stops being readable that way
+# (renamed, quoted, moved behind a variable), the step does not fail: `fedora`
+# is empty, `$((fedora + 1))` is 1, it asks the registry for
+# coreos-stable-1 tags that will never exist, and it reports "stays pinned"
+# every night. So the real Containerfile is checked for the exact line forms
+# the step reads, and the step is run against the real file as well as against
+# fixtures.
+
+PIN_RUN="${TMP_ROOT}/base-pin.sh"
+wf '.jobs.base_pin.steps[] | select(.name == "Report when the pinned base can go back to stable") | .run' >"${PIN_RUN}"
+if [[ ! -s "${PIN_RUN}" ]] || ! grep -q -- 'coreos-stable-' "${PIN_RUN}"; then
+    _fail "the base_pin script was extracted from nightly-compliance.yml" \
+        "expected a run: body containing coreos-stable-; extracted" \
+        "$(wc -c <"${PIN_RUN}") byte(s) from the base_pin job" \
+        "the job or step name probably changed — update this test to match"
+    finish
+    exit 1
+fi
+_pass "the base_pin script was extracted from nightly-compliance.yml"
+
+# --- the Containerfile lines the step reads ---------------------------------
+
+CONTAINERFILE="${REPO_ROOT}/Containerfile"
+fedora_lines="$(grep -cE '^ARG[[:space:]]+FEDORA_VERSION=' "${CONTAINERFILE}" || true)"
+assert_eq "the Containerfile sets FEDORA_VERSION on exactly one ARG line" \
+    "1" "${fedora_lines}"
+REAL_FEDORA="$(sed -nE 's/^ARG[[:space:]]+FEDORA_VERSION=([0-9]+)$/\1/p' "${CONTAINERFILE}")"
+if [[ "${REAL_FEDORA}" =~ ^[0-9]+$ ]]; then
+    _pass "FEDORA_VERSION is a bare number the base_pin step can add one to (${REAL_FEDORA})"
+else
+    _fail "FEDORA_VERSION is a bare number the base_pin step can add one to" \
+        "no 'ARG FEDORA_VERSION=<digits>' line in the Containerfile" \
+        "base_pin would look for coreos-stable-1 and stay green forever"
+fi
+tag_lines="$(grep -cE '^ARG[[:space:]]+AURORA_TAG=' "${CONTAINERFILE}" || true)"
+assert_eq "the Containerfile sets AURORA_TAG on exactly one ARG line" \
+    "1" "${tag_lines}"
+REAL_TAG="$(sed -nE 's/^ARG[[:space:]]+AURORA_TAG=(.+)$/\1/p' "${CONTAINERFILE}")"
+if [[ "${REAL_TAG}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    _pass "AURORA_TAG is an unquoted tag the base_pin step compares as text (${REAL_TAG})"
+else
+    _fail "AURORA_TAG is an unquoted tag the base_pin step compares as text" \
+        "read '${REAL_TAG}'; a quoted or commented value never equals 'stable'"
+fi
+
+# pin <Containerfile text> <refs that exist, space separated> [registry error]
+#
+# Runs the extracted script in its own directory, beside a Containerfile with
+# the given text. The stub skopeo succeeds for the refs listed and otherwise
+# prints the given error (default: manifest unknown) and fails.
+# Sets P_STATUS, P_STDOUT and P_CALLS.
+pin() {
+    local containerfile=$1 present=$2 error=${3:-"Error: reading manifest: manifest unknown"} dir
+    local -a refs=()
+    dir="$(mktemp -d "${TMP_ROOT}/pin.XXXXXX")"
+    mkdir -p "${dir}/bin"
+    printf '%s\n' "${containerfile}" >"${dir}/Containerfile"
+    read -ra refs <<<"${present}"
+    : >"${dir}/present"
+    if ((${#refs[@]} > 0)); then
+        printf '%s\n' "${refs[@]}" >"${dir}/present"
+    fi
+    printf '%s\n' "${error}" >"${dir}/error"
+    : >"${dir}/calls"
+    # The two single-quoted lines below are the stub's own shell, so its
+    # variables are meant to reach the stub unexpanded.
+    # shellcheck disable=SC2016
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'printf "%%s\\n" "$*" >> %q\n' "${dir}/calls"
+        printf 'ref="${!#}"; ref="${ref#docker://}"\n'
+        printf 'if grep -qxF -- "${ref}" %q; then echo sha256:0; exit 0; fi\n' "${dir}/present"
+        printf 'cat %q >&2\nexit 1\n' "${dir}/error"
+    } >"${dir}/bin/skopeo"
+    chmod +x "${dir}/bin/skopeo"
+
+    P_STDOUT="$(cd "${dir}" && PATH="${dir}/bin:${PATH}" bash "${PIN_RUN}" 2>&1)"
+    P_STATUS=$?
+    P_CALLS="$(cat "${dir}/calls")"
+}
+
+AKMODS_45="ghcr.io/ublue-os/akmods:coreos-stable-45-x86_64"
+ZFS_45="ghcr.io/ublue-os/akmods-zfs:coreos-stable-45-x86_64"
+PINNED_44=$'ARG FEDORA_VERSION=44\nARG AURORA_TAG=stable-44.20261110.1'
+
+# --- no pin -------------------------------------------------------------------
+
+pin $'ARG FEDORA_VERSION=44\nARG AURORA_TAG=stable' "${AKMODS_45} ${ZFS_45}"
+assert_eq "an unpinned AURORA_TAG passes" "0" "${P_STATUS}"
+assert_eq "an unpinned AURORA_TAG asks the registry nothing" "" "${P_CALLS}"
+assert_not_contains "an unpinned AURORA_TAG is not annotated as an error" \
+    "${P_STDOUT}" "::error::"
+
+# --- pinned, and the next release's images are there: the one failure --------
+
+pin "${PINNED_44}" "${AKMODS_45} ${ZFS_45}"
+assert_eq "a pin that can be lifted fails the job" "1" "${P_STATUS}"
+assert_contains "the failure is annotated with the next Fedora release" \
+    "${P_STDOUT}" "::error::AURORA_TAG is pinned to stable-44.20261110.1, and both coreos-stable-45"
+assert_contains "the akmods image is looked up for FEDORA_VERSION + 1" \
+    "${P_CALLS}" "docker://${AKMODS_45}"
+assert_contains "the akmods-zfs image is looked up for FEDORA_VERSION + 1" \
+    "${P_CALLS}" "docker://${ZFS_45}"
+assert_not_contains "the lookups carry no credentials" "${P_CALLS}" "--creds "
+assert_contains "the lookups are anonymous" "${P_CALLS}" "--no-creds"
+
+# --- pinned, and not there yet ----------------------------------------------
+
+pin "${PINNED_44}" "${AKMODS_45}"
+assert_eq "a pin waiting on akmods-zfs passes" "0" "${P_STATUS}"
+assert_contains "a pin waiting on akmods-zfs says it stays pinned" \
+    "${P_STDOUT}" "stays pinned"
+assert_not_contains "a pin waiting on akmods-zfs is not an error" \
+    "${P_STDOUT}" "::error::"
+
+pin "${PINNED_44}" "${ZFS_45}"
+assert_eq "a pin waiting on akmods passes" "0" "${P_STATUS}"
+
+pin "${PINNED_44}" "" "Error: pinging container registry ghcr.io: i/o timeout"
+assert_eq "a registry error counts as not there yet" "0" "${P_STATUS}"
+assert_contains "the registry's own error text is printed" \
+    "${P_STDOUT}" "i/o timeout"
+
+# --- the real Containerfile --------------------------------------------------
+#
+# The fixtures above prove what the script does with well-formed lines; this
+# proves it reads the committed ones. With both next-release images present,
+# a pinned tree must fail naming FEDORA_VERSION + 1, and an unpinned tree must
+# pass without a lookup.
+
+if [[ "${REAL_FEDORA}" =~ ^[0-9]+$ ]]; then
+    next=$((REAL_FEDORA + 1))
+    pin "$(cat "${CONTAINERFILE}")" \
+        "ghcr.io/ublue-os/akmods:coreos-stable-${next}-x86_64 ghcr.io/ublue-os/akmods-zfs:coreos-stable-${next}-x86_64"
+    if [[ "${REAL_TAG}" == "stable" ]]; then
+        assert_eq "the committed Containerfile is unpinned, so base_pin passes" \
+            "0" "${P_STATUS}"
+        assert_eq "the committed Containerfile is unpinned, so base_pin asks nothing" \
+            "" "${P_CALLS}"
+    else
+        assert_eq "the committed pin is reported once coreos-stable-${next} exists" \
+            "1" "${P_STATUS}"
+        assert_contains "the committed pin is reported for coreos-stable-${next}" \
+            "${P_STDOUT}" "both coreos-stable-${next} akmods tags now exist"
+    fi
+fi
+
+# --- how the job runs -------------------------------------------------------
+#
+# The job reports by failing. `continue-on-error`, an `if:` or a `needs:` on
+# the job, or an `if:` on the step, turns that failure into a green or skipped
+# run that auto-issues.yml never hears about.
+
+assert_eq "the base_pin job can only read the repository" \
+    '{"contents":"read"}' "$(wf '.jobs.base_pin.permissions' | jq -cS .)"
+for field in continue-on-error if needs; do
+    assert_eq "the base_pin job sets no ${field}:" \
+        "null" "$(wf ".jobs.base_pin[\"${field}\"] | tojson")"
+done
+assert_eq "no base_pin step sets if: or continue-on-error" "" \
+    "$(wf '.jobs.base_pin.steps[] | select(has("if") or has("continue-on-error")) | .name')"
 
 finish
