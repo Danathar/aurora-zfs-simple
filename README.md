@@ -128,7 +128,8 @@ Reboot after switching back.
 
 ## What It Uses
 
-- base image: `ghcr.io/ublue-os/aurora-dx:stable`
+- base image: `ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1`, the last Fedora 44
+  Aurora stable build. It is normally `:stable` and is pinned for now (see #499)
 - kernel RPMs: `ghcr.io/ublue-os/akmods`
 - ZFS RPMs: `ghcr.io/ublue-os/akmods-zfs`
 - content-based image layering: [`coreos/chunkah`](https://github.com/coreos/chunkah)
@@ -182,15 +183,21 @@ The Fedora release is controlled here:
 ARG FEDORA_VERSION=44
 ```
 
-The base image intentionally tracks Aurora DX stable:
+The base image intentionally tracks Aurora DX stable, with
+`ARG AURORA_TAG=stable`. For now it is pinned to the last Fedora 44 build:
 
 ```Dockerfile
 ARG AURORA_IMAGE=ghcr.io/ublue-os/aurora-dx
-ARG AURORA_TAG=stable
+ARG AURORA_TAG=stable-44.20261110.1
 ```
 
 The `Containerfile` has a guard that fails the build if the stable base image's
 Fedora version does not match `FEDORA_VERSION`.
+
+Aurora stable moved to Fedora 45 before the akmods images did, so the guard
+failed every build.
+The pin keeps builds working on Fedora 44 until the Fedora 45 akmods images
+exist. Aurora's own packages do not update while it stands.
 
 For the manual release-readiness checklist, see
 [`docs/manual-input-check.md`](docs/manual-input-check.md).
