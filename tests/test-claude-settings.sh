@@ -2995,6 +2995,18 @@ corpus_row allow "5 option: --bare after the subcommand is that subcommand's fla
     "git init --bare evil"
 corpus_row refuse "5 option: git --work-tree" \
     "git --work-tree=/etc diff -- passwd shadow"
+# Each relocating option also takes its value as the next word. That spelling
+# has an arm of its own in the hook, so each one is pinned here: without it the
+# value word ends the option scan before `diff` is reached and the whole
+# command is allowed.
+corpus_row refuse "5 option: git --work-tree in its space form" \
+    "git --work-tree /etc diff -- passwd shadow"
+corpus_row refuse "5 option: git --namespace in its space form" \
+    "git --namespace x diff HEAD~1"
+corpus_row refuse "5 option: git --super-prefix in its space form" \
+    "git --super-prefix x diff HEAD~1"
+corpus_row refuse "5 option: git --attr-source in its space form" \
+    "git --attr-source HEAD diff HEAD~1"
 corpus_row refuse "5 option: env -C" "env -C /etc git diff -- passwd shadow"
 corpus_row refuse "5 option: git -C reaches config with one operand" \
     "git -C /etc diff HEAD~1"
