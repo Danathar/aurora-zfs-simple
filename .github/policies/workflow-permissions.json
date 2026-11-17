@@ -48,7 +48,8 @@
     "coverage-gate.yml": {
       "workflow": null,
       "jobs": {
-        "tests": {"contents": "read"}
+        "tests": {"contents": "read"},
+        "mutation": {"contents": "read"}
       }
     },
     "labeler.yml": {

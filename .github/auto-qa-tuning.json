@@ -107,6 +107,11 @@
   ],
   "untracked": [
     {
+      "workflow": "coverage-gate.yml",
+      "job": "Mutation check (changed lines)",
+      "reason": "Runs only on pull requests and only does work when a pull request changes a shipped script, so the sample is mostly empty. It stops itself at MUTATION_BUDGET (40 minutes) and reports the edits it did not reach; the 50-minute cap is for a hang past that. Advisory, not a required check."
+    },
+    {
       "workflow": "agent-signature.yml",
       "job": "signature",
       "reason": "One jq call over the pull request description, with nothing checked out and no action run; it finishes in seconds and has nothing that could grow into its cap. The 5-minute cap is a budget, not a measurement."
