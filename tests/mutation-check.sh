@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 # Mutation check for the lines a change touches in the shipped scripts.
 #
