@@ -80,3 +80,28 @@ jobs:
         env:
           WORKFLOW_PYTHON: /usr/bin/python3
         run: ./tests/run-tests.sh
+
+  # Edits each line a pull request changes in a script listed in
+  # tests/mutation-check.sh, one at a time, and fails when that script's tests
+  # still pass under an edit tests/mutation-survivors.txt does not list.
+  # Advisory: not a required check.
+  mutation:
+    name: Mutation check (changed lines)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    # tests/mutation-check.sh stops itself after MUTATION_BUDGET and reports
+    # the edits it did not reach; this cap is for a hang past that.
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Edit changed lines and run their tests
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          MUTATION_BUDGET: "2400"
+        run: ./tests/mutation-check.sh "origin/${BASE_REF}"
