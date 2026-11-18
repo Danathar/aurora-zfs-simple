@@ -10,15 +10,17 @@
 # reads the config. That leaves the labeler the one piece of automation here
 # holding a write token whose shape is unasserted.
 #
-# The shape is the point. This job runs on `pull_request_target`, which means
-# the *base* branch's copy of the workflow runs with a token that can write to
-# the pull request, on an event a stranger triggers by opening one. That is safe
-# for exactly as long as the job never puts the head branch's contents anywhere
-# near itself: add an `actions/checkout` of the head ref, or a `run:` body that
-# executes something the pull request supplied, and an outside contributor is
-# running code with `pull-requests: write`. docs/SECURITY-AI.md and the
-# workflow's own header both say so; until this file, neither statement failed
-# anything.
+# The shape is the point. This job runs on `pull_request`, not
+# `pull_request_target` (the workflow's header says why), with a token that can
+# write to the pull request. It runs only for pull requests from branches in
+# this repository: a fork's run would get a read-only token, so the job's `if:`
+# skips it. That `if:` is what keeps a fork's run grey rather than red, and the
+# token bounded to people who can already write here, so it is asserted
+# exactly. The job also never puts the head branch's contents anywhere near
+# itself: add an `actions/checkout` of the head ref, or a `run:` body that
+# executes something the pull request supplied, and the change is running code
+# with `pull-requests: write`. The workflow's own header says so; this file is
+# what makes that statement fail something.
 #
 # The config carries a second, unrelated boundary. This repository is connected
 # to an external system that treats `ci`, `testing`, `quality`, `security`,
@@ -361,7 +363,7 @@ cat >"${fixture_wf}" <<'YAML'
 ---
 name: Fixture
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
 jobs:
@@ -377,7 +379,7 @@ YAML
 fixture_json="${TMP_ROOT}/fixture-wf.json"
 if "${WORKFLOW_PYTHON}" -B "${NORMALIZER}" "${fixture_wf}" >"${fixture_json}" 2>"${TMP_ROOT}/fixwf.err"; then
     assert_eq "the normalizer reads a fixture's trigger by name" \
-        "opened" "$(jq -r '.on.pull_request_target.types[0]' <"${fixture_json}")"
+        "opened" "$(jq -r '.on.pull_request.types[0]' <"${fixture_json}")"
     assert_eq "the normalizer reads a fixture's step inputs" \
         "false" "$(jq -r '.jobs.demo.steps[0].with["sync-labels"] | tostring' <"${fixture_json}")"
 else
@@ -396,25 +398,27 @@ wf() {
     jq -r "$1" <"${WF_JSON}"
 }
 
-assert_eq "labeler.yml triggers on exactly pull_request_target" \
-    "pull_request_target" "$(wf '.on | keys | sort | join(",")')"
+# pull_request_target is the trigger this replaced; GitHub stops running it in
+# public repositories without an event policy from 2026-12-02, and the hive's
+# App cannot create one. Exactly one key, so it cannot come back alongside.
+assert_eq "labeler.yml triggers on exactly pull_request" \
+    "pull_request" "$(wf '.on | keys | sort | join(",")')"
 
 # Narrowed to the three events that change the file list. `edited` would re-run
 # the job on a title change, and `labeled` would re-run it on the job's own
 # write.
 assert_eq "the trigger fires only on the events that change the file list" \
-    "opened,reopened,synchronize" "$(wf '.on.pull_request_target.types | sort | join(",")')"
+    "opened,reopened,synchronize" "$(wf '.on.pull_request.types | sort | join(",")')"
 
-# Enumerated, not spot-checked: under pull_request_target these grants come from
-# the base branch and are handed to a run an outside contributor started, so a
-# scope added here is invisible to any test that only asks whether the ones it
-# knows about are still right.
+# Enumerated, not spot-checked: under pull_request these grants come from the
+# pull request's own copy of the workflow, so a scope added here is invisible
+# to any test that only asks whether the ones it knows about are still right.
 assert_eq "the label job holds exactly the two scopes it needs" \
     "contents=read pull-requests=write" \
     "$(wf '.jobs.label.permissions | to_entries | sort_by(.key) | map("\(.key)=\(.value)") | join(" ")')"
 
-# The whole safety argument for the elevated token is that the pull request's
-# code never arrives. A checkout is how it would arrive; `run:` is how it would
+# The safety argument for the write token is that the pull request's code
+# never arrives. A checkout is how it would arrive; `run:` is how it would
 # execute. Both are absent, and both are asserted, because either one added
 # later reads as an ordinary convenience in review.
 assert_eq "the label job checks out no repository" \
@@ -432,7 +436,17 @@ assert_eq "the label job has exactly one step" "1" "$(wf '.jobs.label.steps | le
 # can skip the job outright. So the job and its step are closed key sets: a new
 # key has to be added here on purpose.
 assert_eq "the label job has only the keys it needs, so nothing can soften its failure" \
-    "name,permissions,runs-on,steps,timeout-minutes" "$(wf '.jobs.label | keys | join(",")')"
+    "if,name,permissions,runs-on,steps,timeout-minutes" "$(wf '.jobs.label | keys | join(",")')"
+
+# The one `if:` the job does carry, compared whole rather than searched for.
+# It skips fork pull requests, whose runs get a read-only token and would fail.
+# `!=` in place of `==`, or an `|| true` appended, still contains every
+# fragment a search would look for, and would skip every same-repository pull
+# request or run the job on forks that cannot label.
+assert_eq "the label job skips only pull requests from forks" \
+    "github.event.pull_request.head.repo.full_name == github.repository" \
+    "$(wf '.jobs.label.if')"
+
 assert_eq "the label step has only name, uses and with, so a failure fails the job" \
     "name,uses,with" "$(wf '.jobs.label.steps[0] | keys | join(",")')"
 
@@ -446,15 +460,15 @@ step() {
 labeler_uses="$(step '.uses')"
 assert_contains "the job applies labels with actions/labeler" "${labeler_uses}" "actions/labeler@"
 
-# A tag is mutable, and this is the one job in the repo that would resolve it
-# with a write token on a stranger's event.
+# A tag is mutable, and this job resolves it with a write token on every
+# same-repository pull request.
 if [[ "${labeler_uses}" =~ ^actions/labeler@[0-9a-f]{40}$ ]]; then
     _pass "actions/labeler is pinned to a full commit SHA"
 else
     _fail "actions/labeler is pinned to a full commit SHA" \
         "got: ${labeler_uses}" \
         "a tag or short SHA can be repointed after review, and this step holds" \
-        "pull-requests: write on an event any outside contributor can trigger"
+        "pull-requests: write on every same-repository pull request"
 fi
 
 # false, not absent: the action's own default is to remove labels that no longer

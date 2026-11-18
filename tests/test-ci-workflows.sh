@@ -544,7 +544,7 @@ fi
 # Two tests already assert this, and both are scoped to one file.
 # test-ai-fix.sh walks ai-fix.yml because that job holds `contents: write`, and
 # test-labeler.sh checks labeler.yml's single action because that one holds
-# `pull-requests: write` on an event any outside contributor can trigger. Both
+# `pull-requests: write` on every same-repository pull request. Both
 # are worth keeping -- they assert more than pinning about those files -- but
 # between them they leave build.yml unchecked, and build.yml's `build_push` job
 # holds `packages: write`, runs six third-party actions, and hands

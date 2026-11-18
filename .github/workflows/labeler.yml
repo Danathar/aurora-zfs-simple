@@ -5,21 +5,40 @@ name: Labeler
 # pull request says at a glance which part of the repo it lands in -- and, by
 # extension, roughly which risk tier it takes (docs/risk-tiers.md).
 #
-# Two deliberate choices:
+# Three deliberate choices:
 #
-# `pull_request_target` rather than `pull_request`, which is what actions/labeler
-# documents. The job needs a write token to attach a label, and a `pull_request`
-# run from a fork gets a read-only one, so the fork case would fail rather than
-# label. `pull_request_target` runs the *base* branch's copy of this workflow and
-# its config, and this job never checks out or executes the pull request's code
-# -- it only reads the changed-file list from the API. That is what makes the
-# elevated token safe here; adding a checkout of the head ref would not be.
+# `pull_request`, not `pull_request_target`. From 2026-12-02 GitHub stops
+# running `pull_request_target` workflows in public repositories unless a
+# repository event policy allows them:
+# https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2
+# The hive's GitHub App cannot create those policies. Its owner refused it the
+# Administration permission that would take, for security reasons, and the
+# alternative is a policy made by hand in every repository. The labeler never
+# needed `pull_request_target` anyway: it only reads the changed-file list
+# through the API. Under `pull_request`, a pull request from a branch in this
+# repository gets a token with the `pull-requests: write` the job asks for.
+# Dependabot's pull requests do too: their runs start read-only, but GitHub's
+# Dependabot docs ("Changing GITHUB_TOKEN permissions") say a `permissions` key
+# can raise that.
+#
+# Fork pull requests are skipped. Under `pull_request` a fork's run gets a
+# read-only token, so labelling it would fail. The job's `if:` skips it
+# instead, which shows a grey "skipped" run rather than a red one. None of the
+# last 100 pull requests came from a fork, so this costs nothing in practice.
+# One side effect of `pull_request`: the action reads .github/labeler.yml from
+# the pull request's merge commit, not from main, so a pull request that edits
+# the config is labelled by its own copy. That is acceptable, because only
+# branches in this repository run and their authors can already write to it.
+#
+# This job never checks out or executes the pull request's code. Keep it that
+# way: adding a checkout of the head ref to a job holding a write token would
+# not be safe.
 #
 # `sync-labels: false` so the action only ever adds. A label a human put on by
 # hand is not removed because no path matches it any more.
 
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
       - synchronize
@@ -32,6 +51,8 @@ concurrency:
 jobs:
   label:
     name: Apply area labels
+    # Same-repository pull requests only; see the header for why forks skip.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-26.04
     timeout-minutes: 5
 
