@@ -49,7 +49,7 @@ when present and skipped when not.
 | `test-status-badges.sh`     | `.github/workflows/status-badges.yml`: the `Publish badges to status branch` step, extracted and executed against a real local bare repository — the orphan first run, the no-overwrite copy, the unchanged-content no-op, the ref the push lands on and the exact `if:` that lets either badge alone publish |
 | `test-build-publish.sh`     | `.github/workflows/build.yml`: the `build_push` job's publish band — `Prepare environment`, `Propagate tags from the pushed digest`, `Verify pushed tags share one digest`, `Sign container image` and `Verify the signature as hosts read it`, extracted and executed against a file-backed fake registry with `skopeo` and `cosign` stubbed; plus the job's and every step's key set, so no `continue-on-error` or `if:` can skip or soften a step unnoticed |
 | `test-build-rechunk.sh`     | `.github/workflows/build.yml`: the `build_push` job's build band — `Update Podman`, `Move container storage to the large runner disk` and `Rechunk Image with Chunkah`, extracted and executed with `podman`, `sudo`, `apt-get` and `df` stubbed and `HOME` redirected |
-| `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request_target` shape that bounds `.github/workflows/labeler.yml`'s write token |
+| `test-labeler.sh`           | the pull request labeler: `.github/labeler.yml`'s `area/*` namespace and its globs evaluated against real repository paths, plus the `pull_request` shape that bounds `.github/workflows/labeler.yml`'s write token, with the job's `if:` that skips fork pull requests compared whole |
 | `test-renovate.sh`          | the Chunkah regex manager against every tracked file that pins a Chunkah version (derived, not listed) and the `ignorePaths` that could hide one, including a simulated release that moves the version and any digest, that every pin agrees on tag and digest, that no `packageRules` entry replayed in order turns any Chunkah update off in any pin file, the split of work between `renovate.json` and `.github/dependabot.yml`, and the cosign CLI release manager against every tracked `cosign-release:` pin, with `ignorePaths` and every `packageRules` entry replayed in order so no rule turns a cosign bump off or lets it automerge |
 | `test-manual-input-check.sh` | `docs/manual-input-check.md`: the manual pre-bump procedure held against the machine it describes — the artifact references and tag template against the `Containerfile`'s `FROM` lines, the copied payload paths against its bind mounts, the RPM names and `rpm --qf` query against `build_files/post-check.sh`, and the worked release example against `ARG FEDORA_VERSION` |
 | `test-issue-templates.sh`   | `.github/ISSUE_TEMPLATE/**`: the two issue forms and the chooser — the shape GitHub's schema accepts, the repo paths and links they name, and `build-failure.yml`'s embedded diagnosis held against the `Containerfile`, `ci/write-badges.sh` and AGENTS.md's copy of the same recipe |
@@ -230,7 +230,7 @@ with regressions in `test_workflow_pins.py`, and it exists because the same rule
 was previously asserted one file at a time. `test-ai-fix.sh` walks every `uses:`
 in `ai-fix.yml` because that job holds `contents: write`, and `test-labeler.sh`
 checks `labeler.yml`'s single action because that one holds
-`pull-requests: write` on an event any outside contributor can trigger. Both
+`pull-requests: write` on every same-repository pull request. Both
 still do, and both assert more than pinning about those files — but between them
 they left `build.yml` unchecked, and `build_push` holds `packages: write`, runs
 six third-party actions, and hands `secrets.SIGNING_SECRET` to `cosign sign`. A
@@ -587,11 +587,15 @@ for its timeout and manifest entry, `test-ci-workflows.sh`'s expression pass
 because it reads every file in `.github/workflows/` — but nothing read either
 file for what it says, and nothing read the config at all.
 
-The workflow is the one job here that holds a write token on an event a stranger
-triggers. `pull_request_target` runs the *base* branch's copy with
-`pull-requests: write`, which is safe for exactly as long as the head branch's
+The workflow holds `pull-requests: write` on every pull request from a branch
+in this repository. It runs on `pull_request`, not `pull_request_target`, which
+GitHub stops running in public repositories without an event policy from
+2026-12-02 (the workflow's header has the rest). A fork's run would get a
+read-only token and fail, so the job's `if:` skips forks, and that `if:` is
+compared whole: a flipped `==` would skip every pull request this repository's
+own branches open. The token stays bounded for as long as the head branch's
 contents never arrive: an `actions/checkout` of the head ref, or a `run:` body
-executing something the pull request supplied, hands an outside contributor that
+executing something the pull request supplied, would hand the change that
 token. Both absences are asserted, along with the permission set as a whole, the
 trigger and its event types, the SHA pin, and `sync-labels: false` — the action
 would otherwise remove a label a human applied by hand.
