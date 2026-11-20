@@ -637,10 +637,12 @@ done
 # /run/dnf and per-repo countme files under /var/lib/dnf/repos, the kernel's
 # scriptlets leave /var/lib/rpm-state/kernel and /boot/symvers-*.xz, and
 # `bootc container lint` reported all four as warnings on main after the mounts
-# above were in place. Each installing RUN removes them as the last thing its
-# command does, so nothing that runs before can put them back. The same derived
+# above were in place. On Fedora 45 the ZFS install also pulls in sysstat and
+# pcp-libs, whose scriptlets leave /run/selinux-policy (nonempty-run-tmp) and
+# the /var/lib/pcp directories (var-tmpfiles); run 44714448966 failed on them.
+# Each installing RUN removes them as the last thing its command does, so nothing that runs before can put them back. The same derived
 # set of RUNs is used, so an inline `RUN dnf5 -y install ...` is held to it too.
-cleanup="rm -rf /run/dnf /var/lib/dnf/repos /var/lib/rpm-state && find /boot -mindepth 1 -delete"
+cleanup="rm -rf /run/dnf /var/lib/dnf/repos /var/lib/rpm-state /run/selinux-policy /var/lib/pcp && find /boot -mindepth 1 -delete"
 for index in "${installing_runs[@]}"; do
     body="${RUN_BODIES[index]}"
     label="$(run_scripts "${body}" | sed 's|^/ctx/||' | paste -sd+ -)"

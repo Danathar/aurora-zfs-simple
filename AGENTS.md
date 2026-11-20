@@ -467,7 +467,8 @@ The warning names what was left behind and where. Work out who wrote it:
 - **This repo's RUN steps.** A package, script or scriptlet left something in
   `/boot`, `/run`, `/tmp` or `/var`. Remove it at the end of the RUN that
   created it, the way the installing RUNs already remove `/run/dnf`,
-  `/var/lib/dnf/repos`, `/var/lib/rpm-state` and `/boot`'s contents, and extend
+  `/var/lib/dnf/repos`, `/var/lib/rpm-state`, `/run/selinux-policy`,
+  `/var/lib/pcp` and `/boot`'s contents, and extend
   `tests/test-containerfile.sh` to match.
 - **The Aurora base image.** Run the same lint against
   `ghcr.io/ublue-os/aurora-dx:stable` on its own:
@@ -579,6 +580,17 @@ before reaching for a pin.
   `ostree.linux = 7.2.11-300.fc45.x86_64`, the same kernel as
   `aurora-dx:stable` (`45.20261117.1`). The ZFS artifact carried one OpenZFS
   release, 2.4.4, with `kmod-zfs` built for that kernel.
+
+### 2026-11-20: lint warnings after the Fedora 45 move (#515)
+
+- First build on `aurora-dx:stable` + `coreos-stable-45` (#514) passed `zfs.sh`
+  and `post-check.sh`, then failed `bootc container lint --fatal-warnings`
+  with `nonempty-run-tmp` (`/run/selinux-policy`) and `var-tmpfiles`
+  (`/var/lib/pcp/...`). Not skew.
+- Cause: installing the ZFS RPMs now pulls in `sysstat` and `pcp-libs` /
+  `pcp-conf` / `pcp-selinux-import`, whose scriptlets leave those paths.
+- Fix: both installing RUNs also remove `/run/selinux-policy` and
+  `/var/lib/pcp`. The lint stays fatal.
 
 ### Upstream issue map (where to look first)
 
