@@ -580,6 +580,17 @@ before reaching for a pin.
   `aurora-dx:stable` (`45.20261117.1`). The ZFS artifact carried one OpenZFS
   release, 2.4.4, with `kmod-zfs` built for that kernel.
 
+### 2026-11-20: lint warnings after the Fedora 45 move (#515)
+
+- First build on `aurora-dx:stable` + `coreos-stable-45` (#514) passed `zfs.sh`
+  and `post-check.sh`, then failed `bootc container lint --fatal-warnings`
+  with `nonempty-run-tmp` (`/run/selinux-policy`) and `var-tmpfiles`
+  (`/var/lib/pcp/...`). Not skew.
+- Cause: installing the ZFS RPMs now pulls in `sysstat` and `pcp-libs` /
+  `pcp-conf` / `pcp-selinux-import`, whose scriptlets leave those paths.
+- Fix: both installing RUNs also remove `/run/selinux-policy` and
+  `/var/lib/pcp`. The lint stays fatal.
+
 ### Upstream issue map (where to look first)
 
 - **openzfs/zfs** — the root cause always lands here first. #18760 tracked the
