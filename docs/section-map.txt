@@ -76,6 +76,8 @@
   prose: narrative: dated record of an incident, not a claim about the current tree
 ### 2026-11-13: Aurora stable moves to Fedora 45 before akmods does
   prose: narrative: dated record of an incident, not a claim about the current tree
+### 2026-11-20: lint warnings after the Fedora 45 move (#515)
+  prose: narrative: dated record of an incident, not a claim about the current tree
 ### Upstream issue map (where to look first)
   prose: narrative: links to upstream trackers outside this checkout
 ## Owner's standing decisions

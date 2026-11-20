@@ -467,7 +467,8 @@ The warning names what was left behind and where. Work out who wrote it:
 - **This repo's RUN steps.** A package, script or scriptlet left something in
   `/boot`, `/run`, `/tmp` or `/var`. Remove it at the end of the RUN that
   created it, the way the installing RUNs already remove `/run/dnf`,
-  `/var/lib/dnf/repos`, `/var/lib/rpm-state` and `/boot`'s contents, and extend
+  `/var/lib/dnf/repos`, `/var/lib/rpm-state`, `/run/selinux-policy`,
+  `/var/lib/pcp` and `/boot`'s contents, and extend
   `tests/test-containerfile.sh` to match.
 - **The Aurora base image.** Run the same lint against
   `ghcr.io/ublue-os/aurora-dx:stable` on its own:
