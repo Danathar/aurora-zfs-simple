@@ -17,7 +17,7 @@ agent will act on it.
 `main` is the maintained AMD/non-NVIDIA branch. The NVIDIA variant lives on
 `nvidia-legacy`, tagged `nvidia-last-known-good-2026-05-31`, and is unmaintained.
 
-Neither akmods input is pinned. `FEDORA_VERSION` is 44. If either changes, the
+Neither akmods input is pinned. `FEDORA_VERSION` is 45. If either changes, the
 reason belongs in `AGENTS.md`'s incident log, not here.
 
 ## In flight

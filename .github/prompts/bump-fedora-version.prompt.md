@@ -30,16 +30,11 @@ Run the checks in [`docs/manual-input-check.md`](../../docs/manual-input-check.m
 Note that the akmods images are RPM payload containers and may have no shell, so
 inspect them with `podman cp` rather than running commands inside them.
 
-While the base image is pinned to an older Fedora release (as now, see #499),
-the `Containerfile` names that pin instead of `:stable`:
-
-```text
-ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1
-```
-
-Check the inputs against `aurora-dx:stable` anyway, since that is where the
-bump goes. The bump then sets `AURORA_TAG` back to `stable` in the same change
-as `FEDORA_VERSION`. Leaving the pin in would fail the guard below.
+If the base image is pinned to an older Fedora release (as it was for #499),
+the `Containerfile` names that dated tag instead of `:stable`. Check the inputs
+against `aurora-dx:stable` anyway, since that is where the bump goes. The bump
+then sets `AURORA_TAG` back to `stable` in the same change as
+`FEDORA_VERSION`. Leaving the pin in would fail the guard below.
 
 ## The guard you get for free
 

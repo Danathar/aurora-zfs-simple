@@ -6,18 +6,13 @@ the Universal Blue package tags yourself.
 
 ## What Must Match
 
-For a Fedora release `N`, these inputs need to exist and line up. The block
-names the base image the `Containerfile` uses now:
+For a Fedora release `N`, these inputs need to exist and line up:
 
 ```text
-ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1
+ghcr.io/ublue-os/aurora-dx:stable
 ghcr.io/ublue-os/akmods:coreos-stable-N-x86_64
 ghcr.io/ublue-os/akmods-zfs:coreos-stable-N-x86_64
 ```
-
-The base is normally `aurora-dx:stable`. It is pinned to the last Fedora 44
-build for now (see "Base Image Guard"). When checking release `N`, check
-`aurora-dx:stable`, because that is the tag the bump returns to.
 
 The kernel provided by `akmods:coreos-stable-N-x86_64` must have matching ZFS
 kmods in the corresponding `akmods-zfs` image.
@@ -72,7 +67,7 @@ rpm -qp --qf "%{VERSION}-%{RELEASE}.%{ARCH}\n" \
 Save that value as the kernel you expect ZFS to match. For example:
 
 ```bash
-KERNEL="6.19.14-101.fc44.x86_64"
+KERNEL="7.2.11-300.fc45.x86_64"
 ```
 
 Check that the ZFS artifact has a kmod for that exact kernel and one coherent
@@ -120,11 +115,11 @@ before it is published.
 Do not immediately change `FEDORA_VERSION`.
 
 First check that the next-release tags exist. For example, before moving from
-Fedora 44 to Fedora 45, check for:
+Fedora 45 to Fedora 46, check for:
 
 ```text
-ghcr.io/ublue-os/akmods:coreos-stable-45-x86_64
-ghcr.io/ublue-os/akmods-zfs:coreos-stable-45-x86_64
+ghcr.io/ublue-os/akmods:coreos-stable-46-x86_64
+ghcr.io/ublue-os/akmods-zfs:coreos-stable-46-x86_64
 ```
 
 Then check that ZFS has kmods for the same kernel release that `akmods` is
@@ -134,10 +129,10 @@ represent the same ZFS release as the matching kmod.
 If they line up, update the `Containerfile`:
 
 ```Dockerfile
-ARG FEDORA_VERSION=45
+ARG FEDORA_VERSION=46
 ```
 
-If `AURORA_TAG` is pinned to a dated Fedora 44 build (see "Base Image Guard"
+If `AURORA_TAG` is pinned to a dated Fedora 45 build (see "Base Image Guard"
 below), set it back to `stable` in the same change.
 
 If they do not line up, leave `FEDORA_VERSION` alone and stay on the last
@@ -145,12 +140,11 @@ working image.
 
 ## Base Image Guard
 
-The base image normally tracks Aurora DX stable, with `ARG AURORA_TAG=stable`.
-For now it is pinned to the last Fedora 44 stable build:
+The base image tracks Aurora DX stable:
 
 ```Dockerfile
 ARG AURORA_IMAGE=ghcr.io/ublue-os/aurora-dx
-ARG AURORA_TAG=stable-44.20261110.1
+ARG AURORA_TAG=stable
 ```
 
 The `Containerfile` fails the build if `aurora-dx:stable` has moved to a
@@ -159,6 +153,6 @@ building a mixed-release image while still allowing stable-channel updates.
 
 When Aurora stable moves to Fedora `N+1` before the akmods tags for `N+1`
 exist, that guard fails every build. The response is to pin `AURORA_TAG` to the
-last dated Fedora `N` stable build, as above, and remove
-the pin when `FEDORA_VERSION` moves. Aurora userspace is frozen while the pin
-stands. This was done for Fedora 45 in #499.
+last dated Fedora `N` stable build, and remove the pin when `FEDORA_VERSION`
+moves. Aurora userspace is frozen while the pin stands. This was done for
+Fedora 45 in #499 and lifted in #513.
