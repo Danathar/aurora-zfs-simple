@@ -56,9 +56,9 @@ body:
       description: >-
         Paste what the command above printed, including the Fedora version line.
       placeholder: |-
-        targeting Fedora 44
-        akmods       6.19.14-101.fc44.x86_64
-        akmods-zfs   6.19.9-100.fc44.x86_64
+        targeting Fedora 45
+        akmods       7.3.4-300.fc45.x86_64
+        akmods-zfs   7.2.11-300.fc45.x86_64
     validations:
       required: true
 
@@ -71,8 +71,8 @@ body:
         `UNKNOWN STEP` and dumps a lot of image-pull noise, so grep it:
         `grep -E "KERNEL=|Failed to access RPM|Error: building"`.
       placeholder: |-
-        + KERNEL=6.19.14-101.fc44.x86_64
-        Failed to access RPM "/tmp/rpms/kmods/zfs/kmod-zfs-6.19.14-101.fc44.x86_64*.rpm": No such file or directory
+        + KERNEL=7.3.4-300.fc45.x86_64
+        Failed to access RPM "/tmp/rpms/kmods/zfs/kmod-zfs-7.3.4-300.fc45.x86_64*.rpm": No such file or directory
       render: shell
     validations:
       required: false

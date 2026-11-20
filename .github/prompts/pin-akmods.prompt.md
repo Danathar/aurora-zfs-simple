@@ -25,8 +25,8 @@ the `ostree.linux` value on `akmods-zfs` — the one that stopped moving.
 Replace **both** floating tags with the same kernel-pinned tag:
 
 ```Dockerfile
-FROM ghcr.io/ublue-os/akmods:coreos-stable-44-7.0.12-201.fc44.x86_64 AS akmods
-FROM ghcr.io/ublue-os/akmods-zfs:coreos-stable-44-7.0.12-201.fc44.x86_64 AS akmods-zfs
+FROM ghcr.io/ublue-os/akmods:coreos-stable-45-7.2.11-300.fc45.x86_64 AS akmods
+FROM ghcr.io/ublue-os/akmods-zfs:coreos-stable-45-7.2.11-300.fc45.x86_64 AS akmods-zfs
 ```
 
 Verify the tags exist before pushing:
@@ -34,7 +34,7 @@ Verify the tags exist before pushing:
 ```bash
 for img in akmods akmods-zfs; do
   skopeo inspect --format '{{ index .Labels "ostree.linux" }}' \
-    "docker://ghcr.io/ublue-os/${img}:coreos-stable-44-7.0.12-201.fc44.x86_64"
+    "docker://ghcr.io/ublue-os/${img}:coreos-stable-45-7.2.11-300.fc45.x86_64"
 done
 ```
 

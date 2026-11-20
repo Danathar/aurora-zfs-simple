@@ -152,7 +152,7 @@ entirely on those three agreeing about one thing: **the kernel version**.
 
 | Input                                                  | Referenced at                                                | Provides                                                                                 |
 | ------------------------------------------------------ | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1`      | [`Containerfile`](Containerfile) `AURORA_IMAGE`/`AURORA_TAG` | The base OS. Its own kernel is discarded. Normally `:stable`; pinned for now (#499).     |
+| `ghcr.io/ublue-os/aurora-dx:stable`                    | [`Containerfile`](Containerfile) `AURORA_IMAGE`/`AURORA_TAG` | The base OS. Its own kernel is discarded.                                                |
 | `ghcr.io/ublue-os/akmods:coreos-stable-<N>-x86_64`     | [`Containerfile`](Containerfile) `FROM ... AS akmods`        | `/kernel-rpms` (**the kernel actually shipped**) plus common kmods (xone, v4l2loopback). |
 | `ghcr.io/ublue-os/akmods-zfs:coreos-stable-<N>-x86_64` | [`Containerfile`](Containerfile) `FROM ... AS akmods-zfs`    | `/rpms/kmods/zfs` — `kmod-zfs` plus ZFS userspace.                                       |
 
@@ -214,14 +214,14 @@ Confirm the skew first. **Only the two akmods labels decide this.** If they
 differ, you already have your answer and can skip the logs:
 
 ```bash
-FEDORA_VERSION=44
+FEDORA_VERSION=45
 for img in akmods akmods-zfs; do
   printf '%-12s %s\n' "$img" "$(skopeo inspect --format '{{ index .Labels "ostree.linux" }}' \
     "docker://ghcr.io/ublue-os/${img}:coreos-stable-${FEDORA_VERSION}-x86_64")"
 done
 # context only — not part of the skew test
 printf '%-12s %s\n' "aurora-dx" \
-  "$(skopeo inspect --format '{{ index .Labels "ostree.linux" }}' docker://ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1)"
+  "$(skopeo inspect --format '{{ index .Labels "ostree.linux" }}' docker://ghcr.io/ublue-os/aurora-dx:stable)"
 ```
 
 The `ostree.linux` label is the authoritative kernel version for these images.
@@ -306,11 +306,11 @@ it is stale, because that determines which fix is appropriate.
 4. **What tags are actually available to pin to?**
 
    ```bash
-   skopeo list-tags docker://ghcr.io/ublue-os/akmods     | grep coreos-stable-44 | sort -V
-   skopeo list-tags docker://ghcr.io/ublue-os/akmods-zfs | grep coreos-stable-44 | sort -V
+   skopeo list-tags docker://ghcr.io/ublue-os/akmods     | grep coreos-stable-45 | sort -V
+   skopeo list-tags docker://ghcr.io/ublue-os/akmods-zfs | grep coreos-stable-45 | sort -V
    ```
 
-   Kernel-pinned tags look like `coreos-stable-44-7.0.12-201.fc44.x86_64`. A
+   Kernel-pinned tags look like `coreos-stable-45-7.2.11-300.fc45.x86_64`. A
    pin is only viable if the **same** kernel-pinned tag exists in *both*
    repositories.
 
@@ -371,7 +371,7 @@ one.
 
 **Pin both images to the last matching kernel.** In the `Containerfile`,
 replace *both* floating tags with the same kernel-pinned tag, e.g.
-`coreos-stable-44-7.0.12-201.fc44.x86_64`. This restores builds immediately and
+`coreos-stable-45-7.2.11-300.fc45.x86_64`. This restores builds immediately and
 keeps Aurora userspace updates flowing. They must be pinned **together** — the
 `Containerfile` comments say so, and pinning only one recreates the skew. Both
 must be unpinned again later, or the image is frozen on an unpatched kernel;
@@ -399,8 +399,8 @@ still comes from `coreos-stable`, only the ZFS kmod comes from
 `coreos-testing`:
 
 ```Dockerfile
-FROM ghcr.io/ublue-os/akmods:coreos-stable-44-7.1.3-200.fc44.x86_64 AS akmods
-FROM ghcr.io/ublue-os/akmods-zfs:coreos-testing-44-7.1.3-200.fc44.x86_64 AS akmods-zfs
+FROM ghcr.io/ublue-os/akmods:coreos-stable-45-7.2.11-300.fc45.x86_64 AS akmods
+FROM ghcr.io/ublue-os/akmods-zfs:coreos-testing-45-7.2.11-300.fc45.x86_64 AS akmods-zfs
 ```
 
 Verify the `ostree.linux` labels are identical before doing this — that is the
@@ -470,8 +470,8 @@ The warning names what was left behind and where. Work out who wrote it:
   `/var/lib/dnf/repos`, `/var/lib/rpm-state` and `/boot`'s contents, and extend
   `tests/test-containerfile.sh` to match.
 - **The Aurora base image.** Run the same lint against
-  the base image the `Containerfile` names on its own:
-  `podman run --rm ghcr.io/ublue-os/aurora-dx:stable-44.20261110.1 bootc container lint`. If
+  `ghcr.io/ublue-os/aurora-dx:stable` on its own:
+  `podman run --rm ghcr.io/ublue-os/aurora-dx:stable bootc container lint`. If
   it warns there too, the cause is upstream. Clean it up here, or drop
   `--fatal-warnings` for as long as upstream takes, and record which warning and
   why in the incident log below, so the flag is put back. The flag is pinned in
@@ -574,6 +574,11 @@ before reaching for a pin.
   akmods inputs stay floating. Aurora userspace is frozen while the pin stands.
 - To undo: once both `coreos-stable-45` tags exist and their labels agree, set
   `AURORA_TAG` back to `stable` and `FEDORA_VERSION` to 45 in one change.
+- Lifted 2026-11-20 (#513), after the nightly `Base image pin` job reported
+  both `coreos-stable-45` tags. `akmods` and `akmods-zfs` both read
+  `ostree.linux = 7.2.11-300.fc45.x86_64`, the same kernel as
+  `aurora-dx:stable` (`45.20261117.1`). The ZFS artifact carried one OpenZFS
+  release, 2.4.4, with `kmod-zfs` built for that kernel.
 
 ### Upstream issue map (where to look first)
 
