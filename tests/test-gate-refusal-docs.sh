@@ -74,6 +74,12 @@ a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|
 a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`credential.helper`|git -c credential.helper=prog log
 a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`--git-dir DIR`|git --git-dir=evil log -p
 a git command driven to run a program via config or environment.|GIT_CONFIG_MSG|`--bare`|git --bare log -p -1
+taking git's settings environment away.|SETTINGS_ENV_MSG|`unset GIT_CONFIG_COUNT`|unset GIT_CONFIG_COUNT
+taking git's settings environment away.|SETTINGS_ENV_MSG|`env -u GIT_CONFIG_COUNT`|env -u GIT_CONFIG_COUNT git log -p
+taking git's settings environment away.|SETTINGS_ENV_MSG|`env -i`|env -i git log -p
+taking git's settings environment away.|SETTINGS_ENV_MSG|`exec -c`|exec -c git log -p
+taking git's settings environment away.|SETTINGS_ENV_MSG|`GIT_CONFIG_COUNT=0`|GIT_CONFIG_COUNT=0; git log -p
+a git option that reads a file.|SHALLOW_FILE_MSG|`git --shallow-file .env log -1`|git --shallow-file .env log -1
 a wrapper command that hands its argument to a shell.|WRAPPER_SHELL_MSG|`flock -c COMMAND`|flock -c COMMAND
 a wrapper command that hands its argument to a shell.|WRAPPER_SHELL_MSG|`--command=COMMAND`|flock /tmp/l --command=COMMAND
 a wrapper command that hands its argument to a shell.|WRAPPER_SHELL_MSG|`flock /tmp/l -c 'cat ./cosign.key'`|flock /tmp/l -c 'cat ./cosign.key'
@@ -122,6 +128,7 @@ an unquoted leading `~`.|or a quoted one is a literal|git diff HEAD -- '~/.bashr
 an extglob pattern standing in for a path.|a quoted (`'@(x)'`)|shellcheck '@(x)'
 an extglob pattern standing in for a path.|or escaped (`\@(x)`)|shellcheck \@(x)
 a gated command behind a program the gate does not step over.|`setarch x86_64 git diff HEAD` is unaffected|setarch x86_64 git diff HEAD
+taking git's settings environment away.|(`unset FOO`) is unaffected|unset FOO
 EOF
 )"
 

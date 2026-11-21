@@ -1833,7 +1833,7 @@ for assigned in "FOO=1 echo x; podman images" \
     "FOO=1 echo x; git diff HEAD" \
     "echo FOO=bar; git status" \
     "env -u X git diff HEAD" \
-    "env -i git diff HEAD" \
+    "env -v git diff HEAD" \
     "timeout 60 git diff HEAD"; do
     run_pre "$(pre_payload_for "${assigned}")"
     assert_eq "an assignment on another command of the string, or no assignment at all, is left alone: ${assigned}" \
@@ -2576,7 +2576,7 @@ corpus_row allow "1 env: declare -p" "declare -p; git diff HEAD"
 corpus_row allow "1 env: the export comes after" \
     "git diff HEAD; export GIT_EXTERNAL_DIFF=/tmp/prog"
 corpus_row allow "1 env: env -u removes one" "env -u X git diff HEAD"
-corpus_row allow "1 env: env -i sets none" "env -i git diff HEAD"
+corpus_row allow "1 env: env -v sets none" "env -v git diff HEAD"
 corpus_row allow "1 env: set -e is not allexport" "set -e; git diff HEAD"
 corpus_row allow "1 env: set -x is not allexport" "set -x; git status"
 
@@ -3074,6 +3074,173 @@ corpus_row allow "5 option: a subshell's cd does not escape it" \
 corpus_row allow "5 option: nor does it taint a later git diff" \
     "(cd /etc); git diff -- README.md build_files/build.sh"
 
+# The settings environment. .claude/settings.json sets safe.bareRepository=explicit
+# through GIT_CONFIG_COUNT/KEY_0/VALUE_0 (section 11). A command that removes,
+# un-exports or zeroes those variables, or empties the whole environment, puts
+# git back on safe.bareRepository=all, and `git log -p` inside a planted bare
+# folder runs its textconv program again (section 11 runs that for real). These
+# rows hold every spelling the settings pass in the hook reads: each keyword
+# that can open a command, each wrapper and its options, each builtin that
+# removes or overwrites a variable, and the allowed spellings that leave the
+# setting alone. `git --shallow-file FILE` reads FILE and quotes its first line
+# back; `env --ch` is an abbreviation of --chdir.
+corpus_row refuse "5 option: git --shallow-file reads a file" \
+    'git --shallow-file HEAD --git-dir=evil log -p'
+corpus_row refuse "5 option: git --shallow-file reads a file" \
+    'git --shallow-file .env log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'unset GIT_CONFIG_COUNT; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'export -n GIT_CONFIG_COUNT; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'declare +x GIT_CONFIG_COUNT; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -u GIT_CONFIG_COUNT git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --unset=GIT_CONFIG_COUNT git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env - git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'exec -c git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'exec -a name -c git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -S -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -S-i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --split-string=-i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -S-u GIT_CONFIG_COUNT git log -p'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'unset FOO; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env -u FOO git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'exec -a name git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -v GIT_EXTERNAL_DIFF=/tmp/evil git diff HEAD'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'unset GIT_CONFIG_COUNT'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'git status && builtin unset GIT_CONFIG_KEY_0 && git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'local +x GIT_CONFIG_COUNT'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'typeset +x GIT_CONFIG_COUNT; git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '{ unset GIT_CONFIG_COUNT; git log -p -1; }'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'GIT_CONFIG_COUNT=0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'declare GIT_CONFIG_COUNT=0'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -uGIT_CONFIG_COUNT git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --uns GIT_CONFIG_COUNT git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --ign git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -vi git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'flock /tmp/l env -i git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'watch env -i git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'setsid env -u GIT_CONFIG_COUNT git log -p'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'flock /tmp/l env -u FOO git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'timeout -s KILL 5 env -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'timeout -s KILL 5 /usr/bin/env -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -i bash -c '"'"'git log -p'"'"''
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'exec -lc git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'echo $(unset GIT_CONFIG_COUNT); git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '! unset GIT_CONFIG_COUNT'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '( unset GIT_CONFIG_COUNT; git log -p -1 )'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if unset GIT_CONFIG_COUNT; then git log -p -1; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if true; then unset GIT_CONFIG_COUNT; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if false; then :; else unset GIT_CONFIG_COUNT; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if false; then :; elif unset GIT_CONFIG_COUNT; then :; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'while unset GIT_CONFIG_COUNT; do git log -p -1; break; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'until unset GIT_CONFIG_COUNT; do :; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'for x in 1; do unset GIT_CONFIG_COUNT; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'time unset GIT_CONFIG_COUNT'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'coproc unset GIT_CONFIG_COUNT'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '{ GIT_CONFIG_COUNT=0; git log -p -1; }'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '! GIT_CONFIG_COUNT=0; git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if GIT_CONFIG_COUNT=0; then git log -p -1; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if true; then GIT_CONFIG_COUNT=0; git log -p -1; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if false; then :; else GIT_CONFIG_COUNT=0; git log -p -1; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'if false; then :; elif GIT_CONFIG_COUNT=0; then git log -p -1; fi'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'for x in 1; do GIT_CONFIG_COUNT=0; git log -p -1; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'while GIT_CONFIG_COUNT=0; do git log -p -1; break; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'until GIT_CONFIG_COUNT=0; do :; done; git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'time GIT_CONFIG_COUNT=0; git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'coproc GIT_CONFIG_COUNT=0; git log -p -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '/usr/bin/env -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '/bin/env -i git log -p'
+corpus_row refuse "5 option: an abbreviation of env --chdir" \
+    'env --chdir /tmp -i git log -p'
+corpus_row refuse "5 option: an abbreviation of env --chdir" \
+    'env --chdir=/tmp -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env GIT_CONFIG_COUNT=0 bash -c '"'"'git log -p'"'"''
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'readonly GIT_CONFIG_COUNT=0'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --split '"'"'-i git log -p'"'"''
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --spl=-i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --split '"'"'-u GIT_CONFIG_COUNT'"'"' git log -p'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env --split '"'"'git log -1'"'"''
+corpus_row allow "1 env: the settings environment is left alone" \
+    'timeout 5 echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'nice --adjustment=5 echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'timeout 5 env -v git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'git grep -n '"'"'env -i'"'"' -- .claude'
+corpus_row refuse "5 option: an abbreviation of env --chdir" \
+    'env --ch /etc git diff -- passwd shadow'
+corpus_row refuse "5 option: an abbreviation of env --chdir" \
+    'env --c=/etc git diff -- passwd shadow'
+corpus_row allow "5 option: an abbreviation of env --chdir" \
+    'env --chx git log -1'
+
 # The table, driven. One loop, so a new shape is one row above and nothing
 # here.
 corpus_refused=0
@@ -3275,8 +3442,20 @@ mutation "git's own relocating options" \
     "git -C /etc diff -- passwd shadow"
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "env -C, which relocates the command rather than git" \
-    '[[ "${raw_word}" =~ ^-[^-]*C || "${raw_word}" == --chdir* ]]' 'false' \
+    '[[ "${raw_word}" =~ ^-[^-]*C || (${#env_long} -ge 3 && --chdir == "${env_long}"*) ]]' 'false' \
     "env -C /etc git diff -- passwd shadow"
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "the abbreviated spellings of env --chdir" \
+    '(${#env_long} -ge 3 && --chdir == "${env_long}"*)' '-n ""' \
+    'env --ch /etc git diff -- passwd shadow'
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "the settings-environment pass" \
+    'refuse "${SETTINGS_ENV_MSG}"' ':' \
+    'unset GIT_CONFIG_COUNT; git log -p'
+# shellcheck disable=SC2016 # the find string is the hook's own source text
+mutation "the refusal of git --shallow-file" \
+    'refuse "${SHALLOW_FILE_MSG}"' ':' \
+    'git --shallow-file .env log -1'
 # shellcheck disable=SC2016 # the find string is the hook's own source text
 mutation "reading a path to shellcheck as shellcheck" \
     'elif [[ "${word}" == */shellcheck ]]; then' 'elif false; then' \
@@ -3618,6 +3797,29 @@ if [[ -d "${BARE_DIR}/victim/evil" ]]; then
         assert_eq "so the guard hook refuses git ${named_args}" "2" "${PRE_STATUS}"
         assert_contains "under the config-option refusal (git ${named_args})" \
             "${PRE_ERR}" "hand git a whole repository config to load"
+    done
+    rm -f "${MARKER}"
+
+    # The setting holds only while the variables that carry it reach git. A
+    # command that removes, un-exports or zeroes them, or empties the whole
+    # environment, puts git back on safe.bareRepository=all: each of these,
+    # run by bash with the settings env exported, reaches the planted program
+    # from inside the bare directory. The guard hook refuses each one.
+    for removal in "unset GIT_CONFIG_COUNT; git log -p -1" \
+        "export -n GIT_CONFIG_COUNT; git log -p -1" \
+        "declare +x GIT_CONFIG_COUNT; git log -p -1" \
+        "env -u GIT_CONFIG_COUNT git log -p -1" \
+        "env -i PATH=\"\${PATH}\" git log -p -1" \
+        "exec -c git log -p -1" \
+        "GIT_CONFIG_COUNT=0; git log -p -1"; do
+        rm -f "${MARKER}"
+        (cd "${BARE_DIR}/victim/evil" &&
+            env -i PATH="${PATH}" HOME="${BARE_DIR}/home" GIT_CONFIG_NOSYSTEM=1 \
+                GIT_CONFIG_GLOBAL=/dev/null "${AGENT_ENV[@]}" bash -c "${removal}" >/dev/null 2>&1)
+        assert_file_exists "with the setting exported, ${removal} still runs the planted program" "${MARKER}"
+        run_pre "$(pre_payload_for "${removal}")"
+        assert_eq "so the guard hook refuses ${removal}" "2" "${PRE_STATUS}"
+        assert_contains "and says why (${removal})" "${PRE_ERR}" "blocked:"
     done
     rm -f "${MARKER}"
 

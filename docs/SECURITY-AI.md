@@ -238,6 +238,18 @@ the command name alone would have looked fine:
   `--git-dir DIR` and `--bare`, which make git load another repository's
   config: `safe.bareRepository=explicit` refuses a bare repository committed
   into a branch only when git finds it on its own, not when it is named.
+- **taking git's settings environment away.** `.claude/settings.json` sets
+  `safe.bareRepository=explicit` through `GIT_CONFIG_COUNT`,
+  `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`. `unset GIT_CONFIG_COUNT`,
+  `export -n`, `declare +x`, `env -u GIT_CONFIG_COUNT`, `env -i`, bash's
+  `exec -c` and a bare `GIT_CONFIG_COUNT=0` statement each put git back on
+  `safe.bareRepository=all`, so `git log -p` inside a planted bare folder
+  runs its textconv program again. They are refused wherever they stand,
+  behind any wrapper. Removing another variable (`unset FOO`) is unaffected.
+- **a git option that reads a file.** `git --shallow-file FILE` reads FILE
+  as the shallow-commit list before any subcommand runs, and git's error
+  quotes the line it cannot parse, so `git --shallow-file .env log -1`
+  prints a line of `.env`.
 - **a wrapper command that hands its argument to a shell.** `flock -c
   COMMAND` (and `--command=COMMAND`) passes that string to a shell rather
   than as an ordinary command word, which would let a gated command hide
