@@ -3241,6 +3241,50 @@ corpus_row refuse "5 option: an abbreviation of env --chdir" \
     'env --c=/etc git diff -- passwd shadow'
 corpus_row allow "5 option: an abbreviation of env --chdir" \
     'env --chx git log -1'
+# The same pass, read word by word: each row below differs from a slip in one
+# step of the walk (an option's value, the end of env's or exec's options, the
+# word a wrapper runs). After `env --` env still reads NAME=value words as
+# assignments; a word after `--` that looks like an option is the program's
+# name. Only --split-string's value is split into words; another long option's
+# value is never read as one.
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -- GIT_CONFIG_COUNT=0 make'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env -- TZ=UTC GIT_CONFIG_COUNT=0 make'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env -- TZ=UTC make'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'export -n GIT_CONFIG_COUNT; ls'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'watch env --chdir=/tmp -i git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'watch env --chdir /tmp -i git log -p'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env -- -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'exec -- -c'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env -- echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'exec echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env -uhistchars git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env --argv0=-i git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'env --debug echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'stdbuf -oL nice echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'stdbuf -oL --input=0 echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'timeout -s KILL 5 echo env -i'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'export GIT_CONFIG_COUNT'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'declare -p GIT_CONFIG_COUNT'
 
 # The table, driven. One loop, so a new shape is one row above and nothing
 # here.

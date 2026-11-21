@@ -9,4 +9,11 @@
 # example a line inside a here-document whose text no test reads. When a test
 # could notice it, write that test instead.
 #
-# Empty on purpose: no edit is known to be equivalent yet.
+# check_settings_env_segment's exit status is never read: every call to it is
+# a statement of its own, and the hook does not run under `set -e`. Only its
+# refuse calls (exit 2) change what the hook does.
+.claude/hooks/gate-git-diff.sh	return 0	((i < n)) || return 0
+# Resets an array no earlier line of the hook sets. Without it the first `+=`
+# creates the same empty array; it is kept so a value already in the
+# environment under that name can never seed the first segment.
+.claude/hooks/gate-git-diff.sh	delete	declare -a segment_words=()

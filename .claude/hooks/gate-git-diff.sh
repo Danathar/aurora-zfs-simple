@@ -2092,10 +2092,7 @@ names_settings_env() {
 # with their own options, then the command's name and its operands.
 check_settings_env_segment() {
   local -a seg=("$@") parts=()
-  local n=${#seg[@]} i=0 cur='' word base opt value j ch
-  # Read only in the branch for another wrapper, after its name has set it.
-  local prev_opt=0
-  ((n)) || return 0
+  local n=${#seg[@]} i=0 cur='' prev_opt=0 word base opt value j ch
   # The words that can open a command and come before its name. A `(` is a
   # separator, never a word here, and `}`, `fi` and `done` only close a
   # command: bash allows no word after them in the same one.
@@ -2128,7 +2125,7 @@ check_settings_env_segment() {
       if [[ "${word}" == - ]]; then
         refuse "${SETTINGS_ENV_MSG}" # env's older spelling of -i
       elif [[ "${word}" == -- ]]; then
-        cur=''
+        cur=env-operands
       elif [[ "${word}" == --* ]]; then
         # A long option, or an unambiguous abbreviation of one.
         opt="${word%%=*}"
@@ -2184,6 +2181,18 @@ check_settings_env_segment() {
       fi
       ((i++))
       ;;
+    env-operands)
+      # After env's `--` no word is an option any more, but env still reads
+      # each NAME=value before the command as an assignment: `env --
+      # GIT_CONFIG_COUNT=0 make` zeroes it.
+      if [[ "${word}" == *=* ]]; then
+        names_settings_env "${word}" && refuse "${SETTINGS_ENV_MSG}"
+      else
+        cur=''
+        continue
+      fi
+      ((i++))
+      ;;
     exec)
       if [[ "${word}" == -- ]]; then
         cur=''
@@ -2220,8 +2229,9 @@ check_settings_env_segment() {
   local -a rest=("${seg[@]:i+1}")
   case "${name}" in
   unset)
+    # An option (`-v`, `-f`, `+x`) never starts with GIT_CONFIG, so the loops
+    # here read every word and need not step over options.
     for word in "${rest[@]}"; do
-      [[ "${word}" == -* ]] && continue
       names_settings_env "${word}" && refuse "${SETTINGS_ENV_MSG}"
     done
     ;;
@@ -2234,7 +2244,6 @@ check_settings_env_segment() {
       [[ "${name}" != export && "${word}" =~ ^\+.*x ]] && unexports=1
     done
     for word in "${rest[@]}"; do
-      [[ "${word}" == [-+]* ]] && continue
       names_settings_env "${word}" || continue
       ((unexports)) && refuse "${SETTINGS_ENV_MSG}"
       [[ "${word}" == *=* ]] && refuse "${SETTINGS_ENV_MSG}"
@@ -2257,10 +2266,9 @@ check_settings_env_segment() {
     done
     ;;
   esac
-  return 0
 }
 
-segment_words=()
+declare -a segment_words=()
 for ((idx = 0; idx < ${#words[@]}; idx++)); do
   case "${kinds[idx]}" in
   sep)
