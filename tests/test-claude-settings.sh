@@ -3160,6 +3160,7 @@ corpus_row refuse "1 env: the settings environment is taken away" \
     'env -i bash -c '"'"'git log -p'"'"''
 corpus_row refuse "1 env: the settings environment is taken away" \
     'exec -lc git log -p'
+# shellcheck disable=SC2016 # the substitution is a spelling handed to the hook, not run here
 corpus_row refuse "1 env: the settings environment is taken away" \
     'echo $(unset GIT_CONFIG_COUNT); git log -1'
 corpus_row refuse "1 env: the settings environment is taken away" \
