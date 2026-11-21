@@ -369,6 +369,12 @@ EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=v
 # shellcheck disable=SC2016 # the config keys are spellings the reader has to see
 GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. `--git-dir DIR`, and `--bare`, which is `--git-dir=.`, hand git a whole repository config to load: a bare repository committed into a branch names a diff.x.textconv program that `git --git-dir=evil log -p` runs, and the safe.bareRepository=explicit setting in .claude/settings.json lets exactly that spelling through, because naming the directory is what makes it explicit. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
 
+# shellcheck disable=SC2016 # the message quotes shell spellings as literal text
+SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
+
+# shellcheck disable=SC2016 # the option spellings are what the reader has to see
+SHALLOW_FILE_MSG='blocked: `git --shallow-file FILE` (and `--shallow-file=FILE`) makes git read FILE as the list of shallow commits before any subcommand runs, and the error it prints for a line it cannot parse quotes that line: `git --shallow-file .env log -1` prints the first NAME=value line of .env past the Read(./.env) deny rule, under the Bash(git log:*) allow row. It is a read of a file this gate cannot hold to the operand scan, so the option is refused whatever it names. Run git without it.'
+
 # shellcheck disable=SC2016 # the glob spellings are what the reader has to see
 GIT_GLOB_MSG='blocked: an unquoted glob character (*, ? or a bracket) in a word of a git invocation is expanded by bash before git sees it, so the operands this gate counted are not the operands git receives: `git diff /etc/passwd*` is one word here and two plain files at git, which prints the diff between them, and `git diff .env*` is that same read of two untracked files inside the checkout -- the plain-file mode reached with one operand written and no flag anywhere. Expanding it correctly means reimplementing bash inside a hook, so it is refused instead, as it already is in a shellcheck and a bash -n invocation. Quote the pathspec (`git diff -- '"'"'tests/*.sh'"'"'`), which is the spelling git expands itself, or write the paths out.'
 
@@ -1027,8 +1033,13 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
   # looking local. The git and shellcheck operand scans below refuse a moved
   # directory rather than guess at it; this spelling is refused here, where
   # the wrapper is already known.
+  # env takes any unambiguous abbreviation of a long option, and --c is
+  # already one of --chdir: `env --ch /etc git diff -- passwd shadow` moves
+  # the directory as -C does.
+  env_long="${raw_word//[\'\"]/}"
+  env_long="${env_long%%=*}"
   if [[ "${wrapper_name}" == env ]] &&
-    [[ "${raw_word}" =~ ^-[^-]*C || "${raw_word}" == --chdir* ]]; then
+    [[ "${raw_word}" =~ ^-[^-]*C || (${#env_long} -ge 3 && --chdir == "${env_long}"*) ]]; then
     refuse "${MOVED_MSG}"
   fi
   # flock's -c/--command hands its argument to a shell rather than passing
@@ -2055,6 +2066,213 @@ check_gated_command
 # command it arms, and only then does it reach it.
 ((export_idx >= 0 && gate_idx > export_idx)) && refuse "${EXPORT_ENV_MSG}"
 
+# The wrappers the name scan above steps over, so the settings pass below
+# steps over the same ones.
+is_settings_env_wrapper() {
+  case "$1" in
+  command | builtin | exec | env | nohup | noglob | nice | xargs | timeout | stdbuf | sudo | doas | \
+    setsid | ionice | chrt | taskset | unshare | flock) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+# Whether a word (`NAME` or `NAME=value`, quotes already removed) names one of
+# the variables .claude/settings.json uses to set safe.bareRepository=explicit.
+# Bash and env read names case-sensitively, so the match is too.
+names_settings_env() {
+  [[ "${1%%=*}" == GIT_CONFIG* ]]
+}
+
+# One simple command, as the quote-removed words between two separators:
+# refuse it when it takes the settings environment away from what runs after
+# it. Read on its own pass, after every other refusal, so the messages the
+# earlier rules already give (an inline `GIT_CONFIG_COUNT=0 git log`, an
+# `export GIT_CONFIG_COUNT=0; git log`) are unchanged. The leading words are
+# walked as bash and the wrappers read them: assignments, then wrapper names
+# with their own options, then the command's name and its operands.
+check_settings_env_segment() {
+  local -a seg=("$@") parts=()
+  local n=${#seg[@]} i=0 cur='' word base opt value j ch
+  # Read only in the branch for another wrapper, after its name has set it.
+  local prev_opt=0
+  ((n)) || return 0
+  # The words that can open a command and come before its name. A `(` is a
+  # separator, never a word here, and `}`, `fi` and `done` only close a
+  # command: bash allows no word after them in the same one.
+  while ((i < n)); do
+    case "${seg[i]}" in
+    '{' | '!' | if | then | else | elif | do | while | until | time | coproc) ((i++)) ;;
+    *) break ;;
+    esac
+  done
+  # Leading assignments. A statement made only of them (`GIT_CONFIG_COUNT=0;
+  # git log -p`) changes the value the shell already exports to every later
+  # command; one in front of a command changes it for that command.
+  while ((i < n)) && [[ "${seg[i]}" =~ ^[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?= ]]; do
+    names_settings_env "${seg[i]}" && refuse "${SETTINGS_ENV_MSG}"
+    ((i++))
+  done
+  # The wrapper chain (`timeout 5 env -i git`, `nice -n 5 exec -c git`).
+  while ((i < n)); do
+    word="${seg[i]}"
+    base="${word##*/}"
+    if is_settings_env_wrapper "${base}" &&
+      [[ "${word}" == "${base}" || "${word}" == "/usr/bin/${base}" || "${word}" == "/bin/${base}" ]]; then
+      cur="${base}"
+      prev_opt=0
+      ((i++))
+      continue
+    fi
+    case "${cur}" in
+    env)
+      if [[ "${word}" == - ]]; then
+        refuse "${SETTINGS_ENV_MSG}" # env's older spelling of -i
+      elif [[ "${word}" == -- ]]; then
+        cur=''
+      elif [[ "${word}" == --* ]]; then
+        # A long option, or an unambiguous abbreviation of one.
+        opt="${word%%=*}"
+        if ((${#opt} >= 3)) && [[ --ignore-environment == "${opt}"* ]]; then
+          refuse "${SETTINGS_ENV_MSG}"
+        fi
+        if ((${#opt} >= 3)) && [[ --unset == "${opt}"* ]]; then
+          if [[ "${word}" == *=* ]]; then
+            value="${word#*=}"
+          else
+            ((i++))
+            value="${seg[i]-}"
+          fi
+          names_settings_env "${value}" && refuse "${SETTINGS_ENV_MSG}"
+        elif ((${#opt} >= 3)) && [[ --split-string == "${opt}"* ]]; then
+          # env splits the string into words and reads them as its own
+          # arguments, options included: `env --split '-i git log -p'`
+          # empties the environment. Read them in its place.
+          if [[ "${word}" == *=* ]]; then
+            value="${word#*=}"
+          else
+            ((i++))
+            value="${seg[i]-}"
+          fi
+          read -ra parts <<<"${value}"
+          seg=("${seg[@]:0:i+1}" "${parts[@]}" "${seg[@]:i+1}")
+          n=${#seg[@]}
+        elif [[ "${word}" != *=* ]] && ((${#opt} >= 3)) && [[ --chdir == "${opt}"* ]]; then
+          ((i++)) # the option's value
+        fi
+      elif [[ "${word}" == -* ]]; then
+        # A cluster of short options: -i empties the environment; -u, -C and
+        # -S take the rest of the word, or the next word, as their value.
+        for ((j = 1; j < ${#word}; j++)); do
+          ch="${word:j:1}"
+          [[ "${ch}" == i ]] && refuse "${SETTINGS_ENV_MSG}"
+          if [[ "${ch}" == [uCS] ]]; then
+            value="${word:j+1}"
+            if [[ -z "${value}" ]]; then
+              ((i++))
+              value="${seg[i]-}"
+            fi
+            [[ "${ch}" == u ]] && names_settings_env "${value}" && refuse "${SETTINGS_ENV_MSG}"
+            break
+          fi
+        done
+      elif [[ "${word}" == *=* ]]; then
+        # env reads any word with an = before its command as an assignment.
+        names_settings_env "${word}" && refuse "${SETTINGS_ENV_MSG}"
+      else
+        cur='' # the command env runs; read it as a name (or another wrapper)
+        continue
+      fi
+      ((i++))
+      ;;
+    exec)
+      if [[ "${word}" == -- ]]; then
+        cur=''
+      elif [[ "${word}" == -* ]]; then
+        # -c empties the environment wherever it stands among exec's options,
+        # including after `-a NAME` (bash keeps reading options there).
+        [[ "${word:1}" == *c* ]] && refuse "${SETTINGS_ENV_MSG}"
+        [[ "${word}" == *a ]] && ((i++)) # -a NAME takes the next word
+      else
+        cur=''
+        continue
+      fi
+      ((i++))
+      ;;
+    '') break ;; # the command's name
+    *)
+      # Any other wrapper: step over its options, an option's value and a bare
+      # number or duration (`timeout -s KILL 5`, `nice -n 5`).
+      if [[ "${word}" == -*=* ]]; then
+        prev_opt=0
+      elif [[ "${word}" == -* ]]; then
+        prev_opt=1
+      elif [[ "${word}" =~ ^[0-9.]+[smhd]?$ ]] || ((prev_opt)); then
+        prev_opt=0
+      else
+        break
+      fi
+      ((i++))
+      ;;
+    esac
+  done
+  ((i < n)) || return 0
+  local name="${seg[i]}"
+  local -a rest=("${seg[@]:i+1}")
+  case "${name}" in
+  unset)
+    for word in "${rest[@]}"; do
+      [[ "${word}" == -* ]] && continue
+      names_settings_env "${word}" && refuse "${SETTINGS_ENV_MSG}"
+    done
+    ;;
+  export | declare | typeset | local | readonly)
+    # `export -n NAME` and `declare/typeset/local +x NAME` stop exporting it;
+    # an assignment through any of them sets a new value.
+    local unexports=0
+    for word in "${rest[@]}"; do
+      [[ "${name}" == export && "${word}" =~ ^-[^-]*n ]] && unexports=1
+      [[ "${name}" != export && "${word}" =~ ^\+.*x ]] && unexports=1
+    done
+    for word in "${rest[@]}"; do
+      [[ "${word}" == [-+]* ]] && continue
+      names_settings_env "${word}" || continue
+      ((unexports)) && refuse "${SETTINGS_ENV_MSG}"
+      [[ "${word}" == *=* ]] && refuse "${SETTINGS_ENV_MSG}"
+    done
+    ;;
+  git | echo | printf | grep | egrep | fgrep) ;; # git reads its own operands; the others only print or match
+  *)
+    # A program the wrapper walk does not step over (`flock /tmp/l env -i
+    # git`, `watch env -i git`, `setsid env -u NAME git`) runs the words
+    # after it. Read each tail that starts at a word able to drop the
+    # setting as a command of its own, so a longer tail is never skipped.
+    local k
+    for ((k = i + 1; k < n; k++)); do
+      case "${seg[k]}" in
+      env | exec | unset | export | declare | typeset | local | readonly)
+        check_settings_env_segment "${seg[@]:k}"
+        ;;
+      *) ;;
+      esac
+    done
+    ;;
+  esac
+  return 0
+}
+
+segment_words=()
+for ((idx = 0; idx < ${#words[@]}; idx++)); do
+  case "${kinds[idx]}" in
+  sep)
+    check_settings_env_segment "${segment_words[@]}"
+    segment_words=()
+    ;;
+  word) segment_words+=("${words[idx]}") ;;
+  *) ;;
+  esac
+done
+check_settings_env_segment "${segment_words[@]}"
+
 # The whole string with quoting removed, for the one test that is a substring
 # match rather than a word: the shell removes quotes and backslashes on the
 # way to git, so `--no-'index'` and `--no-\index` both reach it as
@@ -2361,6 +2579,11 @@ for ((idx = 0; idx < ${#words[@]}; idx++)); do
       --upload-pack | --upload-pack=* | --receive-pack | --receive-pack=* | \
       --git-dir | --git-dir=* | --bare)
       refuse "${GIT_CONFIG_MSG}"
+      ;;
+    # `--shallow-file FILE` is read as the shallow list before the subcommand
+    # runs, and git's parse error quotes the line it cannot read.
+    --shallow-file | --shallow-file=*)
+      refuse "${SHALLOW_FILE_MSG}"
       ;;
     # The options that move the paths this invocation opens. They do not move
     # the shell's directory, so they are kept apart from `worktree_moved`.
