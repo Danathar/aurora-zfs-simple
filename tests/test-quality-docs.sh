@@ -747,7 +747,7 @@ for ledger in "${snapshots[@]}"; do
     [[ "${ledger}" == "${REPO_ROOT}"/docs/agent-tasks/* ]] || continue
     ledger_commands+="$(fenced_blocks "${ledger}" bash)"$'\n'
 done
-for mark in '— hive:' 'agent=' 'backend=' 'headRefName' 'closingIssuesReferences' \
+for mark in '-- hive:' '— hive:' 'agent=' 'backend=' 'headRefName' 'closingIssuesReferences' \
     'Hive-Run' 'Hive-Plan' 'hive.kubestellar.io' 'danathar-atomic-hive'; do
     assert_contains "docs/agent-tasks/README.md names the mark ${mark}" \
         "$(cat "${AGENT_TASKS_README}")" "${mark}"

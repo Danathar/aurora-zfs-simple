@@ -409,9 +409,9 @@ meets each condition, and the points worth knowing:
 
 ### Reading the record back
 
-The two conditions above leave a record: the `— hive:` line that ends an agent
-pull request's description (backend, model, effort), and the Signed-off-by
-trailer on its commits. Nothing in the ruleset requires either — the only
+The two conditions above leave a record: the `-- hive:` line (`— hive:` before
+2026-11-18) that ends an agent pull request's description (backend, model,
+effort), and the Signed-off-by trailer on its commits. Nothing in the ruleset requires either — the only
 required status check is `Shell tests`, and omp-backed runs push under the
 maintainer's own login, so the author alone does not say which pull requests an
 agent wrote.

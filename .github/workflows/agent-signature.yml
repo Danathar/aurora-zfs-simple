@@ -2,10 +2,12 @@
 name: Agent PR signature
 
 # Checks, while an agent pull request is still open, the line agent-audit.yml
-# reads back only after the merge: the `— hive:` signature that ends the
-# description. A merged pull request's description is out of reach, so a miss
-# the monthly audit finds can only be listed, never fixed. This finds it while
-# the description can still be edited, and runs again on every edit.
+# reads back only after the merge: the `-- hive:` signature that ends the
+# description (`— hive:`, with an em dash, on pull requests from before
+# 2026-11-18; both count). A merged pull request's description is out of
+# reach, so a miss the monthly audit finds can only be listed, never fixed.
+# This finds it while the description can still be edited, and runs again on
+# every edit.
 #
 # Which pull requests: the ones the Hive app opened (`danathar-atomic-hive[bot]`
 # is how the event spells the login `gh` shows as `app/danathar-atomic-hive`)
@@ -52,11 +54,11 @@ jobs:
           # The two def lines are agent-audit.yml's, character for character.
           signature="$(jq -nr '
             def signature:
-              (.body // "") | split("\n") | map(select(startswith("— hive:"))) | first;
+              (.body // "") | split("\n") | map(select(startswith("-- hive:") or startswith("— hive:"))) | first;
             {body: env.PR_BODY} | signature // empty')"
 
           if [ -z "${signature}" ]; then
-            echo "::error::The description has no line starting with '— hive:'. agent-audit.yml fails an agent pull request merged without one, and by then the description cannot be fixed. Add the line to the description; this check runs again on the edit."
+            echo "::error::The description has no line starting with '-- hive:' (the older '— hive:' is still accepted). agent-audit.yml fails an agent pull request merged without one, and by then the description cannot be fixed. Add the line to the description; this check runs again on the edit."
             exit 1
           fi
           echo "The description has its signature line."
