@@ -20,13 +20,14 @@ record, not a brief.
 ## The marks
 
 **The pull request signature.** An agent-written pull request body carries a
-line beginning `— hive:` that names the backend, the model, the effort, and for
+line beginning `-- hive:` (`— hive:`, with an em dash, on pull requests from
+before 2026-11-18) that names the backend, the model, the effort, and for
 the Hive agents the role (`agent=quality`, `agent=sec-check`, and so on). It is
 the only mark that appears on every agent pull request opened since
 2026-09-03, and it is the one to count by.
 
 ```bash
-gh pr view <n> --repo Danathar/aurora-zfs-simple --json body --jq '.body | capture("— hive: (?<sig>.*)").sig'
+gh pr view <n> --repo Danathar/aurora-zfs-simple --json body --jq '.body | capture("(--|—) hive: (?<sig>.*)").sig'
 ```
 
 Not every signature names a role. The ones written from a maintainer-driven
@@ -43,7 +44,7 @@ Copilot, opens pull requests as `app/copilot-swe-agent` with no signature at
 all. The ledger counts each case.
 
 ```bash
-gh pr view <n> --repo Danathar/aurora-zfs-simple --json author,body --jq '{author: .author.login, signed: (.body | test("— hive:"))}'
+gh pr view <n> --repo Danathar/aurora-zfs-simple --json author,body --jq '{author: .author.login, signed: (.body | test("(--|—) hive:"))}'
 ```
 
 **The branch name.** The Hive agents push to `<role>/<slug>`: `quality/`,

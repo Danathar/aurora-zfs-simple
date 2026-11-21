@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Covers .github/workflows/agent-signature.yml -- the advisory check that an
-# open agent pull request's description carries the `— hive:` signature line
-# agent-audit.yml reads back after the merge.
+# open agent pull request's description carries the `-- hive:` signature line
+# (`— hive:` on pull requests from before 2026-11-18) agent-audit.yml reads
+# back after the merge.
 #
 # The point of the workflow is to catch, before the merge, exactly what the
 # audit would fail after it. Two copies of one rule drift apart quietly: edit
@@ -76,8 +77,8 @@ CHECK_DEF="$(def_lines "${SIGNATURE_WF}")"
 
 assert_eq "agent-audit.yml has exactly one two-line def signature" \
     "2" "$(printf '%s\n' "${AUDIT_DEF}" | grep -c .)"
-assert_contains "the audit's definition is a line starting with the signature" \
-    "${AUDIT_DEF}" 'map(select(startswith("— hive:")))'
+assert_contains "the audit's definition is a line starting with either spelling of the signature" \
+    "${AUDIT_DEF}" 'map(select(startswith("-- hive:") or startswith("— hive:")))'
 assert_eq "agent-signature.yml runs agent-audit.yml's def signature, character for character" \
     "${AUDIT_DEF}" "${CHECK_DEF}"
 
@@ -228,6 +229,23 @@ check 1 "an indented signature fails, as the audit would fail it" \
     $'A change.\n\n  — hive: agent=scanner'
 check 1 "an ASCII hyphen is not the signature's dash" \
     $'A change.\n\n- hive: agent=scanner'
+
+# Since 2026-11-18 (hive v5.322.0) the hive writes two ASCII hyphens instead
+# of the em dash. Both spellings count; the near misses still do not.
+check 0 "the current -- hive: line, as the hive writes it, passes" \
+    $'A change.\n\n-- hive: agent=scanner backend=claude model=claude-sonnet-5-5 effort=high claude=2.1.327'
+check 0 "the current -- hive: line with Windows line endings passes" \
+    $'A change.\r\n\r\n-- hive: agent=scanner backend=claude\r\n'
+check 1 "-- hive: in the middle of a line fails" \
+    $'This ends with -- hive: agent=scanner as prose.'
+check 1 "an indented -- hive: line fails" \
+    $'A change.\n\n  -- hive: agent=scanner'
+check 1 "three hyphens are not the signature's prefix" \
+    $'A change.\n\n--- hive: agent=scanner'
+check 1 "two hyphens with no space before hive: are not the prefix" \
+    $'A change.\n\n--hive: agent=scanner'
+check 1 "an en dash is not the signature's dash" \
+    $'A change.\n\n– hive: agent=scanner'
 
 run_step $'::warning::injected\n\n— hive: agent=scanner'
 assert_not_contains "the description is never echoed into the log" "${S_OUT}" "injected"

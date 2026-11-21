@@ -2,7 +2,8 @@
 #
 # Covers .github/workflows/agent-audit.yml — the one `run:` body that reads
 # back, after the merge, the record an agent-written pull request is supposed
-# to leave: a `— hive:` signature line in its description and a Signed-off-by
+# to leave: a `-- hive:` signature line (`— hive:` before 2026-11-18) in its
+# description and a Signed-off-by
 # trailer on every commit.
 #
 # Nothing else checks that record. `Shell tests` is the only required status
@@ -301,7 +302,7 @@ run_audit 2026-10-01
 assert_eq "a Hive-app pull request without a signature line exits 1" "1" "${A_STATUS}"
 assert_contains "the row shows the signature as missing" "${A_SUMMARY}" "| **missing** |"
 assert_contains "the finding names the pull request" \
-    "${A_SUMMARY}" "- #20: opened by the Hive app with no \`— hive:\` signature line"
+    "${A_SUMMARY}" "- #20: opened by the Hive app with no \`-- hive:\` signature line (the older \`— hive:\` also counts)"
 assert_not_contains "the signed pull request is not a finding" "${A_SUMMARY}" "- #21:"
 assert_contains "the failure is annotated as an error" "${A_OUT}" "::error::1 finding(s)"
 
@@ -439,7 +440,7 @@ assert_eq "misses merged before the enforcement date do not fail the run" "0" "$
 assert_contains "they are still listed, under their own heading" \
     "${A_SUMMARY}" "#### Before enforcement"
 assert_contains "the missing signature is among them" \
-    "${A_SUMMARY}" "- #40: opened by the Hive app with no \`— hive:\` signature line"
+    "${A_SUMMARY}" "- #40: opened by the Hive app with no \`-- hive:\` signature line (the older \`— hive:\` also counts)"
 assert_contains "the unsigned commit is among them" \
     "${A_SUMMARY}" "- #41: commit(s) 0410000 carry no Signed-off-by trailer"
 assert_not_contains "they are not listed as findings" "${A_SUMMARY}" "#### Findings"
@@ -515,7 +516,7 @@ assert_not_contains "a maintainer pull request that mentions '— hive:' mid-lin
     "${A_SUMMARY}" "#60"
 assert_not_contains "so its commits are not fetched" "${A_CALLS}" "pr view 60"
 assert_contains "a Hive-app pull request whose only '— hive:' is mid-line has no signature" \
-    "${A_SUMMARY}" "- #61: opened by the Hive app with no \`— hive:\` signature line"
+    "${A_SUMMARY}" "- #61: opened by the Hive app with no \`-- hive:\` signature line (the older \`— hive:\` also counts)"
 assert_contains "the backend is read from the line that starts with the signature, not from prose" \
     "${A_SUMMARY}" "| ${APP} | Danathar | backend=omp model=anthropic/claude-opus-5-5 effort=high | 1 | all |"
 assert_not_contains "no prose line is reported as a backend" "${A_SUMMARY}" "naming its model"
@@ -529,6 +530,46 @@ stage_detail 63 "Reverts a change that was Signed-off-by: someone else"
 run_audit 2026-10-01
 assert_eq "a trailer quoted mid-line does not sign the commit off" "1" "${A_STATUS}"
 assert_contains "and the commit is named" "${A_SUMMARY}" "- #63: commit(s) 0630000 carry no Signed-off-by trailer"
+
+# =============================================================================
+# F2. The current spelling: two ASCII hyphens
+# =============================================================================
+#
+# Since 2026-11-18 (hive v5.322.0) the hive starts the line with `-- hive:`
+# instead of the em dash. Both count, by the same rules: only a line that
+# starts with the prefix. Three hyphens, or the prefix mid-line, do not.
+
+NEW_SIG="-- hive: agent=scanner backend=claude model=claude-sonnet-5-5 effort=high claude=2.1.327"
+
+new_case
+stage_list "$(pr_with 65 "${APP}" "fix: new spelling" "A change.
+
+${NEW_SIG}")" \
+    "$(pr_with 66 Danathar "fix: maintainer login, new spelling" "A change.
+
+${NEW_SIG}")" \
+    "$(pr_with 67 Danathar "docs: prose" "Agent pull requests end with a \`-- hive:\` line.")" \
+    "$(pr_with 68 "${APP}" "fix: three hyphens" "A change.
+
+--- hive: agent=scanner backend=claude")" \
+    "$(pr_with 69 "${APP}" "fix: new spelling mid-line" "This ends with ${NEW_SIG}")"
+stage_detail 65 "${SIGNED}"
+stage_detail 66 "${SIGNED}"
+stage_detail 68 "${SIGNED}"
+stage_detail 69 "${SIGNED}"
+run_audit 2026-10-01
+assert_contains "a Hive-app pull request signed -- hive: is listed with its backend and model" \
+    "${A_SUMMARY}" "| ${APP} | Danathar | agent=scanner backend=claude model=claude-sonnet-5-5 effort=high claude=2.1.327 | 1 | all |"
+assert_not_contains "a Hive-app pull request signed -- hive: is not a finding" "${A_SUMMARY}" "- #65:"
+assert_contains "a maintainer-login pull request is found by a -- hive: line alone" \
+    "${A_SUMMARY}" "[#66](https://github.com/${REPO_NAME}/pull/66)"
+assert_not_contains "a maintainer pull request that mentions -- hive: mid-line is not an agent's" \
+    "${A_SUMMARY}" "#67"
+assert_contains "three hyphens are not a signature" \
+    "${A_SUMMARY}" "- #68: opened by the Hive app with no \`-- hive:\` signature line (the older \`— hive:\` also counts)"
+assert_contains "-- hive: mid-line is not a signature" \
+    "${A_SUMMARY}" "- #69: opened by the Hive app with no \`-- hive:\` signature line (the older \`— hive:\` also counts)"
+assert_eq "the two Hive-app pull requests without a real line fail the run" "1" "${A_STATUS}"
 
 # =============================================================================
 # G. The table: cells, dates, and an absent merger

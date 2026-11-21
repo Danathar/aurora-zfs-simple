@@ -5,7 +5,8 @@ name: Agent audit trail
 # and fails when one did not leave it.
 #
 # The record is GitHub itself. An agent pull request ends its description with
-# a `— hive:` line naming the backend and model that wrote it, and every
+# a `-- hive:` line naming the backend and model that wrote it (the hive wrote
+# `— hive:`, with an em dash, until 2026-11-18; both count), and every
 # commit carries a Signed-off-by trailer saying a person stands behind it.
 # Nothing checked either once the merge was in: the only required status check
 # in .github/rulesets/main.json is `Shell tests`, and the omp-backed runs push
@@ -21,7 +22,8 @@ name: Agent audit trail
 #
 # Two things fail the run, because each is checkable from what GitHub holds:
 #
-#   * a pull request the Hive app opened with no `— hive:` signature line;
+#   * a pull request the Hive app opened with no `-- hive:` (or older
+#     `— hive:`) signature line;
 #   * a commit on an agent pull request with no Signed-off-by trailer. A merge
 #     commit is exempt, as the DCO app exempts it, when the pull request went
 #     into `main` and every parent after the first is outside the commits the
@@ -115,7 +117,7 @@ jobs:
           # line -- the second clause is what catches the omp-backed runs.
           jq -c '[.[] | select(
                 .author.login == "app/danathar-atomic-hive"
-                or ((.body // "") | test("(^|\n)— hive:")))]' merged.json > agents.json
+                or ((.body // "") | test("(^|\n)(--|—) hive:")))]' merged.json > agents.json
 
           # Commits are fetched one pull request at a time: listing them
           # alongside the pull requests trips the GraphQL node ceiling on a
@@ -157,7 +159,7 @@ jobs:
               and ($p | length) > 1
               and all($p[1:][]; IN($own[]) | not);
             def signature:
-              (.body // "") | split("\n") | map(select(startswith("— hive:"))) | first;
+              (.body // "") | split("\n") | map(select(startswith("-- hive:") or startswith("— hive:"))) | first;
             def row:
               . as $pr
               | ($details[0][$pr.number | tostring]) as $d
@@ -172,7 +174,7 @@ jobs:
                   merged_by: ($pr.mergedBy.login // "unknown"),
                   app: ($pr.author.login == "app/danathar-atomic-hive"),
                   enforced: ($pr.mergedAt[:10] >= $enforce),
-                  signature: (signature | if . == null then null else ltrimstr("— hive: ") end),
+                  signature: (signature | if . == null then null else sub("^(--|—) hive: "; "") end),
                   commits: ($d.commits | length),
                   merges: ([$d.commits[] | select(ismerge($own; $pr.baseRefName))] | length),
                   unsigned: [$d.commits[]
@@ -183,7 +185,7 @@ jobs:
             def findings:
               [ .[]
                 | (if .app and .signature == null
-                   then "#\(.number): opened by the Hive app with no `— hive:` signature line"
+                   then "#\(.number): opened by the Hive app with no `-- hive:` signature line (the older `— hive:` also counts)"
                    else empty end),
                   (if (.unsigned | length) > 0
                    then "#\(.number): commit(s) \(.unsigned | join(", ")) carry no Signed-off-by trailer"

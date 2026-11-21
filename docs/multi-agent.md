@@ -17,8 +17,9 @@ no current-state counts: anything that changes on its own is a command, under
 
 ## Who works here
 
-An agent signs the pull requests it writes with a `— hive:` line, and that line
-is the only reliable key to the role. Branch prefixes and commit identities
+An agent signs the pull requests it writes with a `-- hive:` line (`— hive:`,
+with an em dash, on pull requests from before 2026-11-18), and that line is the
+only reliable key to the role. Branch prefixes and commit identities
 follow the role but are not unique to it: the table is what the merged pull
 requests showed when it was written, and the commands that regenerate it are
 in the next section.
@@ -52,7 +53,7 @@ found this" the way the branch answers "who changed this".
 # Who opened what: branch prefix, PR author, and the signature line
 gh pr list --repo Danathar/aurora-zfs-simple --state merged --limit 60 \
   --json number,headRefName,author,body \
-  --jq '.[] | "#\(.number) \(.headRefName) \(.author.login) \(.body | split("\n") | map(select(startswith("— hive"))) | join(""))"'
+  --jq '.[] | "#\(.number) \(.headRefName) \(.author.login) \(.body | split("\n") | map(select(test("^(--|—) hive:"))) | join(""))"'
 
 # Which commit identities have written to the repository
 git log --format='%an <%ae>' | sort | uniq -c | sort -rn
