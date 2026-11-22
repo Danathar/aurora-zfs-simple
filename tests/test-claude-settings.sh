@@ -3173,6 +3173,57 @@ corpus_row refuse "1 env: the settings environment is taken away" \
     'if true; then unset GIT_CONFIG_COUNT; fi'
 corpus_row refuse "1 env: the settings environment is taken away" \
     'if false; then :; else unset GIT_CONFIG_COUNT; fi'
+# A builtin that stores a value in a variable overwrites it the same way a
+# bare `GIT_CONFIG_COUNT=0` statement does, and so does one that stores a
+# value in HOME or PATH (git reads planted/.gitconfig, or another git runs).
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'read GIT_CONFIG_COUNT <<< 0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'IFS= read -r GIT_CONFIG_COUNT <<< 0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'read -a GIT_CONFIG_COUNT <<< 0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'read -raHOME <<< planted; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'builtin read GIT_CONFIG_COUNT <<< 0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'mapfile -t PATH < planted; git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'readarray GIT_CONFIG_COUNT < planted; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'printf -v GIT_CONFIG_COUNT 0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'printf -vGIT_CONFIG_COUNT 0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'printf -v HOME planted; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'printf -v PATH[00] planted; git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'for GIT_CONFIG_COUNT in 0; do git log -p; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'for HOME in planted; do git log -p; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'select HOME in planted; do git log -p; done'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'let GIT_CONFIG_COUNT=0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'let HOME=0; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'timeout 5 bash -c "read GIT_CONFIG_COUNT <<< 0; git log -p"'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'printf "%s\\n" x; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'printf -v line "%s" x; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'read -r line < README.md; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'mapfile -t lines < README.md; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'for f in a b; do git log -1; done'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'let i++; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'let MYPATH=1; git log -1'
 corpus_row refuse "1 env: the settings environment is taken away" \
     'if false; then :; elif unset GIT_CONFIG_COUNT; then :; fi'
 corpus_row refuse "1 env: the settings environment is taken away" \
@@ -3812,7 +3863,12 @@ if [[ -d "${BARE_DIR}/victim/evil" ]]; then
         "env -u GIT_CONFIG_COUNT git log -p -1" \
         "env -i PATH=\"\${PATH}\" git log -p -1" \
         "exec -c git log -p -1" \
-        "GIT_CONFIG_COUNT=0; git log -p -1"; do
+        "GIT_CONFIG_COUNT=0; git log -p -1" \
+        "read GIT_CONFIG_COUNT <<< 0; git log -p -1" \
+        "printf -v GIT_CONFIG_COUNT 0; git log -p -1" \
+        "mapfile GIT_CONFIG_COUNT <<< 0; git log -p -1" \
+        "for GIT_CONFIG_COUNT in 0; do git log -p -1; done" \
+        "let GIT_CONFIG_COUNT=0; git log -p -1"; do
         rm -f "${MARKER}"
         (cd "${BARE_DIR}/victim/evil" &&
             env -i PATH="${PATH}" HOME="${BARE_DIR}/home" GIT_CONFIG_NOSYSTEM=1 \

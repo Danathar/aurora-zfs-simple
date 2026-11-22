@@ -244,7 +244,10 @@ the command name alone would have looked fine:
   `export -n`, `declare +x`, `env -u GIT_CONFIG_COUNT`, `env -i`, bash's
   `exec -c` and a bare `GIT_CONFIG_COUNT=0` statement each put git back on
   `safe.bareRepository=all`, so `git log -p` inside a planted bare folder
-  runs its textconv program again. They are refused wherever they stand,
+  runs its textconv program again. So do the builtins that store a value in
+  a variable: `read GIT_CONFIG_COUNT`, `mapfile` / `readarray`,
+  `printf -v GIT_CONFIG_COUNT`, `for GIT_CONFIG_COUNT in 0`, `select` and
+  `let GIT_CONFIG_COUNT=0`, and the same builtins naming HOME or PATH. They are refused wherever they stand,
   behind any wrapper. Removing another variable (`unset FOO`) is unaffected.
 - **a git option that reads a file.** `git --shallow-file FILE` reads FILE
   as the shallow-commit list before any subcommand runs, and git's error
