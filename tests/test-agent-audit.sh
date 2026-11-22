@@ -577,10 +577,10 @@ assert_eq "the two Hive-app pull requests without a real line fail the run" "1" 
 new_case
 stage_list "$(pr_with 63 Danathar "fix: maintainer, three hyphens" "A change.
 
---- hive: agent=scanner backend=claude")" \
+--- hive: a near miss")" \
     "$(pr_with 64 Danathar "fix: maintainer, en dash" "A change.
 
-– hive: agent=scanner backend=claude")"
+– hive: a near miss")"
 run_audit 2026-10-01
 assert_not_contains "a maintainer pull request signed with three hyphens is not an agent's" \
     "${A_SUMMARY}" "#63"
