@@ -370,7 +370,7 @@ EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=v
 GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. `--git-dir DIR`, and `--bare`, which is `--git-dir=.`, hand git a whole repository config to load: a bare repository committed into a branch names a diff.x.textconv program that `git --git-dir=evil log -p` runs, and the safe.bareRepository=explicit setting in .claude/settings.json lets exactly that spelling through, because naming the directory is what makes it explicit. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
 
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal text
-SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
+SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 SHALLOW_FILE_MSG='blocked: `git --shallow-file FILE` (and `--shallow-file=FILE`) makes git read FILE as the list of shallow commits before any subcommand runs, and the error it prints for a line it cannot parse quotes that line: `git --shallow-file .env log -1` prints the first NAME=value line of .env past the Read(./.env) deny rule, under the Bash(git log:*) allow row. It is a read of a file this gate cannot hold to the operand scan, so the option is refused whatever it names. Run git without it.'
@@ -2112,6 +2112,16 @@ check_settings_env_segment() {
     names_settings_env "${seg[i]}" && refuse "${SETTINGS_ENV_MSG}"
     ((i++))
   done
+  # HOME and PATH are already exported, so a statement made only of
+  # assignments (`HOME=planted; git log -p`, `PATH=planted:$PATH; git log -1`)
+  # changes what every later command of the string runs under: git reads
+  # planted/.gitconfig, or a different git is found. In front of a command the
+  # assignment has a refusal of its own.
+  if ((i == n)); then
+    for word in "${seg[@]}"; do
+      [[ "${word}" =~ ^(HOME|PATH)(\[[^]]*\])?\+?= ]] && refuse "${SETTINGS_ENV_MSG}"
+    done
+  fi
   # The wrapper chain (`timeout 5 env -i git`, `nice -n 5 exec -c git`).
   while ((i < n)); do
     word="${seg[i]}"
@@ -2156,16 +2166,17 @@ check_settings_env_segment() {
           read -ra parts <<<"${value}"
           seg=("${seg[@]:0:i+1}" "${parts[@]}" "${seg[@]:i+1}")
           n=${#seg[@]}
-        elif [[ "${word}" != *=* ]] && ((${#opt} >= 3)) && [[ --chdir == "${opt}"* ]]; then
+        elif [[ "${word}" != *=* ]] && ((${#opt} >= 3)) &&
+          { [[ --chdir == "${opt}"* ]] || [[ --argv0 == "${opt}"* ]]; }; then
           ((i++)) # the option's value
         fi
       elif [[ "${word}" == -* ]]; then
-        # A cluster of short options: -i empties the environment; -u, -C and
+        # A cluster of short options: -i empties the environment; -u, -C, -a and
         # -S take the rest of the word, or the next word, as their value.
         for ((j = 1; j < ${#word}; j++)); do
           ch="${word:j:1}"
           [[ "${ch}" == i ]] && refuse "${SETTINGS_ENV_MSG}"
-          if [[ "${ch}" == [uCS] ]]; then
+          if [[ "${ch}" == [uCSa] ]]; then
             value="${word:j+1}"
             if [[ -z "${value}" ]]; then
               ((i++))
