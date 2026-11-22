@@ -370,7 +370,7 @@ EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=v
 GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. `--git-dir DIR`, and `--bare`, which is `--git-dir=.`, hand git a whole repository config to load: a bare repository committed into a branch names a diff.x.textconv program that `git --git-dir=evil log -p` runs, and the safe.bareRepository=explicit setting in .claude/settings.json lets exactly that spelling through, because naming the directory is what makes it explicit. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
 
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal text
-SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
+SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), a builtin that stores a value in one of those variables or in HOME or PATH (`read`, `mapfile` / `readarray`, `printf -v`, the name of a `for` / `select` loop, a `let` expression), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 SHALLOW_FILE_MSG='blocked: `git --shallow-file FILE` (and `--shallow-file=FILE`) makes git read FILE as the list of shallow commits before any subcommand runs, and the error it prints for a line it cannot parse quotes that line: `git --shallow-file .env log -1` prints the first NAME=value line of .env past the Read(./.env) deny rule, under the Bash(git log:*) allow row. It is a read of a file this gate cannot hold to the operand scan, so the option is refused whatever it names. Run git without it.'
@@ -2083,6 +2083,14 @@ names_settings_env() {
   [[ "${1%%=*}" == GIT_CONFIG* ]]
 }
 
+# Whether a name a builtin assigns (`read NAME`, `printf -v NAME`, `for NAME
+# in ...`) is one the settings pass guards: a settings variable, or HOME or
+# PATH, which are already exported (see the statement rule below). A
+# subscript (`PATH[0]`, `PATH[00]`) assigns the variable itself.
+assigns_settings_env() {
+  names_settings_env "$1" || [[ "$1" =~ ^(HOME|PATH)(\[[^]]*\])?$ ]]
+}
+
 # One simple command, as the quote-removed words between two separators:
 # refuse it when it takes the settings environment away from what runs after
 # it. Read on its own pass, after every other refusal, so the messages the
@@ -2251,7 +2259,37 @@ check_settings_env_segment() {
       [[ "${word}" == *=* ]] && refuse "${SETTINGS_ENV_MSG}"
     done
     ;;
-  git | echo | printf | grep | egrep | fgrep) ;; # git reads its own operands; the others only print or match
+  printf)
+    # `printf -v NAME` stores the output in NAME instead of printing it. bash
+    # reads -v only as printf's first option, joined or as its own word.
+    if [[ "${rest[0]-}" == -v ]]; then
+      assigns_settings_env "${rest[1]-}" && refuse "${SETTINGS_ENV_MSG}"
+    elif [[ "${rest[0]-}" == -v?* ]]; then
+      assigns_settings_env "${rest[0]#-v}" && refuse "${SETTINGS_ENV_MSG}"
+    fi
+    ;;
+  read | mapfile | readarray)
+    # Every operand is read as a name, and so is the rest of an option cluster
+    # (`read -raNAME`). An option value that happens to be one of the names
+    # (`read -p PATH line`) is refused as well, which only over-refuses.
+    for word in "${rest[@]}"; do
+      [[ "${word}" =~ ^-[a-z]*(.*)$ ]] && word="${BASH_REMATCH[1]}"
+      assigns_settings_env "${word}" && refuse "${SETTINGS_ENV_MSG}"
+    done
+    ;;
+  for | select)
+    # `for NAME in ...; do git log -p; done` assigns NAME before every pass.
+    assigns_settings_env "${rest[0]-}" && refuse "${SETTINGS_ENV_MSG}"
+    ;;
+  let)
+    # Any operand is an arithmetic expression that can assign a variable it
+    # mentions (`let GIT_CONFIG_COUNT=0`, `let HOME=0` makes git read 0/.gitconfig).
+    for word in "${rest[@]}"; do
+      [[ "${word}" =~ (^|[^A-Za-z0-9_])(GIT_CONFIG|HOME([^A-Za-z0-9_]|$)|PATH([^A-Za-z0-9_]|$)) ]] &&
+        refuse "${SETTINGS_ENV_MSG}"
+    done
+    ;;
+  git | echo | grep | egrep | fgrep) ;; # git reads its own operands; the others only print or match
   *)
     # A program the wrapper walk does not step over (`flock /tmp/l env -i
     # git`, `watch env -i git`, `setsid env -u NAME git`) runs the words
