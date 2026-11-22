@@ -571,6 +571,18 @@ assert_contains "-- hive: mid-line is not a signature" \
     "${A_SUMMARY}" "- #69: opened by the Hive app with no \`-- hive:\` signature line (the older \`— hive:\` also counts)"
 assert_eq "the two Hive-app pull requests without a real line fail the run" "1" "${A_STATUS}"
 
+# The agent filter's body clause takes the same two prefixes and no other
+# dash: a maintainer pull request whose line starts with an en dash is not an
+# agent's, so it is neither listed nor a finding.
+new_case
+stage_list "$(pr_with 64 Danathar "fix: maintainer, en dash" "A change.
+
+– hive: a near miss")"
+run_audit 2026-10-01
+assert_not_contains "a maintainer pull request signed with an en dash is not an agent's" \
+    "${A_SUMMARY}" "#64"
+assert_eq "the en-dash near miss does not fail the run" "0" "${A_STATUS}"
+
 # =============================================================================
 # G. The table: cells, dates, and an absent merger
 # =============================================================================
