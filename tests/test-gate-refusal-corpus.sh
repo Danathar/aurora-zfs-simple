@@ -38,7 +38,21 @@ SETTINGS="${REPO_ROOT}/.claude/settings.json"
 
 # SHA-256 of the canonical tests/fixtures/gate-refusal-corpus.json in
 # Danathar/atomic-image-builder. Copy the file from there; never edit it here.
-CANONICAL_SHA256="86a3ba4c237693b7b4bf9758bae55c7b4a62a19e2176b496be0a166808d2f7cf"
+CANONICAL_SHA256="769a1ef6d8b80df6e283e40732e922887ea23c0ac934dee3c492a91087644984"
+
+# Allow rows this gate refuses on purpose. The corpus says these commands may
+# be allowed; this repository's gate is stricter and refuses them anyway, and
+# the owner decided to keep it that way (Danathar/aurora-zfs-simple#523).
+# Each id here is expected to be REFUSED by the gate. The list is checked both
+# ways below: a row on it that the gate now allows fails, and so does an id that
+# is not an allow row the gate reaches, so an entry cannot go stale.
+#
+#   config-removal-allow-env-split-other-u  `env -S -u FOO git log -1`: the gate
+#       refuses every `env -S` / `--split-string`, because the split string is a
+#       command its word scans never see.
+OVER_REFUSED_ROWS=(
+    config-removal-allow-env-split-other-u
+)
 
 for required in "${CORPUS}" "${SETTINGS}"; do
     assert_file_exists "${required#"${REPO_ROOT}/"} is present" "${required}"
@@ -224,6 +238,15 @@ else
     _fail "a prefix is covered only at a word boundary"
 fi
 
+# is_over_refused ID: true when ID is on the over-refused list above.
+is_over_refused() {
+    local want=$1 id
+    for id in "${OVER_REFUSED_ROWS[@]}"; do
+        [[ "${id}" == "${want}" ]] && return 0
+    done
+    return 1
+}
+
 # --- every reachable row through the registered hook -------------------------
 
 prefixes="$(allow_prefixes <"${SETTINGS}")"
@@ -255,6 +278,7 @@ else
 fi
 
 applied=0
+over_refused_seen=""
 while IFS= read -r row; do
     id="$(jq -r '.id' <<<"${row}")"
     verdict="$(jq -r '.verdict' <<<"${row}")"
@@ -287,13 +311,33 @@ while IFS= read -r row; do
     else
         got=allow
     fi
-    if [[ "${got}" == "${verdict}" ]]; then
+    if is_over_refused "${id}"; then
+        over_refused_seen+="${id} "
+        if [[ "${verdict}" == allow && "${got}" == refuse ]]; then
+            _pass "row ${id}: allow in the corpus, refused here on purpose: ${command}"
+        else
+            _fail "row ${id}: allow in the corpus, refused here on purpose: ${command}" \
+                "the corpus verdict is ${verdict} and the gate reached ${got}; if the gate now allows it, remove the id from OVER_REFUSED_ROWS"
+        fi
+    elif [[ "${got}" == "${verdict}" ]]; then
         _pass "row ${id}: ${verdict} ${command}"
     else
         _fail "row ${id}: ${verdict} ${command}" "the gate reached ${got}: ${why}"
     fi
 done < <(jq -c '.rows[]' "${CORPUS}")
 rm -rf "${project}"
+
+# Every id on the over-refused list must have been run above, as an allow row.
+# An id the corpus renamed or dropped, or whose prefix the allow list stopped
+# covering, would otherwise sit on the list and check nothing.
+for id in "${OVER_REFUSED_ROWS[@]}"; do
+    if [[ " ${over_refused_seen}" == *" ${id} "* ]]; then
+        _pass "over-refused row ${id} is in the corpus and was run"
+    else
+        _fail "over-refused row ${id} is in the corpus and was run" \
+            "no such row ran; remove the id from OVER_REFUSED_ROWS or fix the id"
+    fi
+done
 
 # If the allow list stopped covering `git diff`, every row would be skipped and
 # the verdict checks above would pass on nothing.
