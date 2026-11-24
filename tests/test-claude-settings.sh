@@ -3292,6 +3292,14 @@ corpus_row refuse "5 option: an abbreviation of env --chdir" \
     'env --c=/etc git diff -- passwd shadow'
 corpus_row allow "5 option: an abbreviation of env --chdir" \
     'env --chx git log -1'
+# The settings pass steps over the value of env's --chdir and --argv0 only
+# when it is the next word. `--argv0=x` carries its value in the same word and
+# `--debug` takes none, so the word after either is still env's own option and
+# `-u GIT_CONFIG_COUNT` there must be read, not skipped as a value.
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --argv0=x -u GIT_CONFIG_COUNT git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'env --debug -u GIT_CONFIG_COUNT git log -p'
 
 # The table, driven. One loop, so a new shape is one row above and nothing
 # here.
