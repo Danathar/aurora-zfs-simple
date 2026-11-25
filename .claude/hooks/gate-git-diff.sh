@@ -510,6 +510,7 @@ heredoc_await=0    # `<<- WORD`: the next word is the delimiter
 heredoc_strip=0    # the operator being read is `<<-`
 heredoc_end=-1     # index just past the bodies being read, or -1
 heredoc_literal=0  # in a body whose quote marks and `#` are plain text
+heredoc_rereads=() # text read as plain text that is read again with its quotes
 
 # Whether the word ends in an extglob operator (`@`, `+`, `!`, `?`, `*`) that
 # bash leaves unquoted, so a `(` right after it opens an extglob pattern. The
@@ -616,8 +617,15 @@ push_sep() {
 # The end is not certain when no line is the delimiter (a shift operator read
 # as `<<` is one way) or a line before it is the delimiter followed by the
 # paren or backtick that closes a substitution.
+#
+# Plain text splits at an operator that quotes would hold: past the shift of
+# `(( x = 1 << 2 ))`, `git diff --src-prefix='x|' /dev/null .env` ended at the
+# `|` and lost its operands. So whatever is read as plain text is read again,
+# with its quotes, as a command of its own (see `heredoc_rereads` below): the
+# body when its end is certain, and otherwise all that follows the line, and
+# all that follows each delimiter a substitution may have closed.
 open_heredocs() {
-  local n=0 k delim line found joined quoted
+  local n=0 k delim line found joined quoted body_start
   local -a lines
   mapfile -t lines <<<"${command_string:i+1}"
   heredoc_end="${i}"
@@ -629,6 +637,7 @@ open_heredocs() {
     delim="${delim//[\'\"\\]/}"
     found=0
     joined=0
+    body_start=$((heredoc_end + 1))
     while ((!found && n < ${#lines[@]})); do
       line="${lines[n]}"
       n=$((n + 1))
@@ -642,6 +651,7 @@ open_heredocs() {
         found=1
       elif [[ "${line}" == "${delim}"[\)\`]* ]]; then
         heredoc_literal=1
+        heredoc_rereads+=("${line#"${delim}"}${command_string:heredoc_end}")
       fi
       # Bash removes a backslash-newline from a body it expands, so the next
       # line is not a line of its own there and cannot be the delimiter.
@@ -650,7 +660,12 @@ open_heredocs() {
         joined=1
       fi
     done
-    ((found)) || heredoc_literal=1
+    if ((!found)); then
+      heredoc_literal=1
+      heredoc_rereads+=("${command_string:body_start}")
+    elif ((!quoted)); then
+      heredoc_rereads+=("${command_string:body_start:heredoc_end-body_start}")
+    fi
   done
 }
 
@@ -3021,6 +3036,15 @@ refuse_if_refused_alone() {
   ((status == 0)) && return 0
   refuse "${UNLISTED_PROGRAM_MSG} Here ${program} runs \`${inner}\`, and on its own that command is refused: ${reason:-the reading exited ${status}}"
 }
+
+# The text `open_heredocs` had read as plain text, read with its quotes. Text
+# with no quote mark reads the same both ways.
+for text in "${heredoc_rereads[@]}"; do
+  [[ "${text}" == *[\'\"]* ]] || continue
+  reason="$(jq -nc --arg c "${text}" '{tool_name: "Bash", tool_input: {command: $c}}' |
+    CLAUDE_PROJECT_DIR="${PWD}" "${BASH:-bash}" "${GATE_SELF}" --within-budget 2>&1 >/dev/null)" ||
+    refuse "${reason:-blocked: reading the text after a here-document failed}"
+done
 
 # One command, given as the indices of its words in order: its program is
 # the first word that names a command, and every later word is read as above.

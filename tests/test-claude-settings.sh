@@ -3411,6 +3411,34 @@ corpus_row allow "4 name: a joined line joins only the next one" \
     $'cat <<EOF\nfoo \\\nbar\nEOF\ngit log -1 --format=\'a > b\''
 corpus_row allow "4 name: a quoted body's own quotes stay quotes" \
     $'bash -n <<\'EOF\'\ngit log -1 --format=\'a > b\'\nEOF'
+# Where a body's end is not certain, or bash expands the body, its quotes are
+# read as plain text, which splits `'x|'` at the `|` and loses the operands
+# after it. So that text is read a second time with its quotes.
+corpus_row refuse "4 name: a quoted operator past an arithmetic shift" \
+    $'(( x = 1 << 2 ))\ngit diff --src-prefix=\'x|\' /dev/null .env'
+corpus_row refuse "4 name: the same past two shifts" \
+    $'(( x = 1 << 2 ))\n(( y = 1 << 3 ))\ngit diff --src-prefix=\'x|\' /dev/null .env'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: the same past a shift in an expansion" \
+    $'x=$((1<<2))\ngit diff --src-prefix=\'x|\' /dev/null .env'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: the same past a delimiter a paren ends" \
+    $'x=$(cat <<\'EOF\'\nhi\nEOF)\ngit diff --src-prefix=\'x|\' /dev/null .env'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: the same past a paren and an apostrophe in the body" \
+    $'x=$(cat <<\'EOF\'\nit\'s\nEOF)\ngit diff --src-prefix=\'x|\' /dev/null .env'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: the same on the line the paren ends" \
+    $'x=$(cat <<\'EOF\'\nit\'s\nEOF) && git diff --src-prefix=\'x|\' /dev/null .env'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: the same past a tabbed delimiter a paren ends" \
+    $'x=$(cat <<-\'EOF\'\n\tit\'s\n\tEOF)\ngit diff --src-prefix=\'x|\' /dev/null .env'
+corpus_row refuse "4 name: the same in a body bash expands" \
+    $'sh <<EOF\ngit diff --src-prefix=\'x|\' /dev/null .env\nEOF'
+corpus_row refuse "4 name: the same in the second body of a line" \
+    $'cat <<A; sh <<B\nit\'s\nA\ngit diff --src-prefix=\'x|\' /dev/null .env\nB'
+corpus_row allow "4 name: quotes that pair in a body bash expands" \
+    $'cat <<EOF\nit\'s a \'quoted\' word\nEOF\ngit log -1'
 # `command` in front leaves the settings pass as the only one that reads this.
 # shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
 corpus_row refuse "1 env: the settings environment is taken away" \
