@@ -370,7 +370,7 @@ EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=v
 GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. `--git-dir DIR`, and `--bare`, which is `--git-dir=.`, hand git a whole repository config to load: a bare repository committed into a branch names a diff.x.textconv program that `git --git-dir=evil log -p` runs, and the safe.bareRepository=explicit setting in .claude/settings.json lets exactly that spelling through, because naming the directory is what makes it explicit. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
 
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal text
-SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), a builtin that stores a value in one of those variables or in HOME or PATH (`read`, `mapfile` / `readarray`, `printf -v`, the name of a `for` / `select` loop, a `let` expression, a `declare` / `typeset` / `readonly` assignment of HOME or PATH, an arithmetic command or expansion that names one of them such as `(( PATH = 1 ))` or `$(( HOME = 1 ))`), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
+SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), a builtin that stores a value in one of those variables or in HOME or PATH (`read`, `mapfile` / `readarray`, `getopts`, `printf -v`, the name of a `for` / `select` loop, a `let` expression, a `declare` / `typeset` / `readonly` assignment of HOME or PATH, an arithmetic command or expansion that names one of them such as `(( PATH = 1 ))` or `$(( HOME = 1 ))`), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 SHALLOW_FILE_MSG='blocked: `git --shallow-file FILE` (and `--shallow-file=FILE`) makes git read FILE as the list of shallow commits before any subcommand runs, and the error it prints for a line it cannot parse quotes that line: `git --shallow-file .env log -1` prints the first NAME=value line of .env past the Read(./.env) deny rule, under the Bash(git log:*) allow row. It is a read of a file this gate cannot hold to the operand scan, so the option is refused whatever it names. Run git without it.'
@@ -486,8 +486,8 @@ brace_would_expand() {
 # `redirects`, because which operator it was decides whether the shell opens
 # the target for writing (see `redirection_writes_a_path`). `git diff HEAD
 # 2>&1` is a one-operand diff; counting `2` and `1` refused it. A heredoc's
-# body lines are read as words of the command that opened it, which can only
-# over-refuse.
+# body lines are read as commands, which can only over-refuse, but a quote
+# mark in a body never reaches past the body's end (see `open_heredocs`).
 #
 # No real word is ever empty in the as-typed spelling: a typed `""` keeps its
 # quotes. An unquoted `\` followed by a newline is a line continuation, which
@@ -504,6 +504,12 @@ redirect_op=''     # the operator of that redirection, as typed
 after_redirect=0   # the previous unquoted character was `<` or `>`
 subst_depth=0      # open `$(` substitutions, whose `)` is not a subshell's
 extglob_depth=0    # open parentheses of an extended glob in the word being read
+heredoc_delims=()  # delimiter words of the here-documents opened on this line
+heredoc_strips=()  # 1 beside a delimiter that `<<-` opened
+heredoc_await=0    # `<<- WORD`: the next word is the delimiter
+heredoc_strip=0    # the operator being read is `<<-`
+heredoc_end=-1     # index just past the bodies being read, or -1
+heredoc_literal=0  # in a body whose quote marks and `#` are plain text
 
 # Whether the word ends in an extglob operator (`@`, `+`, `!`, `?`, `*`) that
 # bash leaves unquoted, so a `(` right after it opens an extglob pattern. The
@@ -564,6 +570,21 @@ push_word() {
 }
 end_word() {
   [[ -n "${raw_word}" ]] || return 0
+  if ((heredoc_await)); then
+    heredoc_await=0
+    heredoc_delims+=("${raw_word}")
+    heredoc_strips+=(1)
+  elif ((redirect_pending)) && [[ "${redirect_op}" == '<<' ]]; then
+    if ((!heredoc_strip)); then
+      heredoc_delims+=("${raw_word}")
+      heredoc_strips+=(0)
+    elif [[ "${raw_word}" == '-' ]]; then
+      heredoc_await=1
+    else
+      heredoc_delims+=("${raw_word#-}")
+      heredoc_strips+=(1)
+    fi
+  fi
   if ((redirect_pending)); then
     push_word target "${redirect_op}"
     redirect_pending=0
@@ -580,11 +601,70 @@ push_sep() {
   redirects+=('')
   redirect_pending=0
   redirect_op=''
+  heredoc_await=0
+}
+
+# Finds where the bodies of the here-documents opened on the line just read
+# end, with `i` at the newline that ends the line. Bash reads a body as text:
+# an apostrophe there opens no quote, and with an unquoted delimiter a `#`
+# hides no `$(...)`. Read as more shell, the apostrophe of `it's` in a body
+# opened a quote that ran to the end of the string and hid every command after
+# the body. So the quote state is dropped where the bodies end. Inside a body
+# with a quoted delimiter quotes are read as before, because `bash <<'EOF'`
+# runs it as a script. In a body bash expands, or one whose end is not
+# certain, quote marks and `#` are plain text, so nothing in it is hidden.
+# The end is not certain when no line is the delimiter (a shift operator read
+# as `<<` is one way) or a line before it is the delimiter followed by the
+# paren or backtick that closes a substitution.
+open_heredocs() {
+  local n=0 k delim line found joined quoted
+  local -a lines
+  mapfile -t lines <<<"${command_string:i+1}"
+  heredoc_end="${i}"
+  for ((k = 0; k < ${#heredoc_delims[@]}; k++)); do
+    delim="${heredoc_delims[k]}"
+    quoted=0
+    [[ "${delim}" == *[\'\"\\]* ]] && quoted=1
+    ((quoted)) || heredoc_literal=1
+    delim="${delim//[\'\"\\]/}"
+    found=0
+    joined=0
+    while ((!found && n < ${#lines[@]})); do
+      line="${lines[n]}"
+      n=$((n + 1))
+      heredoc_end=$((heredoc_end + 1 + ${#line}))
+      if ((heredoc_strips[k])); then
+        line="${line#"${line%%[!$'\t']*}"}"
+      fi
+      if ((joined)); then
+        :
+      elif [[ "${line}" == "${delim}" ]]; then
+        found=1
+      elif [[ "${line}" == "${delim}"[\)\`]* ]]; then
+        heredoc_literal=1
+      fi
+      # Bash removes a backslash-newline from a body it expands, so the next
+      # line is not a line of its own there and cannot be the delimiter.
+      joined=0
+      if ((!quoted)) && [[ "${line}" =~ (\\+)$ ]] && ((${#BASH_REMATCH[1]} % 2)); then
+        joined=1
+      fi
+    done
+    ((found)) || heredoc_literal=1
+  done
 }
 
 for ((i = 0; i < ${#command_string}; i++)); do
   ch="${command_string:i:1}"
   next="${command_string:i+1:1}"
+  if ((i == heredoc_end)); then
+    raw_quote=''
+    extglob_depth=0
+    heredoc_literal=0
+    heredoc_end=-1
+    heredoc_delims=() # a `<<` in a body is text of it
+    heredoc_strips=()
+  fi
   prev_redirect="${after_redirect}"
   after_redirect=0
   if ((raw_escaped)); then
@@ -653,8 +733,11 @@ for ((i = 0; i < ${#command_string}; i++)); do
     raw_word+="${ch}"
     ;;
   "'" | '"')
-    raw_quote="${ch}"
-    raw_word+="${ch}"
+    # Plain text in a here-document body bash expands, and no part of a word.
+    if ((!heredoc_literal)); then
+      raw_quote="${ch}"
+      raw_word+="${ch}"
+    fi
     ;;
   ' ' | $'\t')
     end_word
@@ -694,6 +777,8 @@ for ((i = 0; i < ${#command_string}; i++)); do
     redirect_op+="${ch}"
     redirect_pending=1
     after_redirect=1
+    heredoc_strip=0
+    [[ "${next}" == '-' ]] && heredoc_strip=1
     ;;
   '&')
     if ((prev_redirect)); then
@@ -712,7 +797,10 @@ for ((i = 0; i < ${#command_string}; i++)); do
       push_sep '|'
     fi
     ;;
-  $'\n') push_sep ';' ;;
+  $'\n')
+    push_sep ';'
+    ((${#heredoc_delims[@]} && heredoc_end < 0)) && open_heredocs
+    ;;
   '#')
     # A `#` that begins a word after whitespace starts a comment, which bash
     # drops through the end of the line, so `shellcheck tests/run-tests.sh
@@ -720,7 +808,7 @@ for ((i = 0; i < ${#command_string}; i++)); do
     # that spelling is dropped here: a `#` inside a word (`HEAD^#x`) is a
     # character of it, and one straight after an operator (`;#`, `>#`) is
     # kept as a word, which can only over-refuse.
-    if [[ -z "${raw_word}" ]] && { ((i == 0)) || [[ "${command_string:i-1:1}" == [$' \t\n'] ]]; }; then
+    if ((!heredoc_literal)) && [[ -z "${raw_word}" ]] && { ((i == 0)) || [[ "${command_string:i-1:1}" == [$' \t\n'] ]]; }; then
       while ((i + 1 < ${#command_string})) && [[ "${command_string:i+1:1}" != $'\n' ]]; do
         ((i++))
       done
@@ -2271,7 +2359,7 @@ check_settings_env_segment() {
       assigns_settings_env "${rest[0]#-v}" && refuse "${SETTINGS_ENV_MSG}"
     fi
     ;;
-  read | mapfile | readarray)
+  read | mapfile | readarray | getopts)
     # Every operand is read as a name, and so is the rest of an option cluster
     # (`read -raNAME`). An option value that happens to be one of the names
     # (`read -p PATH line`) is refused as well, which only over-refuses.
