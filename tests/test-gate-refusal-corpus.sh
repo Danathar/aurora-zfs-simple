@@ -38,7 +38,7 @@ SETTINGS="${REPO_ROOT}/.claude/settings.json"
 
 # SHA-256 of the canonical tests/fixtures/gate-refusal-corpus.json in
 # Danathar/atomic-image-builder. Copy the file from there; never edit it here.
-CANONICAL_SHA256="769a1ef6d8b80df6e283e40732e922887ea23c0ac934dee3c492a91087644984"
+CANONICAL_SHA256="358a28365d9d6b71ca29a561bce82e47978b3fffb1fd9f59129b8f6223caab46"
 
 # Allow rows this gate refuses on purpose. The corpus says these commands may
 # be allowed; this repository's gate is stricter and refuses them anyway, and

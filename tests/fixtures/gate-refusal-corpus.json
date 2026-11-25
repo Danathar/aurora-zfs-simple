@@ -1364,6 +1364,176 @@
       "why": "the export spelling of the same"
     },
     {
+      "id": "home-read",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "read -r HOME <<< planted; git diff HEAD~1 HEAD",
+      "why": "read assigns the exported HOME as surely as HOME=planted; does, so git reads planted/.gitconfig"
+    },
+    {
+      "id": "home-printf-v",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "printf -v HOME %s planted; git diff HEAD~1 HEAD",
+      "why": "printf -v assigns HOME the same way"
+    },
+    {
+      "id": "home-for-loop",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "for HOME in planted; do git diff HEAD~1 HEAD; done",
+      "why": "a for loop assigns its name before the body runs, so the git inside it reads planted/.gitconfig"
+    },
+    {
+      "id": "path-mapfile",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "mapfile -t PATH < list; git log -1",
+      "why": "mapfile assigns PATH, so bash looks git up in the first line of list"
+    },
+    {
+      "id": "settings-env-read",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "read GIT_CONFIG_VALUE_0 <<< all; git log -p",
+      "why": "the settings env is exported, so read turns safe.bareRepository back to all"
+    },
+    {
+      "id": "path-declare",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "declare PATH=planted:$PATH; git log -1",
+      "why": "PATH is already exported and declare keeps the export, so bash looks git up in planted/ first"
+    },
+    {
+      "id": "path-readonly",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "readonly PATH=planted:$PATH; git log -1",
+      "why": "readonly assigns its operand the same way declare does"
+    },
+    {
+      "id": "path-typeset-option",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "typeset -g PATH=planted:$PATH; git log -1",
+      "why": "an option before the operand does not change what typeset assigns"
+    },
+    {
+      "id": "path-let",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "let PATH=1; git log -1",
+      "why": "let assigns the name on the left of its expression, so bash looks git up in a folder named 1 a branch can commit"
+    },
+    {
+      "id": "settings-env-let",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "let GIT_CONFIG_COUNT=0; git log -p",
+      "why": "let sets the exported count to 0, so git drops safe.bareRepository=explicit and trusts a planted bare repository again"
+    },
+    {
+      "id": "config-reach-allow-let-counter",
+      "class": "configuration reach",
+      "verdict": "allow",
+      "requires": [
+        "git log"
+      ],
+      "command": "let i=1; git log -1",
+      "why": "let into a name git takes nothing from"
+    },
+    {
+      "id": "path-arithmetic",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": "(( PATH = 1 )); git log -1",
+      "why": "an arithmetic command assigns PATH with no NAME=value word, so bash looks git up in a folder named 1 a branch can commit"
+    },
+    {
+      "id": "home-arithmetic",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "(( HOME = 1 )); git diff HEAD~1 HEAD",
+      "why": "the same assignment to the exported HOME, so git reads 1/.gitconfig and runs the diff.external it names"
+    },
+    {
+      "id": "xdg-config-home-arithmetic-expansion",
+      "class": "configuration reach",
+      "verdict": "refuse",
+      "requires": [
+        "git log"
+      ],
+      "command": ": $(( XDG_CONFIG_HOME = 1 )); git log -p -1",
+      "why": "an arithmetic expansion assigns as the command does, so git reads 1/git/config and runs the textconv it names"
+    },
+    {
+      "id": "config-reach-allow-arithmetic-counter",
+      "class": "configuration reach",
+      "verdict": "allow",
+      "requires": [
+        "git log"
+      ],
+      "command": "(( i = 1 )); git log -1",
+      "why": "arithmetic on a name git takes nothing from"
+    },
+    {
+      "id": "config-reach-allow-subshell-path-word",
+      "class": "configuration reach",
+      "verdict": "allow",
+      "requires": [
+        "git log"
+      ],
+      "command": "( echo PATH ); git log -1",
+      "why": "a subshell that prints the word PATH assigns nothing"
+    },
+    {
+      "id": "config-reach-allow-read-line",
+      "class": "configuration reach",
+      "verdict": "allow",
+      "requires": [
+        "git log"
+      ],
+      "command": "read -r line < README.md; git log -1",
+      "why": "read into a name git takes nothing from"
+    },
+    {
       "id": "config-reach-allow-other-standalone",
       "class": "configuration reach",
       "verdict": "allow",
@@ -1380,8 +1550,68 @@
       "requires": [
         "git status"
       ],
-      "command": "cd \"$HOME\" && git status",
+      "command": "echo \"$HOME\" && git status",
       "why": "reading HOME is not assigning it"
+    },
+    {
+      "id": "dir-change-cd-plain-file",
+      "class": "directory change",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "cd /tmp && git diff -- x .env",
+      "why": "git runs outside any repository, falls back to --no-index with no flag and prints /tmp/.env, while both operands look like in-tree paths"
+    },
+    {
+      "id": "dir-change-cd-semicolon",
+      "class": "directory change",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "cd /tmp; git diff -- x .env",
+      "why": "the same move ended by ; rather than &&"
+    },
+    {
+      "id": "dir-change-subshell",
+      "class": "directory change",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "(cd /tmp && git diff -- x .env)",
+      "why": "the same move inside a subshell"
+    },
+    {
+      "id": "dir-change-pushd",
+      "class": "directory change",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "pushd /tmp && git diff -- x .env",
+      "why": "pushd moves the shell as cd does"
+    },
+    {
+      "id": "dir-change-bare-cd",
+      "class": "directory change",
+      "verdict": "refuse",
+      "requires": [
+        "git diff"
+      ],
+      "command": "cd && git diff -- .netrc .env",
+      "why": "a cd with no operand goes to HOME and prints two files there"
+    },
+    {
+      "id": "dir-change-allow-inside",
+      "class": "directory change",
+      "verdict": "allow",
+      "requires": [
+        "git log"
+      ],
+      "command": "cd tests && git log -1",
+      "why": "a literal relative directory with no .. stays inside the checkout"
     }
   ]
 }
