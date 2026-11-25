@@ -2330,6 +2330,9 @@ names_arithmetic_env() {
 # shellcheck disable=SC2016 # the literal `$(` and `$((` are the text matched
 check_arithmetic_names() {
   local ai depth
+  # Held in a variable: a quoted `$((` inside the expansion below is a bad
+  # substitution to bash 5.2.
+  local expansion_open='$(('
   for ((ai = 0; ai < ${#words[@]}; ai++)); do
     if [[ "${kinds[ai]}" == sep ]]; then
       if [[ "${words[ai]}" == '(' || "${words[ai]}" == '$(' ]] &&
@@ -2350,8 +2353,8 @@ check_arithmetic_names() {
         done
         ai=$((ai - 1))
       fi
-    elif [[ "${words[ai]}" == *'$(('* ]]; then
-      names_arithmetic_env "${words[ai]#*'$(('}" && refuse "${SETTINGS_ENV_MSG}"
+    elif [[ "${words[ai]}" == *"${expansion_open}"* ]]; then
+      names_arithmetic_env "${words[ai]#*"${expansion_open}"}" && refuse "${SETTINGS_ENV_MSG}"
     fi
   done
 }

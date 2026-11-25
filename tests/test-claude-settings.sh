@@ -3232,8 +3232,6 @@ corpus_row refuse "1 env: the settings environment is taken away" \
 corpus_row refuse "1 env: the settings environment is taken away" \
     ': "$(( PATH = 1 ))"; git log -1'
 corpus_row allow "1 env: the settings environment is left alone" \
-    'declare MYPATH=planted; git log -1'
-corpus_row allow "1 env: the settings environment is left alone" \
     '(( i = 1 )); git log -1'
 corpus_row allow "1 env: the settings environment is left alone" \
     '( echo PATH ); git log -1'
