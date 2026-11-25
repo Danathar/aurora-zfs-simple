@@ -370,7 +370,7 @@ EXPORT_ENV_MSG='blocked: an assignment made by the export family (`export NAME=v
 GIT_CONFIG_MSG='blocked: `git -c NAME=VALUE`, `--config-env=NAME=VAR`, `--exec-path`, `--upload-pack` and `--receive-pack` each hand git a setting or a program to load, and several of those settings name a program git then runs: `git -c diff.external=prog diff HEAD~1` runs prog once per changed path, and `git --config-env=diff.external=VAR diff HEAD~1` reaches the same driver with the value held in a variable -- the same code execution this gate refuses for `GIT_EXTERNAL_DIFF=prog git diff HEAD~1`, spelled as an option instead of as an environment. A list of which config keys run a program is the wrong shape for the refusal: diff.external, diff.*.command, difftool.*.cmd, core.pager, pager.*, core.editor, core.sshCommand, core.hooksPath, core.fsmonitor, alias.*, filter.*.clean, uploadpack.packObjectsHook and credential.helper all do, and git keeps adding them -- so the option is refused whatever it carries. `--git-dir DIR`, and `--bare`, which is `--git-dir=.`, hand git a whole repository config to load: a bare repository committed into a branch names a diff.x.textconv program that `git --git-dir=evil log -p` runs, and the safe.bareRepository=explicit setting in .claude/settings.json lets exactly that spelling through, because naming the directory is what makes it explicit. Set the value in the repository config, which is a command of its own and prompts on its own, or run git without it.'
 
 # shellcheck disable=SC2016 # the message quotes shell spellings as literal text
-SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), a builtin that stores a value in one of those variables or in HOME or PATH (`read`, `mapfile` / `readarray`, `printf -v`, the name of a `for` / `select` loop, a `let` expression), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
+SETTINGS_ENV_MSG='blocked: this command takes git'"'"'s settings environment (GIT_CONFIG_COUNT, GIT_CONFIG_KEY_*, GIT_CONFIG_VALUE_*) away from git or overwrites it. .claude/settings.json sets safe.bareRepository=explicit through those variables so git refuses a bare repository a branch commits; without them git falls back to safe.bareRepository=all, and `git log -p` loads the planted folder'"'"'s config and runs the diff textconv program it names. `unset GIT_CONFIG_COUNT`, `export -n`, `declare +x` / `typeset +x` / `local +x`, `env -u GIT_CONFIG_COUNT` (or --unset), a bare `GIT_CONFIG_COUNT=0` statement, a statement of its own that assigns HOME or PATH (both already exported, so it reaches the git after it), `env -a NAME` / `--argv0 NAME` followed by any of these (the NAME is not the command), a builtin that stores a value in one of those variables or in HOME or PATH (`read`, `mapfile` / `readarray`, `printf -v`, the name of a `for` / `select` loop, a `let` expression, a `declare` / `typeset` / `readonly` assignment of HOME or PATH, an arithmetic command or expansion that names one of them such as `(( PATH = 1 ))` or `$(( HOME = 1 ))`), and the two that empty the whole environment -- `env -i` (or a lone -, or --ignore-environment) and bash'"'"'s `exec -c` -- each made the planted program run, so they are refused wherever they stand in the string, behind any wrapper, whatever command follows. Run the command without touching those variables; removing or un-exporting any other variable is not affected.'
 
 # shellcheck disable=SC2016 # the option spellings are what the reader has to see
 SHALLOW_FILE_MSG='blocked: `git --shallow-file FILE` (and `--shallow-file=FILE`) makes git read FILE as the list of shallow commits before any subcommand runs, and the error it prints for a line it cannot parse quotes that line: `git --shallow-file .env log -1` prints the first NAME=value line of .env past the Read(./.env) deny rule, under the Bash(git log:*) allow row. It is a read of a file this gate cannot hold to the operand scan, so the option is refused whatever it names. Run git without it.'
@@ -2254,6 +2254,9 @@ check_settings_env_segment() {
     done
     for word in "${rest[@]}"; do
       [[ "${word}" == [-+]* ]] && continue
+      # `declare PATH=planted:$PATH` and `readonly PATH=x` assign HOME or PATH,
+      # which are already exported, with no bare NAME=value word to find.
+      [[ "${name}" != export && "${word}" =~ ^(HOME|PATH)(\[[^]]*\])?\+?= ]] && refuse "${SETTINGS_ENV_MSG}"
       names_settings_env "${word}" || continue
       ((unexports)) && refuse "${SETTINGS_ENV_MSG}"
       [[ "${word}" == *=* ]] && refuse "${SETTINGS_ENV_MSG}"
@@ -2308,6 +2311,51 @@ check_settings_env_segment() {
   esac
   return 0
 }
+
+# Whether a word of an arithmetic expression names a variable the settings
+# pass guards: a GIT_CONFIG* name, HOME, XDG_CONFIG_HOME or PATH, as a whole
+# name. A name that is only read is refused too, which only over-refuses.
+names_arithmetic_env() {
+  [[ "$1" =~ (^|[^A-Za-z0-9_])(GIT_CONFIG|(HOME|PATH|XDG_CONFIG_HOME)([^A-Za-z0-9_]|$)) ]]
+}
+
+# `(( PATH = 1 ))` and `$(( HOME = 1 ))` assign the name with no NAME=value
+# word once the operator has spaces round it, and HOME, PATH and the settings
+# env are already exported, so the next git is looked up in a folder named 1 or
+# reads a planted .gitconfig. The lexer splits `((` into two `(` separators (the
+# first one `$(` after a dollar sign), so the expression is every word between
+# a pair of adjacent opening parens and the parens that close them. A single
+# paren is a subshell and is not read here. A double-quoted expansion stays one
+# word and is read from the word.
+# shellcheck disable=SC2016 # the literal `$(` and `$((` are the text matched
+check_arithmetic_names() {
+  local ai depth
+  for ((ai = 0; ai < ${#words[@]}; ai++)); do
+    if [[ "${kinds[ai]}" == sep ]]; then
+      if [[ "${words[ai]}" == '(' || "${words[ai]}" == '$(' ]] &&
+        ((ai + 1 < ${#words[@]})) && [[ "${kinds[ai + 1]}" == sep && "${words[ai + 1]}" == '(' ]]; then
+        depth=2
+        ai=$((ai + 2))
+        while ((ai < ${#words[@]} && depth > 0)); do
+          if [[ "${kinds[ai]}" == sep ]]; then
+            case "${words[ai]}" in
+            '(' | '$(') ((depth++)) ;;
+            ')' | '$)') ((depth--)) ;;
+            *) ;;
+            esac
+          else
+            names_arithmetic_env "${words[ai]}" && refuse "${SETTINGS_ENV_MSG}"
+          fi
+          ai=$((ai + 1))
+        done
+        ai=$((ai - 1))
+      fi
+    elif [[ "${words[ai]}" == *'$(('* ]]; then
+      names_arithmetic_env "${words[ai]#*'$(('}" && refuse "${SETTINGS_ENV_MSG}"
+    fi
+  done
+}
+check_arithmetic_names
 
 segment_words=()
 for ((idx = 0; idx < ${#words[@]}; idx++)); do

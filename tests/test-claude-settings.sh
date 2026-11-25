@@ -3208,6 +3208,35 @@ corpus_row refuse "1 env: the settings environment is taken away" \
     'let GIT_CONFIG_COUNT=0; git log -p'
 corpus_row refuse "1 env: the settings environment is taken away" \
     'let HOME=0; git log -p'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'declare PATH=planted:$PATH; git log -1'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'readonly PATH=planted:$PATH; git log -1'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'typeset -g PATH=planted:$PATH; git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'declare HOME=planted; git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '(( PATH = 1 )); git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '(( HOME = 1 )); git log -p'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '(( GIT_CONFIG_COUNT = 0 )); git log -p'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "1 env: the settings environment is taken away" \
+    ': $(( XDG_CONFIG_HOME = 1 )); git log -p -1'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "1 env: the settings environment is taken away" \
+    ': "$(( PATH = 1 ))"; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'declare MYPATH=planted; git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    '(( i = 1 )); git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    '( echo PATH ); git log -1'
 corpus_row refuse "1 env: the settings environment is taken away" \
     'timeout 5 bash -c "read GIT_CONFIG_COUNT <<< 0; git log -p"'
 corpus_row allow "1 env: the settings environment is left alone" \
