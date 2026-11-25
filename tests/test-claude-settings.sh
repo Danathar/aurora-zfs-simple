@@ -3400,6 +3400,27 @@ corpus_row refuse "1 env: the settings environment is taken away" \
     'while getopts ab GIT_CONFIG_COUNT; do git log -p; done'
 corpus_row allow "1 env: the settings environment is left alone" \
     'getopts ab opt; git log -1'
+# The edits to the here-document reader that nothing above notices: the delimiter
+# wait outliving its word, the tab-strip flags shifting by one, a joined line
+# never ending, and any line but the delimiter read as a substitution's end.
+corpus_row allow "4 name: a word after the <<- delimiter is no delimiter" \
+    $'cat <<- EOF file\n\tx\n\tEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: a <<- after a << keeps its own tab stripping" \
+    $'cat <<\'A\' <<-\'B\'\nx\nA\n\tB\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: a joined line joins only the next one" \
+    $'cat <<EOF\nfoo \\\nbar\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: a quoted body's own quotes stay quotes" \
+    $'bash -n <<\'EOF\'\ngit log -1 --format=\'a > b\'\nEOF'
+# `command` in front leaves the settings pass as the only one that reads this.
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'command declare PATH=planted:$PATH; git log -1'
+# An arithmetic expression ends at its own parens, and the next one, straight
+# after it, is still read.
+corpus_row refuse "1 env: the settings environment is taken away" \
+    '(( 1 ))(( PATH = 1 )); git log -1'
+corpus_row allow "1 env: the settings environment is left alone" \
+    '(( x = 1 )); echo PATH'
 
 # The table, driven. One loop, so a new shape is one row above and nothing
 # here.
