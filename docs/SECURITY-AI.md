@@ -245,7 +245,7 @@ the command name alone would have looked fine:
   `exec -c` and a bare `GIT_CONFIG_COUNT=0` statement each put git back on
   `safe.bareRepository=all`, so `git log -p` inside a planted bare folder
   runs its textconv program again. So do the builtins that store a value in
-  a variable: `read GIT_CONFIG_COUNT`, `mapfile` / `readarray`,
+  a variable: `read GIT_CONFIG_COUNT`, `mapfile` / `readarray`, `getopts`,
   `printf -v GIT_CONFIG_COUNT`, `for GIT_CONFIG_COUNT in 0`, `select` and
   `let GIT_CONFIG_COUNT=0`, and the same builtins naming HOME or PATH, as does
   `declare`, `typeset` or `readonly` assigning HOME or PATH and an arithmetic

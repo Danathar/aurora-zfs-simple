@@ -3327,6 +3327,79 @@ corpus_row refuse "1 env: the settings environment is taken away" \
     'env --argv0=x -u GIT_CONFIG_COUNT git log -p'
 corpus_row refuse "1 env: the settings environment is taken away" \
     'env --debug -u GIT_CONFIG_COUNT git log -p'
+# A here-document's body is text to bash, so a quote mark in it opens no quote
+# and the commands after the body run. Read as shell, the apostrophe of `it's`
+# opened a quote that hid them all.
+corpus_row refuse "4 name: an apostrophe in a quoted here-document's body" \
+    $'cat <<\'EOF\'\nit\'s\nEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: two bodies' apostrophes pair with nothing" \
+    $'cat <<\'EOF\'\nit\'s\nEOF\ngit log --output=x -1\ncat <<\'EOF\'\nit\'s\nEOF'
+corpus_row refuse "4 name: a double quote in a body" \
+    $'cat <<"EOF"\n5" x\nEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: a backslash-quoted delimiter" \
+    $'cat <<\\EOF\nit\'s\nEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: an apostrophe in a body bash expands" \
+    $'cat <<EOF\nit\'s\nEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: a body bash expands, its delimiter line joined to the line before" \
+    $'cat <<EOF\nfoo \\\nEOF\nit\'s\nEOF\ngit log --output=x -1\ncat <<X\nit\'s\nX'
+corpus_row refuse "4 name: a line ending in two backslashes joins nothing" \
+    $'cat <<EOF\nfoo \\\\\nEOF\necho \'\ncat <<EOF\n\'; git log --output=x -1'
+corpus_row refuse "4 name: <<- strips the tabs before its delimiter" \
+    $'cat <<-\'EOF\'\n\tit\'s\n\t\tEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: <<- with a space before its delimiter" \
+    $'cat <<- \'EOF\'\n\tit\'s\n\tEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: << strips no tabs, so a tabbed line is the body's" \
+    $'cat <<\'EOF\'\n\tEOF\nit\'s\nEOF\ngit log --output=x -1'
+corpus_row refuse "4 name: two here-documents on one line" \
+    $'cat <<\'A\' <<\'B\'\nx\nA\nit\'s\nB\ngit log --output=x -1'
+corpus_row refuse "4 name: a here-document with a comment on its line" \
+    $'cat <<\'EOF\' # don\'t\nit\'s\nEOF\ngit log --output=x -1'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: a # in a body bash expands hides no substitution" \
+    $'cat <<EOF\n# $(git log --output=x -1)\nEOF'
+corpus_row refuse "4 name: a body with no delimiter line" \
+    $'cat <<\'EOF\'\nit\'s\ngit log --output=x -1'
+# shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
+corpus_row refuse "4 name: a delimiter that ends with a substitution's paren" \
+    $'x=$(cat <<\'EOF\'\nit\'s\nEOF)\ngit log --output=x -1\ncat <<\'EOF\'\nit\'s\nEOF'
+corpus_row refuse "4 name: a << in a body opens nothing after it" \
+    $'cat <<\'EOF\'\ncat <<X\nEOF\ngit log -1 --format=\'\nX\n\'; git log --output=x -1'
+corpus_row refuse "4 name: a script a shell reads from a here-document" \
+    $'bash <<\'EOF\'\ngit log --output=x -1\nEOF'
+corpus_row allow "4 name: an apostrophe in a body, then an ordinary log" \
+    $'cat <<\'EOF\'\nit\'s\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: the same in a body bash expands" \
+    $'cat <<EOF\nit\'s\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: quotes a shell's script closes itself" \
+    $'bash -n <<\'EOF\'\necho "it\'s > fine"\nEOF'
+corpus_row allow "4 name: <<- ends at its tabbed delimiter" \
+    $'cat <<-EOF\n\tx\n\tEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: <<- with a space ends at its tabbed delimiter" \
+    $'cat <<- EOF\n\tx\n\tEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: two backslashes before the delimiter line" \
+    $'cat <<EOF\nfoo \\\\\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: a here-string opens no body" \
+    $'cat <<< it\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: a << in a body leaves the next line's quotes alone" \
+    $'cat <<\'EOF\'\nrun cat <<X for\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row allow "4 name: a <<- at the end of a body takes no word after it" \
+    $'cat <<\'EOF\'\ncat <<-\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row refuse "4 name: one here-document after another" \
+    $'cat <<\'A\'\nx\nA\ncat <<\'B\'\nit\'s\nB\ngit log --output=x -1'
+corpus_row refuse "4 name: << after a <<- strips no tabs" \
+    $'cat <<-\'A\'\n\tx\n\tA\ncat <<\'B\'\n\tB\nit\'s\nB\ngit log --output=x -1'
+corpus_row refuse "4 name: << beside a <<- on one line strips no tabs" \
+    $'cat <<-\'A\' <<\'B\'\n\tA\n\tB\nit\'s\nB\ngit log --output=x -1'
+corpus_row refuse "4 name: an extglob a body opens ends with the body" \
+    $'cat <<\'EOF\'\nwe see!(x\nEOF\nunset GIT_CONFIG_COUNT'
+corpus_row allow "4 name: a backslash in a quoted body joins no line" \
+    $'cat <<\'EOF\'\nx \\\nEOF\ngit log -1 --format=\'a > b\''
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'getopts ab PATH; git log -1'
+corpus_row refuse "1 env: the settings environment is taken away" \
+    'while getopts ab GIT_CONFIG_COUNT; do git log -p; done'
+corpus_row allow "1 env: the settings environment is left alone" \
+    'getopts ab opt; git log -1'
 
 # The table, driven. One loop, so a new shape is one row above and nothing
 # here.
