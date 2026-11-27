@@ -107,7 +107,7 @@
   ],
   "untracked": [
     {
-      "workflow": "coverage-gate.yml",
+      "workflow": "build.yml",
       "job": "Mutation check (changed lines)",
       "reason": "Runs only on pull requests and only does work when a pull request changes a shipped script, so the sample is mostly empty. It stops itself at MUTATION_BUDGET (40 minutes) and reports the edits it did not reach; the 50-minute cap is for a hang past that. Advisory, not a required check."
     },
