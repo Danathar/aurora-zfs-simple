@@ -9,4 +9,7 @@
 # example a line inside a here-document whose text no test reads. When a test
 # could notice it, write that test instead.
 #
-# Empty on purpose: no edit is known to be equivalent yet.
+# The filter only skips text with no quote mark, which reads the same with and
+# without its quotes, so the first reading already refused or allowed it:
+# reading it again changes no outcome, only how long the hook takes.
+.claude/hooks/gate-git-diff.sh	delete	[[ "${text}" == *[\'\"]* ]] || continue
