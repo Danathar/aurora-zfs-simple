@@ -620,6 +620,8 @@ PUBLISH_MANIFEST=$(
 tests	Checkout	PR_SAFE
 tests	Install shellcheck	PR_SAFE
 tests	Run shell test suite	PR_SAFE
+mutation	Checkout	PR_SAFE
+mutation	Edit changed lines and run their tests	PR_SAFE
 build_push	Prepare environment	PR_SAFE
 build_push	Checkout	PR_SAFE
 build_push	Maximize build space	PR_SAFE
@@ -807,6 +809,7 @@ done <<<"${PUBLISH_MANIFEST}"
 JOB_MANIFEST=$(
     cat <<'EOF'
 tests	STEPS
+mutation	STEPS
 build_push	STEPS
 EOF
 )

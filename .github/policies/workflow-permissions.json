@@ -42,14 +42,14 @@
       "workflow": null,
       "jobs": {
         "tests": {"contents": "read"},
+        "mutation": {"contents": "read"},
         "build_push": {"contents": "read", "packages": "write", "id-token": "write", "attestations": "write"}
       }
     },
     "coverage-gate.yml": {
       "workflow": null,
       "jobs": {
-        "tests": {"contents": "read"},
-        "mutation": {"contents": "read"}
+        "tests": {"contents": "read"}
       }
     },
     "labeler.yml": {
