@@ -3439,6 +3439,13 @@ corpus_row refuse "4 name: the same in the second body of a line" \
     $'cat <<A; sh <<B\nit\'s\nA\ngit diff --src-prefix=\'x|\' /dev/null .env\nB'
 corpus_row allow "4 name: quotes that pair in a body bash expands" \
     $'cat <<EOF\nit\'s a \'quoted\' word\nEOF\ngit log -1'
+# The list of text to read again starts empty in the hook itself. A variable
+# of the same name in the hook's environment would otherwise be read as such
+# text, and refuse a command that has no here-document at all.
+heredoc_rereads="git diff --src-prefix='x|' /dev/null .env" \
+    run_pre "$(pre_payload_for 'git log -1')"
+assert_eq "a heredoc_rereads in the environment is not read as text after a here-document" \
+    "0" "${PRE_STATUS}"
 # `command` in front leaves the settings pass as the only one that reads this.
 # shellcheck disable=SC2016 # the spelling is handed to the hook, not run here
 corpus_row refuse "1 env: the settings environment is taken away" \
